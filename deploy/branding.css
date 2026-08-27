@@ -1,0 +1,25 @@
+:root {
+  color-scheme: light dark;
+  --brand-name: "Forge Orchestrator";
+  --brand-font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  --brand-color-primary: #475569;
+  --brand-color-accent: #2563eb;
+  --brand-color-background: #f8fafc;
+  --brand-color-surface: #ffffff;
+  --brand-color-text: #0f172a;
+  --brand-color-muted: #64748b;
+  --brand-color-border: #cbd5e1;
+  --brand-radius: 0.5rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --brand-color-primary: #cbd5e1;
+    --brand-color-accent: #60a5fa;
+    --brand-color-background: #0f172a;
+    --brand-color-surface: #1e293b;
+    --brand-color-text: #f8fafc;
+    --brand-color-muted: #94a3b8;
+    --brand-color-border: #475569;
+  }
+}

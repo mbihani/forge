@@ -1,0 +1,32 @@
+name: forge-orchestrator
+compute: serverless
+command:
+  - uvicorn
+  - anvil.orchestrator.app:app
+  - --host
+  - 0.0.0.0
+  - --port
+  - "8000"
+health_check:
+  path: /health
+  interval_seconds: 30
+  timeout_seconds: 5
+env:
+  - name: OMNIGENT_SERVER_URL
+    value: ${var.omnigent_server_url}
+  - name: OMNIGENT_AUTH_TOKEN
+    value: ${var.omnigent_auth_token}
+  - name: GIT_REMOTE_URL
+    value: ${var.git_remote_url}
+  - name: GIT_TOKEN
+    value: ${var.git_token}
+  - name: ANVIL_AI_GATEWAY_URL
+    value: ${var.ai_gateway_url}
+  - name: ANVIL_EVAL_ENGINE
+    value: ${var.eval_engine}
+  - name: MLFLOW_EXPERIMENT_NAME
+    value: ${var.mlflow_experiment}
+  - name: ANVIL_OPTIMIZER_MODEL
+    value: ${var.optimizer_model}
+  - name: ANVIL_DOMAIN_CONFIG
+    value: ${var.domain_config}

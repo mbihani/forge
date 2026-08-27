@@ -1,0 +1,77 @@
+bundle:
+  name: forge-orchestrator
+
+variables:
+  # CONFIGURE(omnigent_server_url): URL of the Omnigent control-plane server.
+  omnigent_server_url:
+    description: Omnigent server URL
+  # CONFIGURE(omnigent_auth_token): Authentication token for the Omnigent server.
+  omnigent_auth_token:
+    description: Omnigent authentication token
+  # CONFIGURE(git_remote_url): Git remote containing the scaffold repository.
+  git_remote_url:
+    description: Scaffold Git remote URL
+  # CONFIGURE(git_token): Optional token for a private Git remote.
+  git_token:
+    description: Git access token
+    default: ""
+  # CONFIGURE(ai_gateway_url): Databricks AI Gateway Anthropic endpoint.
+  ai_gateway_url:
+    description: AI Gateway URL
+  # CONFIGURE(eval_engine): Evaluation engine selected by the orchestrator.
+  eval_engine:
+    description: Evaluation engine
+    default: mlflow
+  # CONFIGURE(mlflow_experiment): MLflow experiment used for Forge runs.
+  mlflow_experiment:
+    description: MLflow experiment path
+    default: /Shared/forge-orchestrator
+  # CONFIGURE(optimizer_model): Model used by the Forge optimizer.
+  optimizer_model:
+    description: Optimizer model
+    default: databricks-claude-opus-4-7
+  # CONFIGURE(domain_config): Domain configuration file within the Git checkout.
+  domain_config:
+    description: Domain configuration path
+    default: scaffold/harness.yaml
+
+resources:
+  apps:
+    forge_orchestrator:
+      name: forge-orchestrator-${bundle.target}
+      description: Forge Orchestrator for iterative ANVIL optimization
+      source_code_path: ..
+      config:
+        command:
+          - uvicorn
+          - anvil.orchestrator.app:app
+          - --host
+          - 0.0.0.0
+          - --port
+          - "8000"
+        env:
+          - name: OMNIGENT_SERVER_URL
+            value: ${var.omnigent_server_url}
+          - name: OMNIGENT_AUTH_TOKEN
+            value: ${var.omnigent_auth_token}
+          - name: GIT_REMOTE_URL
+            value: ${var.git_remote_url}
+          - name: GIT_TOKEN
+            value: ${var.git_token}
+          - name: ANVIL_AI_GATEWAY_URL
+            value: ${var.ai_gateway_url}
+          - name: ANVIL_EVAL_ENGINE
+            value: ${var.eval_engine}
+          - name: MLFLOW_EXPERIMENT_NAME
+            value: ${var.mlflow_experiment}
+          - name: ANVIL_OPTIMIZER_MODEL
+            value: ${var.optimizer_model}
+          - name: ANVIL_DOMAIN_CONFIG
+            value: ${var.domain_config}
+
+targets:
+  dev:
+    default: true
+    mode: development
+  prod:
+    mode: production
