@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+jinja2
+httpx
+pydantic
+pyyaml
+databricks-sdk
+mlflow[databricks]
