@@ -191,9 +191,7 @@ class _KbToolExecutor:
         try:
             k = int(k_raw)
         except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"{SEARCH_TOOL_NAME}: 'k' must be an integer (got {k_raw!r})"
-            ) from exc
+            raise ValueError(f"{SEARCH_TOOL_NAME}: 'k' must be an integer (got {k_raw!r})") from exc
         if k <= 0:
             raise ValueError(f"{SEARCH_TOOL_NAME}: 'k' must be > 0 (got {k})")
         # Emit a RETRIEVER span so MLflow's RetrievalGroundedness

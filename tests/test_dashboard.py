@@ -32,9 +32,7 @@ def test_pareto_point_extraction():
 
 def test_pareto_point_extraction_from_production_frontier_shape():
     raw = Frontier.from_scores({"accuracy": 0.8, "tokens": 90}).to_dict()
-    assert pareto_frontier_points(raw) == [
-        {"round_id": None, "accuracy": 0.8, "tokens": 90}
-    ]
+    assert pareto_frontier_points(raw) == [{"round_id": None, "accuracy": 0.8, "tokens": 90}]
 
 
 def test_all_round_points_marks_non_dominated_rounds():

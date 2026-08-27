@@ -13,9 +13,11 @@ async ``run_optimizer_session``. Everything else is plain Python.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -38,8 +40,10 @@ from anvil.loop.git_ops import (
 )
 from anvil.loop.mutations_log import MutationRecord, append_mutation
 from anvil.optimizer import (
+    BackendConfig,
     NoopAction,
     apply_action,
+    get_backend,
     run_optimizer_session,
 )
 from anvil.runtime.loader import default_runtime_config_path
@@ -118,15 +122,27 @@ def run_round(
     # Re-enable by passing experiment_name + round_id when the
     # async-tracing pattern is validated. See:
     # https://docs.databricks.com/aws/en/mlflow3/genai/tracing/integrations/claude-code
-    action, transcript, parse_result = asyncio.run(
-        run_optimizer_session(
-            prompt=prompt,
-            cwd=str(repo_root),
-            max_turns=max_turns,
-            profile=profile,
-            optimizer_endpoint=optimizer_endpoint,
+    optimizer_cfg = _read_optimizer_config(scaffold_root)
+    if optimizer_cfg.get("backend") == "omnigent":
+        action, transcript, parse_result = asyncio.run(
+            _run_omnigent_session(
+                prompt=prompt,
+                repo_root=repo_root,
+                optimizer_cfg=optimizer_cfg,
+                max_turns=max_turns,
+                optimizer_endpoint=optimizer_endpoint,
+            )
         )
-    )
+    else:
+        action, transcript, parse_result = asyncio.run(
+            run_optimizer_session(
+                prompt=prompt,
+                cwd=str(repo_root),
+                max_turns=max_turns,
+                profile=profile,
+                optimizer_endpoint=optimizer_endpoint,
+            )
+        )
 
     # 3. Apply the action (writes scaffold files, edits harness.yaml).
     apply_result = apply_action(action, scaffold_root, mode=mode, repo_root=repo_root)
@@ -143,9 +159,7 @@ def run_round(
     # (files_changed populated but nothing staged) still returns the
     # current SHA instead of raising.
     applied_change = bool(
-        apply_result.files_added
-        or apply_result.files_changed
-        or apply_result.files_removed
+        apply_result.files_added or apply_result.files_changed or apply_result.files_removed
     )
     if applied_change:
         commit_message = f"round {round_id:03d}: {apply_result.action_summary or 'noop'}"
@@ -230,9 +244,7 @@ def run_round(
     configured_objectives = gate_cfg.pareto.objectives if gate_cfg.pareto.enabled else None
     if gate_cfg.pareto.enabled and not configured_objectives:
         configured_objectives = None
-    baseline_scores = (
-        scores_from_baseline(baseline, configured_objectives) if baseline else None
-    )
+    baseline_scores = scores_from_baseline(baseline, configured_objectives) if baseline else None
     mutated_scores = (
         scores_from_eval(eval_report, configured_objectives) if eval_report is not None else None
     )
@@ -398,9 +410,7 @@ def _read_optimization_mode(scaffold_root: Path | str) -> str:
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     mode = raw.get("mode", "prompt")
     if mode not in ("prompt", "code"):
-        raise ValueError(
-            f"unknown optimization mode {mode!r}; expected 'prompt' or 'code'"
-        )
+        raise ValueError(f"unknown optimization mode {mode!r}; expected 'prompt' or 'code'")
     return mode
 
 
@@ -417,6 +427,93 @@ def _read_optimizer_endpoint(scaffold_root: Path | str) -> str | None:
         return None
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return raw.get("optimizer_endpoint")
+
+
+def _read_optimizer_config(scaffold_root: Path | str) -> dict[str, Any]:
+    """Read the ``optimizer`` section from harness/config.yaml.
+
+    Returns an empty dict when the file or section is absent — backward
+    compatible: no ``optimizer`` block means the local backend (the
+    existing ``run_optimizer_session`` path). Only the ``optimizer`` key
+    is read here; full-file validation is enforced by the runtime loader.
+    """
+    path = default_runtime_config_path(Path(scaffold_root))
+    if not path.is_file():
+        return {}
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    optimizer = raw.get("optimizer")
+    return optimizer if isinstance(optimizer, dict) else {}
+
+
+async def _run_omnigent_session(
+    *,
+    prompt: str,
+    repo_root: Path,
+    optimizer_cfg: dict[str, Any],
+    max_turns: int,
+    optimizer_endpoint: str | None,
+) -> tuple[Any, str, Any]:
+    """Run the optimizer on a managed Omnigent server.
+
+    Builds the backend from the ``optimizer:`` config section, collects
+    the scaffold tree into a flat ``relative_path -> content`` dict, and
+    delegates to :func:`get_backend`. Returns the same 3-tuple
+    ``(action, transcript, parse_result)`` as
+    :func:`run_optimizer_session` so the rest of the round is
+    backend-agnostic.
+    """
+    scaffold_files = _collect_scaffold_files(repo_root)
+    bundle_rel = optimizer_cfg.get("agent_bundle_path", "agents/forge_optimizer.yaml")
+    bundle_path = Path(bundle_rel)
+    if not bundle_path.is_absolute():
+        bundle_path = (repo_root / bundle_rel).resolve()
+    cfg = BackendConfig(
+        backend="omnigent",
+        server_url=optimizer_cfg.get("server_url", "http://localhost:6767"),
+        auth_token=optimizer_cfg.get("auth_token") or None,
+        agent_bundle_path=str(bundle_path),
+        model=optimizer_endpoint,
+        max_turns=max_turns,
+    )
+    backend = get_backend(cfg)
+    result = await backend.run(
+        prompt=prompt,
+        scaffold_files=scaffold_files,
+        max_turns=max_turns,
+        model=optimizer_endpoint,
+    )
+    return result.action, result.transcript, result.parse_result
+
+
+def _collect_scaffold_files(repo_root: Path) -> dict[str, str]:
+    """Collect the scaffold + config + prompts + baseline tree for upload.
+
+    Walks the directories the optimizer agent reads from
+    (``scaffold/``, ``prompts/``, ``harness/``, ``agents/``) and returns a
+    flat ``{relative_path: content}`` dict of UTF-8 text files. The
+    cached eval baseline + frontier JSONs are included so the agent can
+    diagnose the score to beat. Binary and unreadable files are skipped.
+    """
+    files: dict[str, str] = {}
+    for sub in ("scaffold", "prompts", "harness", "agents"):
+        root = repo_root / sub
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*")):
+            if not path.is_file():
+                continue
+            try:
+                content = path.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            files[path.relative_to(repo_root).as_posix()] = content
+    for name in ("baseline.json", "frontier.json"):
+        p = repo_root / "eval" / "runs" / name
+        if not p.is_file():
+            continue
+        with contextlib.suppress(UnicodeDecodeError, OSError):
+            files[p.relative_to(repo_root).as_posix()] = p.read_text(encoding="utf-8")
+    return files
 
 
 def _build_critique_md(

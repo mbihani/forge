@@ -115,7 +115,9 @@ def _hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _read_scaffold_file(scaffold_root: Path, kind: Literal["skill", "rule"], filename: str) -> tuple[dict, str, str]:
+def _read_scaffold_file(
+    scaffold_root: Path, kind: Literal["skill", "rule"], filename: str
+) -> tuple[dict, str, str]:
     """Read one scaffold file. Return (frontmatter, body, sha256)."""
     subdir = "skills" if kind == "skill" else "rules"
     path = scaffold_root / subdir / filename

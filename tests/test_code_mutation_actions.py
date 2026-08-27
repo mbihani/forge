@@ -387,9 +387,7 @@ def test_apply_delete_agent_missing_rejected(tmp_path: Path) -> None:
 def test_apply_delete_agent_protected_file_path(tmp_path: Path) -> None:
     """When agent_module is a .py file path matching the delete target,
     the delete is rejected."""
-    scaffold_root = _code_mode_scaffold(
-        tmp_path, agent_module="agents/active_agent.py"
-    )
+    scaffold_root = _code_mode_scaffold(tmp_path, agent_module="agents/active_agent.py")
     repo_root = tmp_path
 
     agent_path = repo_root / "agents" / "active_agent.py"
@@ -408,9 +406,7 @@ def test_apply_delete_agent_protected_file_path(tmp_path: Path) -> None:
 def test_apply_delete_agent_protected_dotted_path(tmp_path: Path) -> None:
     """When agent_module is a dotted path like agents.foo, the
     corresponding agents/foo.py is protected."""
-    scaffold_root = _code_mode_scaffold(
-        tmp_path, agent_module="agents.active_agent"
-    )
+    scaffold_root = _code_mode_scaffold(tmp_path, agent_module="agents.active_agent")
     repo_root = tmp_path
 
     agent_path = repo_root / "agents" / "active_agent.py"
@@ -623,7 +619,9 @@ def test_commit_includes_agents_directory(tmp_path: Path) -> None:
 
     changed = subprocess.run(
         ["git", "-C", str(repo), "diff-tree", "--no-commit-id", "--name-only", "-r", sha],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout
     assert "agents/candidate.py" in changed
 
@@ -647,9 +645,14 @@ def test_commit_all_noop_without_agents_dir(tmp_path: Path) -> None:
 
     # No agents/ dir, no changes — commit_all returns the current SHA.
     sha = commit_all(repo, message="noop round")
-    assert sha == subprocess.run(
-        ["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True,
-    ).stdout.strip()
+    assert (
+        sha
+        == subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    )
 
 
 # ---------------------------------------------------------------------------

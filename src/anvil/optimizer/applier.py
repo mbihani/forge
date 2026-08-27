@@ -103,35 +103,56 @@ def apply_action(
 
     if isinstance(action, AddSkillAction):
         return _apply_add_file(
-            root, role="skill", target=action.target_file, content=action.content,
+            root,
+            role="skill",
+            target=action.target_file,
+            content=action.content,
             rationale=action.rationale,
         )
     if isinstance(action, EditSkillAction):
         return _apply_edit_file(
-            root, role="skill", target=action.target_file, content=action.content,
+            root,
+            role="skill",
+            target=action.target_file,
+            content=action.content,
             rationale=action.rationale,
         )
     if isinstance(action, DeleteSkillAction):
         return _apply_delete_file(
-            root, role="skill", target=action.target, rationale=action.rationale,
+            root,
+            role="skill",
+            target=action.target,
+            rationale=action.rationale,
         )
     if isinstance(action, AddRuleAction):
         return _apply_add_file(
-            root, role="rule", target=action.target_file, content=action.content,
+            root,
+            role="rule",
+            target=action.target_file,
+            content=action.content,
             rationale=action.rationale,
         )
     if isinstance(action, EditRuleAction):
         return _apply_edit_file(
-            root, role="rule", target=action.target_file, content=action.content,
+            root,
+            role="rule",
+            target=action.target_file,
+            content=action.content,
             rationale=action.rationale,
         )
     if isinstance(action, DeleteRuleAction):
         return _apply_delete_file(
-            root, role="rule", target=action.target, rationale=action.rationale,
+            root,
+            role="rule",
+            target=action.target,
+            rationale=action.rationale,
         )
     if isinstance(action, ChangeSamplingAction):
         return _apply_change_sampling(
-            root, field_name=action.field, value=action.value, rationale=action.rationale,
+            root,
+            field_name=action.field,
+            value=action.value,
+            rationale=action.rationale,
         )
     if isinstance(action, WriteAgentAction):
         return _apply_write_agent(action, repo_root)
@@ -167,9 +188,7 @@ def _validate_action_mode(action_kind: str, mode: str) -> None:
                 f"(harness/config.yaml > mode: prompt)"
             )
     else:
-        raise ApplyError(
-            f"unknown optimization mode {mode!r}; expected 'prompt' or 'code'"
-        )
+        raise ApplyError(f"unknown optimization mode {mode!r}; expected 'prompt' or 'code'")
 
 
 # ---------------------------------------------------------------------------
@@ -178,13 +197,16 @@ def _validate_action_mode(action_kind: str, mode: str) -> None:
 
 
 def _apply_add_file(
-    root: Path, *, role: str, target: str, content: str, rationale: str,
+    root: Path,
+    *,
+    role: str,
+    target: str,
+    content: str,
+    rationale: str,
 ) -> ApplyResult:
     path = root / target
     if path.exists():
-        raise ApplyError(
-            f"{role} '{target}' already exists; use edit_{role} instead"
-        )
+        raise ApplyError(f"{role} '{target}' already exists; use edit_{role} instead")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(_ensure_trailing_newline(content), encoding="utf-8")
 
@@ -210,13 +232,16 @@ def _apply_add_file(
 
 
 def _apply_edit_file(
-    root: Path, *, role: str, target: str, content: str, rationale: str,
+    root: Path,
+    *,
+    role: str,
+    target: str,
+    content: str,
+    rationale: str,
 ) -> ApplyResult:
     path = root / target
     if not path.is_file():
-        raise ApplyError(
-            f"{role} '{target}' does not exist; use add_{role} instead"
-        )
+        raise ApplyError(f"{role} '{target}' does not exist; use add_{role} instead")
     path.write_text(_ensure_trailing_newline(content), encoding="utf-8")
     return ApplyResult(
         files_changed=[f"scaffold/{target}"],
@@ -225,7 +250,11 @@ def _apply_edit_file(
 
 
 def _apply_delete_file(
-    root: Path, *, role: str, target: str, rationale: str,
+    root: Path,
+    *,
+    role: str,
+    target: str,
+    rationale: str,
 ) -> ApplyResult:
     path = root / target
     if not path.is_file():
@@ -240,7 +269,8 @@ def _apply_delete_file(
     entries = list(harness.get(list_key) or [])
     filename = target.split("/", 1)[1]
     remaining = [
-        entry for entry in entries
+        entry
+        for entry in entries
         if not (isinstance(entry, dict) and entry.get("file") == filename)
     ]
     path.unlink()
@@ -259,7 +289,11 @@ def _apply_delete_file(
 
 
 def _apply_change_sampling(
-    root: Path, *, field_name: str, value: float | int | str | None, rationale: str,
+    root: Path,
+    *,
+    field_name: str,
+    value: float | int | str | None,
+    rationale: str,
 ) -> ApplyResult:
     harness_path = root / "harness.yaml"
     harness = _load_yaml(harness_path)
@@ -289,9 +323,7 @@ def _check_path_safe(target_path: Path, repo_root: Path) -> None:
     try:
         resolved.relative_to(agents_dir)
     except ValueError:
-        raise ApplyError(
-            f"target path {target_path} resolves outside agents/"
-        ) from None
+        raise ApplyError(f"target path {target_path} resolves outside agents/") from None
 
 
 def _apply_write_agent(action: WriteAgentAction, repo_root: Path) -> ApplyResult:
@@ -336,7 +368,9 @@ def _apply_write_agent(action: WriteAgentAction, repo_root: Path) -> ApplyResult
 
 
 def _apply_delete_agent(
-    action: DeleteAgentAction, repo_root: Path, scaffold_root: Path,
+    action: DeleteAgentAction,
+    repo_root: Path,
+    scaffold_root: Path,
 ) -> ApplyResult:
     """Delete an agent module, protecting the configured baseline.
 
@@ -357,9 +391,7 @@ def _apply_delete_agent(
         )
 
     if not target_path.is_file():
-        raise ApplyError(
-            f"agent {action.target!r} does not exist and cannot be deleted"
-        )
+        raise ApplyError(f"agent {action.target!r} does not exist and cannot be deleted")
 
     target_path.unlink()
 

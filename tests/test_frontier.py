@@ -202,12 +202,7 @@ def test_should_keep_reverts_when_tracked_objective_missing() -> None:
     # Without explicit objectives — the normal call path
     assert Frontier.should_keep(mutated, frontier) is False
     # With explicit objectives — also fails closed
-    assert (
-        Frontier.should_keep(
-            mutated, frontier, objectives=["correctness", "safety"]
-        )
-        is False
-    )
+    assert Frontier.should_keep(mutated, frontier, objectives=["correctness", "safety"]) is False
 
 
 def test_should_keep_new_objective_extends_frontier() -> None:

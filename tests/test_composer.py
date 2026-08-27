@@ -283,7 +283,10 @@ def test_real_scaffold_composes_clean(tmp_path: Path, monkeypatch: pytest.Monkey
     assert optimizer.manifest.files[0].kind == "identity"
 
     # The runtime prompt must NOT contain the meta-optimizer rule body.
-    assert "no_repeat_failed_mutations" not in runtime.text.lower() or "Loop-detection" not in runtime.text
+    assert (
+        "no_repeat_failed_mutations" not in runtime.text.lower()
+        or "Loop-detection" not in runtime.text
+    )
 
     # answer_scope_discipline is runtime-only — present on runtime, absent on optimizer.
     assert "Answer-scope discipline" in runtime.text

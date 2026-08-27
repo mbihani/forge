@@ -95,9 +95,7 @@ class Frontier:
         else:
             self._objectives = []
         self.pareto = pareto
-        self.directions = {
-            obj: (directions or {}).get(obj, "maximize") for obj in self._objectives
-        }
+        self.directions = {obj: (directions or {}).get(obj, "maximize") for obj in self._objectives}
         self.sources = {obj: (sources or {}).get(obj, obj) for obj in self._objectives}
         self.epsilon = float(epsilon)
 

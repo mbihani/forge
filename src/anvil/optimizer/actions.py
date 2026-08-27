@@ -193,8 +193,7 @@ def _check_relative_path(path: str, *, expected_dir: str) -> str:
     parts = path.split("/")
     if parts[0] != expected_dir:
         raise ValueError(
-            f"target_file must live under scaffold/{expected_dir}/, "
-            f"got first segment {parts[0]!r}"
+            f"target_file must live under scaffold/{expected_dir}/, got first segment {parts[0]!r}"
         )
     if not path.endswith(".md"):
         raise ValueError(f"target_file must be a .md file, got {path!r}")
@@ -212,9 +211,7 @@ def _check_agent_path(path: str) -> str:
         raise ValueError(f"target must be relative, got {path!r}")
     parts = path.split("/")
     if parts[0] != "agents":
-        raise ValueError(
-            f"target must live under agents/, got first segment {parts[0]!r}"
-        )
+        raise ValueError(f"target must live under agents/, got first segment {parts[0]!r}")
     if not path.endswith(".py"):
         raise ValueError(f"target must be a .py file, got {path!r}")
     return path

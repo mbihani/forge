@@ -72,9 +72,7 @@ def check_ast_denylist(file_path: Path | str) -> None:
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
             if _forbidden_import(module):
-                raise CodeValidationError(
-                    f"forbidden import {module!r} at line {node.lineno}"
-                )
+                raise CodeValidationError(f"forbidden import {module!r} at line {node.lineno}")
 
 
 def validate_imports(file_path: Path | str) -> None:

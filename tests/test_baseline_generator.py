@@ -84,8 +84,7 @@ def _fake_report() -> EvalReport:
         trace_ids=["t0", "t1"],
         cost_metrics={"total_context_chars": 128.0, "n_rows": 8.0},
         scorer_fingerprint=(
-            '[{"check_function": null, "name": "correctness", '
-            '"type": "llm", "weight": 1.0}]'
+            '[{"check_function": null, "name": "correctness", "type": "llm", "weight": 1.0}]'
         ),
     )
 
@@ -539,7 +538,7 @@ def test_is_compatible_skips_fingerprint_when_current_empty() -> None:
 
 def test_cached_baseline_fingerprint_round_trips(tmp_path: Path) -> None:
     """The fingerprint survives a save → load cycle."""
-    from anvil.eval.cache import save_baseline, load_baseline
+    from anvil.eval.cache import load_baseline, save_baseline
 
     fp = '[{"name": "correctness", "type": "llm", "weight": 1.0, "check_function": null}]'
     baseline = _baseline_from_fake()

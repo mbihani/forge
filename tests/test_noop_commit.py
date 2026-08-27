@@ -39,7 +39,6 @@ from anvil.loop.round import run_round
 from anvil.optimizer.actions import NoopAction
 from anvil.optimizer.parser import ParseResult
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -48,7 +47,9 @@ from anvil.optimizer.parser import ParseResult
 def _git(repo: Path, *args: str) -> str:
     proc = subprocess.run(
         ["git", "-C", str(repo), *args],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert proc.returncode == 0, proc.stderr
     return proc.stdout.strip()
@@ -104,12 +105,8 @@ def _init_repo(tmp_path: Path) -> Path:
 
 def _parse_fail_noop() -> tuple[NoopAction, str, ParseResult]:
     """A parse-failure noop: no json-action block in the transcript."""
-    action = NoopAction(
-        rationale="parser: no `json-action` fenced block in transcript"
-    )
-    parse_result = ParseResult(
-        action=action, parse_status="no_block", n_blocks_found=0
-    )
+    action = NoopAction(rationale="parser: no `json-action` fenced block in transcript")
+    parse_result = ParseResult(action=action, parse_status="no_block", n_blocks_found=0)
     return action, "(no json-action block)\n", parse_result
 
 
@@ -158,7 +155,10 @@ def test_run_round_parse_fail_noop_does_not_crash(
     parent_sha = _git(repo, "rev-parse", "anvil/exp")
 
     report = run_round(
-        round_id=1, repo_root=repo, parent_branch="anvil/exp", max_turns=1,
+        round_id=1,
+        repo_root=repo,
+        parent_branch="anvil/exp",
+        max_turns=1,
     )
 
     assert report.decision is Decision.NOOP
@@ -188,7 +188,10 @@ def test_run_round_loop_continues_past_parse_fail_noop(
     reports = []
     for rid in (1, 2):
         report = run_round(
-            round_id=rid, repo_root=repo, parent_branch="anvil/exp", max_turns=1,
+            round_id=rid,
+            repo_root=repo,
+            parent_branch="anvil/exp",
+            max_turns=1,
         )
         reports.append(report)
 
@@ -201,9 +204,7 @@ def test_run_round_loop_continues_past_parse_fail_noop(
     assert "anvil/exp-round-2" not in _git(repo, "branch", "--list")
 
 
-def test_run_round_clean_noop_unchanged(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_run_round_clean_noop_unchanged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A VALID noop (optimizer emits a proper `noop` action) on a clean
     tree must behave exactly as before: decision=NOOP, no crash, parent
     SHA recorded. Guards the 'keep clean-noop behavior unchanged' rule.
@@ -222,7 +223,10 @@ def test_run_round_clean_noop_unchanged(
 
     parent_sha = _git(repo, "rev-parse", "anvil/exp")
     report = run_round(
-        round_id=1, repo_root=repo, parent_branch="anvil/exp", max_turns=1,
+        round_id=1,
+        repo_root=repo,
+        parent_branch="anvil/exp",
+        max_turns=1,
     )
 
     assert report.decision is Decision.NOOP
@@ -288,7 +292,5 @@ def test_commit_all_commits_when_scaffold_actually_staged(tmp_path: Path) -> Non
     sha = commit_all(repo, message="round 001: edit scaffold/harness.yaml")
 
     assert sha != head_before
-    changed = _git(
-        repo, "diff-tree", "--no-commit-id", "--name-only", "-r", sha
-    )
+    changed = _git(repo, "diff-tree", "--no-commit-id", "--name-only", "-r", sha)
     assert "scaffold/harness.yaml" in changed
