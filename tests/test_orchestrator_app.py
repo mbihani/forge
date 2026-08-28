@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -132,3 +133,101 @@ def test_dashboard_page(client: TestClient) -> None:
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
     assert "Forge Orchestrator" in response.text
+
+
+# ---------------------------------------------------------------------------
+# Issue 3: Stored-XSS — malicious round JSON must not inject HTML
+# ---------------------------------------------------------------------------
+
+
+def test_dashboard_escapes_xss_in_round_json(client: TestClient, tmp_path: Path) -> None:
+    """A crafted round JSON with an XSS payload must not inject raw HTML."""
+    runs_dir = tmp_path / "eval" / "runs"
+    runs_dir.mkdir(parents=True)
+    xss = "<script>alert(1)</script>"
+    (runs_dir / "round_001.json").write_text(
+        json.dumps(
+            {
+                "round_id": xss,
+                "decision": xss,
+                "action_kind": xss,
+                "baseline_score": xss,
+                "score_delta_vs_parent": xss,
+                "aggregate": xss,
+            }
+        ),
+        encoding="utf-8",
+    )
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "<script>" not in response.text
+    assert "&lt;script&gt;" in response.text  # escaped form present
+
+
+def test_render_dashboard_escapes_all_values() -> None:
+    """_render_dashboard must escape every value even without upstream validation."""
+    from anvil.orchestrator.app import _render_dashboard
+
+    xss = "<script>alert(1)</script>"
+    html_output = _render_dashboard(
+        [
+            {
+                "round_id": xss,
+                "decision": xss,
+                "action_kind": xss,
+                "baseline_score": xss,
+                "score_delta": xss,
+                "aggregate": xss,
+            }
+        ]
+    )
+    assert "<script>" not in html_output
+    assert "&lt;script&gt;" in html_output
+
+
+# ---------------------------------------------------------------------------
+# Issue 4: run_round must execute on a worker thread
+# ---------------------------------------------------------------------------
+
+
+def test_start_round_runs_on_worker_thread(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """run_round must execute in a thread pool, not on the event loop thread."""
+    main_thread_id = threading.current_thread().ident
+    captured: dict[str, Any] = {}
+
+    def mock_run_round(**kwargs: Any) -> RoundReport:
+        captured["thread_id"] = threading.current_thread().ident
+        return RoundReport(
+            round_id=kwargs["round_id"],
+            branch="anvil/exp-round-1",
+            decision=Decision.KEEP,
+            action_kind="edit_skill",
+            parse_status="ok",
+            diff_summary="edited skill X",
+        )
+
+    monkeypatch.setattr("anvil.orchestrator.app.run_round", mock_run_round)
+    response = client.post("/rounds", json={"round_id": 1})
+    assert response.status_code == 200
+    assert captured["thread_id"] is not None
+    assert captured["thread_id"] != main_thread_id
+
+
+# ---------------------------------------------------------------------------
+# Issue 6: Concurrent POST /rounds must return 409
+# ---------------------------------------------------------------------------
+
+
+def test_start_round_conflict_409(client: TestClient) -> None:
+    """A second POST /rounds while a round is running gets HTTP 409."""
+    from anvil.orchestrator.app import _round_lock
+
+    _round_lock.acquire()
+    try:
+        response = client.post("/rounds", json={"round_id": 1})
+        assert response.status_code == 409
+        assert "already running" in response.json()["detail"]
+    finally:
+        _round_lock.release()

@@ -156,6 +156,8 @@ optimizer = [
     { name = "claude-agent-sdk" },
 ]
 orchestrator = [
+    { name = "anthropic" },
+    { name = "claude-agent-sdk" },
     { name = "fastapi" },
     { name = "jinja2" },
     { name = "uvicorn" },
@@ -165,6 +167,7 @@ orchestrator = [
 requires-dist = [
     { name = "altair", marker = "extra == 'dashboard'", specifier = ">=5.0" },
     { name = "anthropic", marker = "extra == 'optimizer'", specifier = ">=0.40" },
+    { name = "anvil", extras = ["optimizer"], marker = "extra == 'orchestrator'" },
     { name = "claude-agent-sdk", marker = "extra == 'optimizer'", specifier = ">=0.1.0" },
     { name = "databricks-agents", specifier = ">=0.16.0" },
     { name = "databricks-sdk", specifier = ">=0.40.0" },

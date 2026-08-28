@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import re
+import threading
 from contextlib import asynccontextmanager
 from functools import partial
 from html import escape
@@ -31,6 +32,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
+from anvil.loop.decision import Decision
 from anvil.loop.round import RoundReport, run_round
 
 logger = logging.getLogger("anvil.orchestrator")
@@ -49,6 +51,13 @@ _ENV_VARS = [
     "ANVIL_OPTIMIZER_MODEL",
     "ANVIL_DOMAIN_CONFIG",
 ]
+
+# Env vars whose raw values are credentials — must never be logged.
+_SECRET_ENV_VARS = frozenset({"OMNIGENT_AUTH_TOKEN", "GIT_TOKEN"})
+
+# Valid decision values (for sanitizing persisted round JSON before
+# it reaches the HTML dashboard or API responses).
+_VALID_DECISIONS = frozenset(d.value for d in Decision)
 
 # ---------------------------------------------------------------------------
 # Module-level config — repo_root
@@ -131,7 +140,7 @@ class RoundSummaryResponse(BaseModel):
 
 def _round_report_to_response(report: RoundReport) -> RoundReportResponse:
     d = dataclasses.asdict(report)
-    d["decision"] = str(report.decision)
+    d["decision"] = report.decision.value
     return RoundReportResponse(**d)
 
 
@@ -145,7 +154,12 @@ def _round_json_path(repo_root: Path, round_id: int) -> Path:
 
 
 def _list_round_summaries(repo_root: Path) -> list[dict[str, Any]]:
-    """Scan eval/runs/round_*.json and return summaries sorted by round_id."""
+    """Scan eval/runs/round_*.json and return summaries sorted by round_id.
+
+    Fields read from untrusted persisted JSON are validated: ``decision``
+    must be a known :class:`Decision` value, ``round_id`` is coerced to
+    ``int``. Arbitrary keys are never forwarded to the dashboard or API.
+    """
     runs_dir = repo_root / "eval" / "runs"
     if not runs_dir.is_dir():
         return []
@@ -155,10 +169,20 @@ def _list_round_summaries(repo_root: Path) -> list[dict[str, Any]]:
             data = json.loads(p.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             continue
+        # Validate decision — must be a known Decision value.
+        decision = data.get("decision")
+        if decision not in _VALID_DECISIONS:
+            decision = None
+        # Coerce round_id to int — don't trust arbitrary JSON values.
+        round_id = data.get("round_id")
+        try:
+            round_id = int(round_id)
+        except (TypeError, ValueError):
+            round_id = None
         summaries.append(
             {
-                "round_id": data.get("round_id"),
-                "decision": data.get("decision"),
+                "round_id": round_id,
+                "decision": decision,
                 "action_kind": data.get("action_kind"),
                 "baseline_score": data.get("baseline_score"),
                 "score_delta": data.get("score_delta_vs_parent"),
@@ -240,14 +264,18 @@ _DASHBOARD_TAIL = """
 
 
 def _render_dashboard(rounds: list[dict[str, Any]]) -> str:
-    """Render a simple HTML status page from round summaries."""
+    """Render a simple HTML status page from round summaries.
+
+    Every value inserted into the HTML template is escaped with
+    :func:`html.escape` to prevent stored-XSS from crafted round JSON.
+    """
     if not rounds:
         rows_html = '<tr><td colspan="6" class="empty">No rounds yet.</td></tr>'
     else:
         row_parts: list[str] = []
         for r in rounds:
             decision = escape(str(r.get("decision") or "—"))
-            decision_cls = (r.get("decision") or "").lower()
+            decision_cls = escape((r.get("decision") or "").lower())
             sd = r.get("score_delta")
             if isinstance(sd, int | float):
                 sd_str = f"{sd:+.4f}"
@@ -261,12 +289,12 @@ def _render_dashboard(rounds: list[dict[str, Any]]) -> str:
             agg_str = f"{agg:.4f}" if isinstance(agg, int | float) else "—"
             row_parts.append(
                 "<tr>"
-                f"<td>{r.get('round_id', '—')}</td>"
+                f"<td>{escape(str(r.get('round_id', '—')))}</td>"
                 f'<td><span class="badge {decision_cls}">{decision}</span></td>'
                 f"<td>{escape(str(r.get('action_kind') or '—'))}</td>"
-                f"<td>{bs_str}</td>"
-                f'<td class="{sd_cls}">{sd_str}</td>'
-                f"<td>{agg_str}</td>"
+                f"<td>{escape(bs_str)}</td>"
+                f'<td class="{escape(sd_cls)}">{escape(sd_str)}</td>'
+                f"<td>{escape(agg_str)}</td>"
                 "</tr>"
             )
         rows_html = "\n".join(row_parts)
@@ -281,11 +309,19 @@ def _render_dashboard(rounds: list[dict[str, Any]]) -> str:
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     for var in _ENV_VARS:
-        logger.info("startup %s=%s", var, os.environ.get(var, "<unset>"))
+        val = os.environ.get(var)
+        if var in _SECRET_ENV_VARS:
+            logger.info("startup %s=%s", var, "set" if val else "(not set)")
+        else:
+            logger.info("startup %s=%s", var, val or "<unset>")
     yield
 
 
 app = FastAPI(title="Forge Orchestrator", lifespan=_lifespan)
+
+# Prevents two concurrent POST /rounds from racing on the same auto-
+# detected round ID and performing conflicting git operations.
+_round_lock = threading.Lock()
 
 
 @app.get("/health")
@@ -295,22 +331,27 @@ async def health() -> dict[str, str]:
 
 @app.post("/rounds", response_model=RoundReportResponse)
 async def start_round(req: RoundCreateRequest) -> RoundReportResponse:
-    repo_root = get_repo_root()
-    round_id = req.round_id if req.round_id is not None else _next_round_id(repo_root)
-    max_turns = req.max_turns if req.max_turns is not None else 30
+    if not _round_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="a round is already running")
     try:
-        report = await anyio.to_thread.run_sync(
-            partial(
-                run_round,
-                round_id=round_id,
-                repo_root=repo_root,
-                eval_mode=req.eval_mode,
-                max_turns=max_turns,
+        repo_root = get_repo_root()
+        round_id = req.round_id if req.round_id is not None else _next_round_id(repo_root)
+        max_turns = req.max_turns if req.max_turns is not None else 30
+        try:
+            report = await anyio.to_thread.run_sync(
+                partial(
+                    run_round,
+                    round_id=round_id,
+                    repo_root=repo_root,
+                    eval_mode=req.eval_mode,
+                    max_turns=max_turns,
+                )
             )
-        )
-    except Exception as exc:  # noqa: BLE001 — surface any round failure
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return _round_report_to_response(report)
+        except Exception as exc:  # noqa: BLE001 — surface any round failure
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return _round_report_to_response(report)
+    finally:
+        _round_lock.release()
 
 
 @app.get("/rounds", response_model=list[RoundSummaryResponse])
