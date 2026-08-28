@@ -241,9 +241,7 @@ def test_apply_delete_rule_removes_file_and_registry_entry(tmp_path: Path) -> No
 def test_apply_delete_identity_skill_rejected(tmp_path: Path) -> None:
     root = _bare_scaffold(tmp_path)
     with pytest.raises(ApplyError, match="cannot delete identity skill"):
-        apply_action(
-            DeleteSkillAction(target="skills/identity.md", rationale="bad idea"), root
-        )
+        apply_action(DeleteSkillAction(target="skills/identity.md", rationale="bad idea"), root)
     assert (root / "skills" / "identity.md").is_file()
     assert _read_yaml(root / "harness.yaml")["skills"] == [{"file": "identity.md"}]
 
@@ -256,9 +254,7 @@ def test_apply_delete_crlf_identity_skill_rejected(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ApplyError, match="cannot delete identity skill"):
-        apply_action(
-            DeleteSkillAction(target="skills/identity.md", rationale="bad idea"), root
-        )
+        apply_action(DeleteSkillAction(target="skills/identity.md", rationale="bad idea"), root)
 
     assert (root / "skills" / "identity.md").is_file()
     assert _read_yaml(root / "harness.yaml")["skills"] == [{"file": "identity.md"}]

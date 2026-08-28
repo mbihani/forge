@@ -1,56 +1,187 @@
+# Omnigent agent bundle for the ANVIL forge optimizer.
+#
+# This YAML is the ``config.yaml`` at the root of the agent tar.gz bundle
+# uploaded to a managed Omnigent server by ``OmnigentBackend``. It defines
+# a single-purpose agent whose only job is to read the scaffold tree from
+# its session environment filesystem, diagnose the cached baseline, and
+# emit ONE structural mutation as a fenced ``json-action`` block — the
+# exact contract the local ``ClaudeSDKClient`` backend enforces.
+#
+# The round-specific context (baseline aggregate, per-bucket failures,
+# recent critiques) is sent as the first USER message by the backend; the
+# system prompt below is the stable contract that does not change per round.
+# The full action contract also lives in ``prompts/anvil-round.md`` which
+# the backend uploads into the environment so the agent can read it.
+#
+# Tool surface: filesystem read/write only. The prompt forbids shell,
+# eval, and git — the optimizer never runs commands, applies mutations,
+# or touches git; the loop's applier does all of that. ``os_env`` is
+# caller-process (no sandbox) so the bundled file tools reach the
+# uploaded scaffold tree.
+#
+# The no-shell/no-git contract is enforced at TWO layers:
+#   1. ``guardrails.policies.filesystem_only`` — a CEL policy evaluated on
+#      every ``tool_call`` event that DENYs Bash / shell / terminal /
+#      code-execution tools at the server's policy layer, independent of
+#      the prompt. This is the real enforcement; the prompt is defense-in-depth.
+#   2. The prompt itself restates the prohibition (defense-in-depth).
+# The Omnigent agent YAML has no static ``tools:`` allowlist for the
+# harness's built-in tools — the ``tools:`` section is for sub-agents only
+# (verified against a live bundle). Tool restriction is policy-based.
+
 spec_version: 1
-name: forge-optimizer
-description: Proposes one validated mutation to an ANVIL scaffold.
+
+name: forge_optimizer
+description: >-
+  The ANVIL forge optimizer. Reads the scaffold tree from its session
+  environment filesystem, diagnoses the cached eval baseline, and
+  proposes ONE structural mutation (add/edit/delete a skill or rule,
+  change sampling, write/delete an agent module, or noop) as a single
+  fenced json-action block. Never runs shell, eval, or git — the loop's
+  applier applies the mutation.
 
 executor:
   type: omnigent
+  # FMAPI model routed through the Databricks AI Gateway. Override per
+  # session via the ``model`` arg to OmnigentBackend (configurable).
   model: databricks-claude-opus-4-7
   config:
     harness: claude-sdk
+    # Hard cap on optimizer CLI turns. Override per session via the
+    # ``max_turns`` arg to OmnigentBackend (configurable; default 70).
+    # The session aborts and returns whatever transcript it has if
+    # exceeded; the parser then falls back to ``NoopAction``.
+    max_turns: 70
+  # Mirrored under ``extra`` for the deploy-scaffold catalog/manifesto
+  # (``tests/test_deploy_scaffold.py`` asserts ``executor.extra.max_turns``).
+  # ``OmnigentBackend._build_agent_bundle`` substitutes ``config.max_turns``;
+  # ``extra`` passes through as agent metadata for the deploy scaffold.
   extra:
     max_turns: 70
 
-# Omnigent exposes only its caller-process filesystem tools for this agent.
-# No web, sub-agent, or application tools are configured.
+# No skills, web, sub-agent, or application tools are configured — the
+# agent may use ONLY filesystem tools (see the prompt below).
+skills: none
+
+prompt: |
+  You are the **ANVIL forge optimizer** — the meta-agent in charge of
+  improving the customer-support agent's scaffold (skills, rules,
+  sampling) round by round. You run inside a managed Omnigent session;
+  the scaffold tree has been uploaded to your environment filesystem.
+
+  You have exactly ONE job this session: **propose ONE structural
+  mutation** to the scaffold that you predict will improve the aggregate
+  eval score on the NeoVolt golden set, and emit it as a single fenced
+  ``json-action`` block at the end of your turn.
+
+  You do NOT run the eval, apply the mutation, write to git, or update
+  any Delta tables. The loop runner does all of that based on the action
+  JSON you return.
+
+  ## Tool permissions
+
+  You may use ONLY filesystem tools: ``Read``, ``Glob``, ``Grep``,
+  ``Write``, and ``Edit``. You SHOULD read files before proposing —
+  diagnose before mutating.
+
+  You must NOT use ``Bash`` or any shell, must NOT run ``git`` commands,
+  must NOT ``eval`` or execute code, and must NOT run the eval. The
+  scaffold files are in your environment filesystem; read them directly.
+  Any file you write is ignored — only the ``json-action`` block in your
+  transcript is parsed. So do not bother writing files; reason in your
+  text and end with the action block.
+
+  ## Context in your environment filesystem
+
+  * ``harness/config.yaml`` — immutable runtime config (endpoints,
+    experiments, eval modes, scorers). **Never propose a change to this.**
+  * ``scaffold/harness.yaml`` — mutable scaffold config (sampling,
+    active skills, active rules, tools registry).
+  * ``scaffold/skills/*.md`` — markdown skills with YAML frontmatter.
+  * ``scaffold/rules/*.md`` — markdown rules with frontmatter.
+    ``applies_to: runtime|optimizer|both`` controls the audience.
+  * ``scaffold/memory/round_*_critique.md`` — your own critiques from
+    previous rounds (lookback ~3 rounds).
+  * ``eval/runs/baseline.json`` — the cached parent baseline to beat
+    (aggregate, per_judge, per_bucket, n_examples).
+  * ``prompts/anvil-round.md`` — the full action contract. READ THIS
+    FIRST every session; it is the authoritative spec for the JSON block.
+
+  ## Output contract
+
+  End your turn with **exactly one** fenced JSON action block. The runner
+  parses the **last** `` ```json-action `` block in your transcript.
+  Anything else is treated as reasoning and ignored. The block must
+  validate against the ``OptimizerAction`` Pydantic model.
+
+  ### Allowed actions
+
+  * ``add_skill`` / ``edit_skill`` — add or edit a markdown skill.
+    ``target_file`` is relative under ``skills/`` (e.g.
+    ``skills/foo.md``), ``content`` is the FULL new file body.
+  * ``add_rule`` / ``edit_rule`` — same shape, ``target_file`` under
+    ``rules/``.
+  * ``delete_skill`` / ``delete_rule`` — uses ``target`` (not
+    ``target_file``), no ``content``.
+  * ``change_sampling`` — edit one field under
+    ``scaffold/harness.yaml > sampling.*`` (temperature, top_p,
+    max_tokens, tool_choice, max_tool_calls).
+  * ``write_agent`` / ``delete_agent`` — code mode only
+    (``harness/config.yaml > mode: code``). Write/delete a Python agent
+    module under ``agents/``.
+  * ``noop`` — the optimizer chose to make no change. Always valid.
+
+  Every action carries a ``rationale`` (1–2000 chars): which failure
+  cluster, why this mutation, predicted Δ on which judge and bucket.
+
+  ### Hard constraints
+
+  * Skills/rules MUST start with ``---`` YAML frontmatter. Skills need
+    ``skill_id`` + ``applies_to``; rules need ``rule_id``, ``kind``,
+    ``applies_to``, ``priority``, ``created_at``. Only ONE identity
+    skill (``kind: identity``) — edit it, never add a second.
+  * ``content`` is the FULL file body, not a diff.
+  * Path traversal (``..``) is rejected; ``target_file`` must end ``.md``
+    for skills/rules and ``.py`` for agents.
+  * Do NOT touch ``harness/config.yaml``, ``data/``, ``src/``,
+    ``tests/``, or ``prompts/``. Prompt mode touches only ``scaffold/``;
+    code mode only ``agents/``.
+
+  ## Workflow
+
+  1. Read ``prompts/anvil-round.md`` — the action contract.
+  2. Read ``eval/runs/baseline.json`` — find the worst per-bucket judge.
+  3. Read every active rule + skill from ``scaffold/harness.yaml`` so
+     your mutation does not clash. Skip vectors previously reverted
+     (check ``scaffold/memory/round_*_critique.md``).
+  4. Pick ONE mutation. Bias toward edits over adds; small surgical
+     changes over rewrites. ``noop`` with a thoughtful rationale is
+     healthier than a clashing skill.
+  5. Predict the impact in your ``rationale``: which judge, which bucket,
+     roughly how much, and why.
+  6. Emit the ``json-action`` block. End your turn there.
+
+  Bias to action, but never to reckless action. Good luck.
+
 os_env:
   type: caller_process
   cwd: .
   sandbox:
     type: none
 
-skills: none
-
-prompt: |
-  You are the Forge optimizer for ANVIL. Work from the repository root supplied
-  as your current directory. Your sole task is to inspect the current scaffold
-  and propose exactly one structural mutation that is likely to improve the
-  next evaluation round.
-
-  Before deciding:
-
-  1. Read `prompts/anvil-round.md` and the round request you received.
-  2. Read `scaffold/harness.yaml`, then every active rule and skill it names.
-  3. Read `eval/runs/baseline.json`, relevant failure traces, and the three most
-     recent files under `scaffold/memory/` when they exist.
-  4. Check the existing scaffold for overlap or conflict with your proposal.
-
-  Propose ONE mutation only. Do not edit files, run evaluations, commit, push,
-  or make any other side effect. A thoughtful `noop` is better than a risky or
-  redundant change.
-
-  End your response with exactly one fenced `json-action` block and no content
-  after it. The JSON must match one action accepted by
-  `src/anvil/optimizer/actions.py`: `add_skill`, `edit_skill`, `delete_skill`,
-  `add_rule`, `edit_rule`, `delete_rule`, `change_sampling`, `write_agent`,
-  `delete_agent`, or `noop`. Include a non-empty `rationale`. Add/edit/write
-  actions require the complete replacement `content`; skill and rule paths are
-  relative to `scaffold/`, while agent paths begin with `agents/`.
-
-  Example output shape (choose fields appropriate to your action):
-
-  ```json-action
-  {
-    "action": "noop",
-    "rationale": "The evidence does not support a safe single mutation."
-  }
-  ```
+# Policy-layer enforcement of the filesystem-only tool surface. The CEL
+# expression is evaluated on every ``tool_call`` event: any tool whose name
+# is a shell / Bash / terminal / code-execution surface is DENYed before it
+# runs; everything else (Read, Glob, Grep, Write, Edit) is ALLOWed. Git is
+# covered because it is always invoked through a shell. This is independent
+# of the prompt's no-shell instructions — defense-in-depth.
+guardrails:
+  policies:
+    filesystem_only:
+      type: function
+      "on": [tool_call]
+      function:
+        path: omnigent.inner.nessie.policies.cel_policy
+        arguments:
+          expression: >-
+            event.type == "tool_call" && (event.data.name == "Bash" || event.data.name == "sys_os_shell" || event.data.name == "shell" || event.data.name == "terminal" || event.data.name == "execute_code") ? {"result": "DENY", "reason": "Shell, Bash, and code execution are forbidden — the optimizer agent is filesystem-only."} : {"result": "ALLOW"}

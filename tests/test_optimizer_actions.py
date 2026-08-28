@@ -144,7 +144,12 @@ def test_delete_path_security() -> None:
 
 def test_parse_change_sampling() -> None:
     transcript = _wrap_block(
-        {"action": "change_sampling", "field": "max_tool_calls", "value": 5, "rationale": "headroom"}
+        {
+            "action": "change_sampling",
+            "field": "max_tool_calls",
+            "value": 5,
+            "rationale": "headroom",
+        }
     )
     result = parse_action(transcript)
     assert result.parse_status == "ok"
@@ -160,9 +165,7 @@ def test_parse_noop_explicit() -> None:
 
 def test_parse_accepts_plain_json_fence() -> None:
     """Tolerate the model emitting ```json instead of ```json-action."""
-    transcript = _wrap_block(
-        {"action": "noop", "rationale": "explicit"}, fence="json"
-    )
+    transcript = _wrap_block({"action": "noop", "rationale": "explicit"}, fence="json")
     result = parse_action(transcript)
     assert result.parse_status == "ok"
     assert isinstance(result.action, NoopAction)
@@ -205,18 +208,14 @@ def test_parse_bad_json_returns_noop() -> None:
 
 def test_parse_schema_mismatch_returns_noop() -> None:
     """Action field unknown → noop."""
-    transcript = _wrap_block(
-        {"action": "delete_universe", "rationale": "burn it down"}
-    )
+    transcript = _wrap_block({"action": "delete_universe", "rationale": "burn it down"})
     result = parse_action(transcript)
     assert result.parse_status == "schema_mismatch"
     assert isinstance(result.action, NoopAction)
 
 
 def test_parse_missing_rationale_returns_noop() -> None:
-    transcript = _wrap_block(
-        {"action": "add_rule", "target_file": "rules/foo.md", "content": "x"}
-    )
+    transcript = _wrap_block({"action": "add_rule", "target_file": "rules/foo.md", "content": "x"})
     result = parse_action(transcript)
     assert result.parse_status == "schema_mismatch"
     assert isinstance(result.action, NoopAction)

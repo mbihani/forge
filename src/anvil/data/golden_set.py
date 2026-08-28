@@ -90,8 +90,7 @@ def select_subset(
         rows = by_bucket.get(bucket, [])
         if len(rows) < count:
             raise ValueError(
-                f"select_subset: bucket {bucket!r} has only {len(rows)} rows, "
-                f"requested {count}"
+                f"select_subset: bucket {bucket!r} has only {len(rows)} rows, requested {count}"
             )
         out.extend(rows[:count])
     return out

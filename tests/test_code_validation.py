@@ -80,9 +80,7 @@ def test_import_side_effect_is_isolated_to_temp_directory(tmp_path: Path) -> Non
         "ground_truth.csv",
     ],
 )
-def test_ast_denylist_rejects_forbidden_string_literals(
-    tmp_path: Path, literal: str
-) -> None:
+def test_ast_denylist_rejects_forbidden_string_literals(tmp_path: Path, literal: str) -> None:
     path = _candidate(tmp_path, f"REFERENCE = {literal!r}\n")
 
     with pytest.raises(CodeValidationError, match="forbidden reference"):
@@ -106,9 +104,7 @@ def test_ast_denylist_rejects_forbidden_imports(tmp_path: Path, source: str) -> 
     "source",
     ["import resolution\n", "from absolution import x\n", "import dissolution\n"],
 )
-def test_ast_denylist_import_terms_use_word_boundaries(
-    tmp_path: Path, source: str
-) -> None:
+def test_ast_denylist_import_terms_use_word_boundaries(tmp_path: Path, source: str) -> None:
     check_ast_denylist(_candidate(tmp_path, source))
 
 
@@ -120,9 +116,7 @@ def test_ast_denylist_import_terms_use_word_boundaries(
         "open('solution/output.txt', 'w')\n",
     ],
 )
-def test_ast_denylist_rejects_file_calls_with_forbidden_paths(
-    tmp_path: Path, source: str
-) -> None:
+def test_ast_denylist_rejects_file_calls_with_forbidden_paths(tmp_path: Path, source: str) -> None:
     with pytest.raises(CodeValidationError, match="forbidden reference"):
         check_ast_denylist(_candidate(tmp_path, source))
 
@@ -131,9 +125,7 @@ def test_ast_denylist_rejects_file_calls_with_forbidden_paths(
     "literal",
     ["evaluation", "evaluate", "contest_results", "resolution", "golden retriever"],
 )
-def test_ast_denylist_avoids_substring_false_positives(
-    tmp_path: Path, literal: str
-) -> None:
+def test_ast_denylist_avoids_substring_false_positives(tmp_path: Path, literal: str) -> None:
     check_ast_denylist(_candidate(tmp_path, f"DESCRIPTION = {literal!r}\n"))
 
 

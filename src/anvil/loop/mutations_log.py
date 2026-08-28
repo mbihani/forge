@@ -33,8 +33,8 @@ from __future__ import annotations
 
 import json
 import uuid
-from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -95,7 +95,7 @@ class MutationRecord:
             mutated_score=mutated_score,
             score_delta=score_delta,
             decision=decision,
-            decided_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            decided_at=datetime.now(UTC).isoformat(timespec="seconds"),
             mlflow_eval_run_id=mlflow_eval_run_id,
             parse_status=parse_status,
             notes=notes,

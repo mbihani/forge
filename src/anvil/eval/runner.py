@@ -35,8 +35,8 @@ import sys
 import warnings
 from collections import defaultdict
 from collections.abc import Callable
-from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -583,9 +583,7 @@ def _resilient_eval_harness():
     def _run_predict_with_minimal_trace_fallback(
         eval_item, predict_fn, run_id, rate_limiter, max_retries=0, experiment_id=None
     ):
-        _orig_run_predict(
-            eval_item, predict_fn, run_id, rate_limiter, max_retries, experiment_id
-        )
+        _orig_run_predict(eval_item, predict_fn, run_id, rate_limiter, max_retries, experiment_id)
         # harness.py:782 sets ``eval_item.trace = mlflow.get_trace(request_id)``.
         # On the Databricks backend that returns None for some rows. The
         # static-dataset path (harness.py:795) falls back to a minimal trace;

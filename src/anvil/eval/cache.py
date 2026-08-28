@@ -181,10 +181,13 @@ def is_compatible(
         or cached.judge_endpoint != judge_endpoint
     ):
         return False
-    if cached.scorer_fingerprint and scorer_fingerprint:
-        if cached.scorer_fingerprint != scorer_fingerprint:
-            return False
-    return True
+    # When both sides carry a non-empty fingerprint, they must match; an
+    # empty fingerprint on either side skips the check (backward compat).
+    return not (
+        cached.scorer_fingerprint
+        and scorer_fingerprint
+        and cached.scorer_fingerprint != scorer_fingerprint
+    )
 
 
 def report_to_baseline(

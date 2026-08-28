@@ -156,6 +156,26 @@ class ExperimentsConfig(BaseModel):
     optimizer: str
 
 
+class OptimizerBackendConfig(BaseModel):
+    """Schema of ``harness/config.yaml > optimizer`` — backend selection.
+
+    Selects where the optimizer agent runs (local ClaudeSDKClient vs a
+    managed Omnigent server). All fields are optional so a config
+    without the ``optimizer:`` section validates (defaults to ``local``;
+    backward compatible). Read by the loop's ``_read_optimizer_config``
+    helper, NOT by the runtime loader — the optimizer backend is a
+    loop-plane concern.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    backend: Literal["local", "omnigent"] = "local"
+    # --- omnigent-only fields (ignored when backend: local) ---
+    server_url: str = "http://localhost:6767"
+    auth_token: str = ""
+    agent_bundle_path: str = "agents/forge_optimizer.yaml"
+
+
 class EvalModeConfig(BaseModel):
     rows: int
     buckets: dict[str, int] = Field(default_factory=dict)
@@ -337,6 +357,7 @@ class RuntimeYAML(BaseModel):
     loop: LoopConfig = Field(default_factory=LoopConfig)
     eval: EvalConfig = Field(default_factory=EvalConfig)
     gate: GateConfig = Field(default_factory=GateConfig)
+    optimizer: OptimizerBackendConfig = Field(default_factory=OptimizerBackendConfig)
 
 
 class HarnessConfig(BaseModel):

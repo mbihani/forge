@@ -42,6 +42,43 @@ optimizer_endpoint: databricks-claude-opus-4-7
 # a different judge model.
 judge_endpoint: databricks-claude-sonnet-4-6
 
+# Optimizer backend selection — where the optimizer agent runs.
+#
+#   local    (default) — the existing path: a bounded ClaudeSDKClient
+#                       (Claude Code) subprocess on this machine, pointed
+#                       at the AI Gateway via setup_anthropic_env. No
+#                       extra config is required; omit this whole section
+#                       to stay on the local backend (backward compatible).
+#
+#   omnigent           — run the optimizer agent on a managed Omnigent
+#                       server over REST. The loop packages
+#                       agents/forge_optimizer.yaml as an agent bundle,
+#                       creates an ephemeral session, uploads the scaffold
+#                       tree, sends the round prompt, drains the SSE
+#                       stream, and parses the action from the transcript.
+#                       Used when the optimizer must run on a managed
+#                       host (e.g. a remote BentoBox) instead of locally.
+#
+# When ``backend: omnigent``, the fields below are read by
+# get_backend(); when ``backend: local`` (or the section is absent)
+# they are ignored and ``optimizer_endpoint`` above selects the model.
+optimizer:
+  backend: local
+  # --- omnigent-only fields (ignored when backend: local) ---
+  # Omnigent server origin. Default is the local dev server.
+  server_url: http://localhost:6767
+  # Optional Bearer token for the server's Authorization header. When
+  # the server is behind the Databricks AI Gateway or an OAuth proxy,
+  # set this to the token the server expects; leave blank for an
+  # unauthenticated local server.
+  auth_token: ""
+  # Path (repo-relative) to the agent spec YAML packaged as the
+  # bundle's config.yaml. The round substitutes ``executor.model`` and
+  # ``executor.config.max_turns`` from ``optimizer_endpoint`` /
+  # ``loop.max_optimizer_turns`` so you do not need to edit the YAML
+  # per round.
+  agent_bundle_path: agents/forge_optimizer.yaml
+
 # MLflow experiment paths. Stable, declared here, NOT driven by
 # environment variables (which lint/format passes have historically
 # clobbered). The CLI may override per-run via --experiment-suffix

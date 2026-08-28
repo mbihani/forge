@@ -82,9 +82,7 @@ def build_round_prompt(
         baseline_mode = baseline.get("mode", "?")
         n_examples = int(baseline.get("n_examples", 0))
         scorers_str = ", ".join(baseline.get("scorers", []))
-        per_judge_str = ", ".join(
-            f"{k}={v:.3f}" for k, v in baseline.get("per_judge", {}).items()
-        )
+        per_judge_str = ", ".join(f"{k}={v:.3f}" for k, v in baseline.get("per_judge", {}).items())
         per_bucket_str = ", ".join(
             f"{bucket}={scores.get('correctness', 0.0):.2f}"
             for bucket, scores in baseline.get("per_bucket", {}).items()

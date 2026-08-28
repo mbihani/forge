@@ -25,27 +25,36 @@ def test_noop_action_returns_noop_regardless_of_delta() -> None:
 
 
 def test_eval_failure_returns_infra_fail() -> None:
-    assert decide(
-        score_delta=None,
-        action_kind="add_rule",
-        parse_status="ok",
-        eval_failed=True,
-    ) == Decision.INFRA_FAIL
+    assert (
+        decide(
+            score_delta=None,
+            action_kind="add_rule",
+            parse_status="ok",
+            eval_failed=True,
+        )
+        == Decision.INFRA_FAIL
+    )
 
 
 def test_missing_score_returns_infra_fail_for_non_noop() -> None:
     """Score=None on a non-noop action means the eval did not return — infra issue."""
-    assert decide(
-        score_delta=None,
-        action_kind="add_rule",
-        parse_status="ok",
-    ) == Decision.INFRA_FAIL
+    assert (
+        decide(
+            score_delta=None,
+            action_kind="add_rule",
+            parse_status="ok",
+        )
+        == Decision.INFRA_FAIL
+    )
 
 
 def test_parse_failure_with_noop_action_still_noop() -> None:
     """If the parser falls back to noop, the decision is noop (action wins)."""
-    assert decide(
-        score_delta=None,
-        action_kind="noop",
-        parse_status="schema_mismatch",
-    ) == Decision.NOOP
+    assert (
+        decide(
+            score_delta=None,
+            action_kind="noop",
+            parse_status="schema_mismatch",
+        )
+        == Decision.NOOP
+    )

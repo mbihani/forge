@@ -12,7 +12,6 @@ from anvil.eval import runner
 from anvil.runtime.loader import load_harness
 from anvil.runtime.models import EvalConfig, EvalModeConfig, SplitConfig
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -116,7 +115,9 @@ def test_split_disabled_preserves_full_dataset_selection(
         "partition_dataset",
         lambda *_args: pytest.fail("disabled split must not partition the golden set"),
     )
-    selected = runner._select_mode_examples(examples, cfg=_config(enabled=False), selected_mode="quick")
+    selected = runner._select_mode_examples(
+        examples, cfg=_config(enabled=False), selected_mode="quick"
+    )
     assert selected == examples[:1]
 
 

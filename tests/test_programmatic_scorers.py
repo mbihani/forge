@@ -788,7 +788,12 @@ def test_eval_config_allows_unique_scorer_names() -> None:
     cfg = EvalConfig(
         scorers=[
             {"name": "correctness", "type": "llm", "weight": 0.4},
-            {"name": "exact_match", "type": "programmatic", "check_function": "exact_match", "weight": 0.6},
+            {
+                "name": "exact_match",
+                "type": "programmatic",
+                "check_function": "exact_match",
+                "weight": 0.6,
+            },
         ]
     )
     assert len(cfg.scorers) == 2
