@@ -1,19 +1,44 @@
-"""Forge Orchestrator FastAPI app — HTTP control plane for ANVIL rounds.
+"""Forge Orchestrator FastAPI app — HTTP control plane for the full ANVIL optimization workflow.
 
-Serves:
+Serves all four phases of the optimization workflow:
+
+Phase 0 — workflow state:
+  * GET  /api/state                 — status of all four phases.
+
+Phase 1 — setup:
+  * GET  /api/scaffold              — scaffold config + skill/rule file list.
+  * PUT  /api/scaffold              — write scaffold/harness.yaml.
+  * GET  /api/scaffold/files/{name} — raw text of a skill/rule markdown file.
+  * PUT  /api/scaffold/files/{name} — write a skill/rule markdown file.
+  * GET  /api/golden-set            — golden dataset stats + sample entries.
+  * GET  /api/config                — harness runtime config as JSON.
+  * PUT  /api/config                — update harness/config.yaml (allowed fields only).
+
+Phase 2 — baseline:
+  * POST /api/baseline              — build baseline (eval → CachedBaseline → baseline.json).
+  * GET  /api/baseline              — read cached baseline.
+
+Phase 3 — optimize:
+  * POST /rounds                    — start a new optimization round (existing, kept).
+  * GET  /rounds                    — list completed rounds (existing, kept).
+  * GET  /rounds/{id}               — read a single round JSON (existing, kept).
+  * GET  /api/frontier              — read eval/runs/frontier.json.
+
+Phase 4 — finalize:
+  * POST /api/finalize              — run held-out eval → eval/runs/finalized.json.
+  * GET  /api/finalize              — read finalized report.
+
+Supporting:
   * GET  /health       — liveness probe (required by deploy/app.yaml).
   * GET  /agents       — list agent YAML bundles from ``agents/``.
-  * POST /validate     — run a read-only baseline eval, return aggregate.
-  * POST /rounds       — start a new optimization round (optional mode + agent).
-  * GET  /rounds       — list completed rounds.
-  * GET  /rounds/{id}  — read a single round JSON.
-  * GET  /             — interactive HTML dashboard (agent selection →
-                         validation → mode choice → run optimizer + history).
+  * POST /validate     — read-only baseline eval (diagnostic).
+  * GET  /             — interactive 4-phase wizard dashboard.
 
-``run_round`` and ``evaluate_branch`` are sync + blocking. Both MUST run
-in a thread pool (``anyio.to_thread.run_sync``) so the single uvicorn event
-loop stays responsive — calling them directly in an async handler freezes
-the loop and the Databricks App 502s.
+``run_round``, ``evaluate_branch``, ``_build_baseline_sync`` and
+``_finalize_sync`` are sync + blocking. All MUST run in a thread pool
+(``anyio.to_thread.run_sync``) so the single uvicorn event loop stays
+responsive — calling them directly in an async handler freezes the loop
+and the Databricks App 502s.
 """
 
 from __future__ import annotations
@@ -23,8 +48,10 @@ import json
 import logging
 import os
 import re
+import subprocess
 import threading
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from functools import partial
 from html import escape
 from pathlib import Path
@@ -32,12 +59,19 @@ from typing import Any, Literal
 
 import anyio
 import yaml
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from anvil.eval import evaluate_branch
+from anvil.eval.cache import (
+    CachedBaseline,
+    load_baseline,
+    report_to_baseline,
+    save_baseline,
+)
 from anvil.loop.decision import Decision
+from anvil.loop.frontier import load_frontier
 from anvil.loop.round import RoundReport, run_round
 
 logger = logging.getLogger("anvil.orchestrator")
@@ -63,6 +97,28 @@ _SECRET_ENV_VARS = frozenset({"OMNIGENT_AUTH_TOKEN", "GIT_TOKEN"})
 # Valid decision values (for sanitizing persisted round JSON before
 # it reaches the HTML dashboard or API responses).
 _VALID_DECISIONS = frozenset(d.value for d in Decision)
+
+# Allowed filename pattern for scaffold skill/rule markdown files.
+# Only alphanumeric + dash + underscore + .md extension. Rejects path
+# traversal (/, ..) and dot-prefixed names.
+_SAFE_FILENAME_RE = re.compile(r"^[a-zA-Z0-9_-]+\.md$")
+
+# Top-level config fields the PUT /api/config endpoint may update.
+_CONFIG_ALLOWED_TOP = frozenset({
+    "mode",
+    "runtime_endpoint",
+    "optimizer_endpoint",
+    "judge_endpoint",
+})
+
+# Nested config sections + the sub-fields the PUT /api/config endpoint
+# may update within each.
+_CONFIG_ALLOWED_NESTED: dict[str, frozenset[str]] = {
+    "optimizer": frozenset({"backend", "server_url", "auth_token", "agent_bundle_path"}),
+    "eval": frozenset({"default_mode", "n_workers", "scorers"}),
+    "gate": frozenset({"type", "epsilon"}),
+    "loop": frozenset({"target_rounds", "max_optimizer_turns"}),
+}
 
 # ---------------------------------------------------------------------------
 # Module-level config — repo_root
@@ -156,6 +212,38 @@ class AgentInfo(BaseModel):
     name: str
     filename: str
     path: str
+
+
+class ScaffoldFileEntry(BaseModel):
+    """One skill or rule markdown file in scaffold/."""
+    name: str
+    type: str  # "skills" or "rules"
+    path: str
+
+
+class ScaffoldResponse(BaseModel):
+    """Response for GET /api/scaffold — scaffold config + file list."""
+    config: dict[str, Any]
+    files: list[ScaffoldFileEntry]
+
+
+class GoldenSetResponse(BaseModel):
+    """Response for GET /api/golden-set — stats + sample entries."""
+    total: int
+    buckets: dict[str, int]
+    samples: list[dict[str, Any]]
+
+
+class ConfigUpdateRequest(BaseModel):
+    """Body for PUT /api/config — partial config update (allowed fields only)."""
+    mode: str | None = None
+    runtime_endpoint: str | None = None
+    optimizer_endpoint: str | None = None
+    judge_endpoint: str | None = None
+    optimizer: dict[str, Any] | None = None
+    eval: dict[str, Any] | None = None
+    gate: dict[str, Any] | None = None
+    loop: dict[str, Any] | None = None
 
 
 def _round_report_to_response(report: RoundReport) -> RoundReportResponse:
@@ -290,6 +378,378 @@ def _list_agents(repo_root: Path) -> list[dict[str, str]]:
 
 
 # ---------------------------------------------------------------------------
+# Scaffold helpers (Phase 1)
+# ---------------------------------------------------------------------------
+
+
+def _scaffold_dir(repo_root: Path) -> Path:
+    """Path to the scaffold directory."""
+    return repo_root / "scaffold"
+
+
+def _scaffold_config_path(repo_root: Path) -> Path:
+    """Path to scaffold/harness.yaml (the mutable optimizer config)."""
+    return repo_root / "scaffold" / "harness.yaml"
+
+
+def _list_scaffold_files(repo_root: Path) -> list[dict[str, str]]:
+    """List skill + rule markdown files from scaffold/skills/ and scaffold/rules/.
+
+    Returns ``[{name, type, path}]`` sorted by type then name. ``type`` is
+    ``"skills"`` or ``"rules"`` (matching the subdirectory name).
+    """
+    result: list[dict[str, str]] = []
+    scaffold = _scaffold_dir(repo_root)
+    for subdir in ("skills", "rules"):
+        d = scaffold / subdir
+        if not d.is_dir():
+            continue
+        for p in sorted(d.glob("*.md")):
+            result.append(
+                {
+                    "name": p.name,
+                    "type": subdir,
+                    "path": p.relative_to(repo_root).as_posix(),
+                }
+            )
+    return result
+
+
+def _find_scaffold_file(repo_root: Path, filename: str) -> Path | None:
+    """Search scaffold/skills/ and scaffold/rules/ for ``filename``.
+
+    Returns the first match, or ``None`` if not found.
+    """
+    for subdir in ("skills", "rules"):
+        path = _scaffold_dir(repo_root) / subdir / filename
+        if path.is_file():
+            return path
+    return None
+
+
+def _scaffold_file_write_path(repo_root: Path, filename: str) -> Path:
+    """Determine where to write a scaffold file.
+
+    If the file already exists in skills/ or rules/, overwrite it in place.
+    Otherwise default to scaffold/skills/ (the common editable case).
+    """
+    for subdir in ("skills", "rules"):
+        path = _scaffold_dir(repo_root) / subdir / filename
+        if path.is_file():
+            return path
+    return _scaffold_dir(repo_root) / "skills" / filename
+
+
+def _validate_scaffold_filename(filename: str) -> str:
+    """Validate a scaffold-file filename for safe filesystem access.
+
+    Only allows ``[a-zA-Z0-9_-]+.md`` — rejects path traversal (``/``,
+    ``..``), dot-prefixed names, and non-markdown extensions.
+    """
+    if not _SAFE_FILENAME_RE.match(filename):
+        raise HTTPException(
+            status_code=400,
+            detail=f"invalid filename: {filename!r} — must be [a-zA-Z0-9_-]+.md",
+        )
+    return filename
+
+
+# ---------------------------------------------------------------------------
+# Golden set helpers (Phase 1)
+# ---------------------------------------------------------------------------
+
+
+def _golden_set_path(repo_root: Path) -> Path:
+    return repo_root / "data" / "golden_set.jsonl"
+
+
+def _golden_set_stats(repo_root: Path) -> dict[str, Any]:
+    """Read data/golden_set.jsonl and return stats + first 5 samples.
+
+    Returns ``{"total": int, "buckets": {category: count}, "samples": [...]}``.
+    Handles a missing file gracefully (returns empty stats).
+    """
+    path = _golden_set_path(repo_root)
+    if not path.is_file():
+        return {"total": 0, "buckets": {}, "samples": []}
+    examples: list[dict[str, Any]] = []
+    buckets: dict[str, int] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            ex = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(ex, dict):
+            continue
+        examples.append(ex)
+        bucket = ex.get("category") or ex.get("bucket") or "unknown"
+        buckets[bucket] = buckets.get(bucket, 0) + 1
+    return {
+        "total": len(examples),
+        "buckets": buckets,
+        "samples": examples[:5],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Config merge helper (Phase 1 — PUT /api/config)
+# ---------------------------------------------------------------------------
+
+
+def _merge_config(existing: dict[str, Any], update: dict[str, Any]) -> dict[str, Any]:
+    """Merge ``update`` into ``existing`` config, only touching allowed fields.
+
+    Top-level: ``mode``, ``runtime_endpoint``, ``optimizer_endpoint``,
+    ``judge_endpoint``.
+    Nested sections (only listed sub-fields are updated):
+      ``optimizer`` → ``backend``, ``server_url``, ``auth_token``,
+      ``agent_bundle_path``.
+      ``eval`` → ``default_mode``, ``n_workers``, ``scorers``.
+      ``gate`` → ``type``, ``epsilon``.
+      ``loop`` → ``target_rounds``, ``max_optimizer_turns``.
+    """
+    result = dict(existing)
+    for key in _CONFIG_ALLOWED_TOP:
+        if key in update:
+            result[key] = update[key]
+    for section, allowed in _CONFIG_ALLOWED_NESTED.items():
+        section_update = update.get(section)
+        if isinstance(section_update, dict):
+            current = dict(result.get(section) or {})
+            for field in allowed:
+                if field in section_update:
+                    current[field] = section_update[field]
+            result[section] = current
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Git SHA helper
+# ---------------------------------------------------------------------------
+
+
+def _git_head_sha(repo_root: Path) -> str:
+    """``git rev-parse HEAD`` of the repo (falls back to 'unknown').
+
+    Defensive: returns ``"unknown"`` if git is unavailable, the repo has
+    no commits, or the call times out. Mirrors the scripts' defensive SHA
+    lookup.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return "unknown"
+    return proc.stdout.strip() if proc.returncode == 0 else "unknown"
+
+
+# ---------------------------------------------------------------------------
+# Baseline builder (Phase 2 — POST /api/baseline)
+# ---------------------------------------------------------------------------
+
+
+def _build_baseline_sync(repo_root: Path) -> CachedBaseline:
+    """Run the eval on the current scaffold and build a CachedBaseline.
+
+    Mirrors ``scripts/make_baseline.build_baseline``: calls
+    ``evaluate_branch``, reads endpoints from harness/config.yaml, gets
+    the scaffold commit SHA from git, converts the EvalReport to a
+    CachedBaseline via ``report_to_baseline``, and persists it via
+    ``save_baseline``.
+    """
+    scaffold_root = repo_root / "scaffold"
+    config_path = _harness_config_path(repo_root)
+    runtime_endpoint = ""
+    judge_endpoint = ""
+    if config_path.is_file():
+        raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        runtime_endpoint = raw.get("runtime_endpoint", "")
+        judge_endpoint = raw.get("judge_endpoint", "")
+    report = evaluate_branch(
+        scaffold_root=scaffold_root,
+        runtime_config_path=config_path if config_path.is_file() else None,
+    )
+    baseline = report_to_baseline(
+        report,
+        scaffold_commit_sha=_git_head_sha(repo_root),
+        runtime_endpoint=runtime_endpoint,
+        judge_endpoint=judge_endpoint,
+    )
+    save_baseline(repo_root, baseline)
+    return baseline
+
+
+# ---------------------------------------------------------------------------
+# Finalize helper (Phase 4 — POST /api/finalize)
+# ---------------------------------------------------------------------------
+
+
+def _finalize_sync(repo_root: Path) -> dict[str, Any]:
+    """Evaluate HEAD on the held-out set and return the finalized payload.
+
+    Mirrors ``scripts/finalize.finalize``: checks that held-out test is
+    enabled and the frontier exists, runs ``evaluate_branch`` with
+    ``mode="test"`` and ``allow_test=True``, and writes the result to
+    ``eval/runs/finalized.json``.
+    """
+    config_path = _harness_config_path(repo_root)
+    if not config_path.is_file():
+        raise RuntimeError(
+            "harness/config.yaml not found; cannot finalize without runtime config"
+        )
+    raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    eval_config = raw.get("eval") or {}
+    if not eval_config.get("held_out_test"):
+        raise RuntimeError(
+            "held-out finalization is disabled; set eval.held_out_test: true"
+        )
+
+    frontier = load_frontier(repo_root)
+    if frontier is None:
+        raise RuntimeError("cannot finalize without eval/runs/frontier.json")
+
+    scaffold_root = repo_root / "scaffold"
+    report = evaluate_branch(
+        scaffold_root=scaffold_root,
+        runtime_config_path=config_path,
+        mode="test",
+        allow_test=True,
+    )
+
+    payload = {
+        **dataclasses.asdict(report),
+        "scaffold_commit_sha": _git_head_sha(repo_root),
+        "finalized_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "frontier": frontier.to_dict(),
+    }
+
+    finalized_path = repo_root / "eval" / "runs" / "finalized.json"
+    finalized_path.parent.mkdir(parents=True, exist_ok=True)
+    finalized_path.write_text(
+        json.dumps(payload, indent=2) + "\n", encoding="utf-8"
+    )
+    return payload
+
+
+# ---------------------------------------------------------------------------
+# Workflow state helper (Phase 0 — GET /api/state)
+# ---------------------------------------------------------------------------
+
+
+def _workflow_state(repo_root: Path) -> dict[str, Any]:
+    """Return the status of all four workflow phases.
+
+    Checks for the existence and key fields of:
+    scaffold/harness.yaml, data/golden_set.jsonl, harness/config.yaml,
+    eval/runs/baseline.json, eval/runs/round_*.json,
+    eval/runs/frontier.json, eval/runs/finalized.json.
+    """
+    # Phase 1: Scaffold
+    scaffold_path = _scaffold_config_path(repo_root)
+    scaffold_exists = scaffold_path.is_file()
+    skills_count = 0
+    rules_count = 0
+    if scaffold_exists:
+        raw = yaml.safe_load(scaffold_path.read_text(encoding="utf-8")) or {}
+        skills_count = len(raw.get("skills") or [])
+        rules_count = len(raw.get("rules") or [])
+
+    # Phase 1: Golden set
+    golden_path = _golden_set_path(repo_root)
+    golden_exists = golden_path.is_file()
+    golden_count = 0
+    golden_buckets: dict[str, int] = {}
+    if golden_exists:
+        for line in golden_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                ex = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(ex, dict):
+                continue
+            golden_count += 1
+            bucket = ex.get("category") or ex.get("bucket") or "unknown"
+            golden_buckets[bucket] = golden_buckets.get(bucket, 0) + 1
+
+    # Phase 1: Config
+    config_path = _harness_config_path(repo_root)
+    config_exists = config_path.is_file()
+    config_mode = ""
+    config_backend = ""
+    if config_exists:
+        raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        config_mode = str(raw.get("mode", ""))
+        config_backend = str((raw.get("optimizer") or {}).get("backend", ""))
+
+    # Phase 2: Baseline
+    baseline = load_baseline(repo_root)
+    baseline_exists = baseline is not None
+    baseline_aggregate = baseline.aggregate if baseline else None
+    baseline_n = baseline.n_examples if baseline else 0
+
+    # Phase 3: Rounds
+    runs_dir = repo_root / "eval" / "runs"
+    rounds_count = 0
+    if runs_dir.is_dir():
+        rounds_count = sum(1 for _ in runs_dir.glob("round_*.json"))
+
+    # Phase 3: Frontier
+    frontier_path = runs_dir / "frontier.json"
+    frontier_exists = frontier_path.is_file()
+
+    # Phase 4: Finalized
+    finalized_path = runs_dir / "finalized.json"
+    finalized_exists = finalized_path.is_file()
+    finalized_aggregate: float | None = None
+    if finalized_exists:
+        try:
+            finalized_data = json.loads(finalized_path.read_text(encoding="utf-8"))
+            finalized_aggregate = finalized_data.get("aggregate")
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    return {
+        "scaffold": {
+            "exists": scaffold_exists,
+            "skills_count": skills_count,
+            "rules_count": rules_count,
+        },
+        "golden_set": {
+            "exists": golden_exists,
+            "count": golden_count,
+            "buckets": golden_buckets,
+        },
+        "config": {
+            "exists": config_exists,
+            "mode": config_mode,
+            "optimizer_backend": config_backend,
+        },
+        "baseline": {
+            "exists": baseline_exists,
+            "aggregate": baseline_aggregate,
+            "n_examples": baseline_n,
+        },
+        "rounds": {"count": rounds_count},
+        "frontier": {"exists": frontier_exists},
+        "finalized": {
+            "exists": finalized_exists,
+            "aggregate": finalized_aggregate,
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
 # HTML dashboard
 # ---------------------------------------------------------------------------
 
@@ -324,6 +784,7 @@ _DASHBOARD_HEAD = """<!doctype html>
     border-radius: var(--radius); padding: 1.25rem 1.5rem; margin-bottom: 1rem;
   }
   .card h2 { font-size: 1.1rem; margin: 0 0 0.75rem; }
+  .card h3 { font-size: 0.95rem; margin: 1rem 0 0.5rem; }
   .card label { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 0.25rem; }
   select {
     width: 100%; padding: 0.5rem; border: 1px solid var(--border);
@@ -337,6 +798,7 @@ _DASHBOARD_HEAD = """<!doctype html>
   }
   button:hover:not(:disabled) { border-color: var(--text); }
   button:disabled { opacity: 0.5; cursor: wait; }
+  .toggle-btn { font-size: 0.85rem; padding: 0.35rem 0.8rem; }
   .radio-label {
     display: inline-flex; align-items: center; gap: 0.35rem;
     margin-right: 1.5rem; font-size: 0.9rem; cursor: pointer;
@@ -392,34 +854,93 @@ _DASHBOARD_HEAD = """<!doctype html>
     .positive { color: #86efac; }
     .negative { color: #fca5a5; }
   }
+  .status-badge { font-size: 0.8rem; font-weight: 600; margin-left: 0.5rem; }
+  .phase-header { display: flex; align-items: center; }
+  .subsection { margin-bottom: 0.75rem; }
+  .subsection h3 { margin: 0.5rem 0 0.25rem; font-size: 0.9rem; }
+  .detail-section { margin-top: 0.5rem; }
+  .config-preview {
+    margin: 0.5rem 0; padding: 0.5rem; background: var(--bg);
+    border: 1px solid var(--border); border-radius: var(--radius);
+    font-size: 0.8rem; overflow-x: auto; white-space: pre-wrap;
+    max-height: 20rem; overflow-y: auto;
+  }
+  .file-item {
+    display: flex; align-items: center; gap: 0.5rem;
+    padding: 0.35rem 0; font-size: 0.85rem;
+  }
+  .file-item button { font-size: 0.8rem; padding: 0.25rem 0.6rem; }
+  .edit-area {
+    width: 100%; min-height: 8rem; padding: 0.5rem; margin-top: 0.5rem;
+    border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--surface); color: var(--text); font-size: 0.85rem;
+    font-family: ui-monospace, monospace; resize: vertical;
+  }
+  .golden-sample {
+    margin-top: 0.5rem; padding: 0.5rem; background: var(--bg);
+    border: 1px solid var(--border); border-radius: var(--radius);
+    font-size: 0.8rem; overflow-x: auto;
+  }
 </style>
 </head>
 <body>
 <h1>Forge Orchestrator</h1>
-<p class="subtitle">Iterate, evaluate, and improve agent scaffolds.</p>
+<p class="subtitle">Optimization workflow wizard \\u2014 setup, baseline, optimize, finalize.</p>
 
-<div class="card">
-  <h2>1. Select Agent</h2>
-  <label for="agent-select">Agent bundle</label>
-  <select id="agent-select"><option value="">Loading agents…</option></select>
+<!-- Phase 1: Setup -->
+<div class="card" id="phase-setup">
+  <div class="phase-header"><h2>Phase 1: Setup</h2><span class="status-badge" id="setup-status"></span></div>
+  <div class="subsection">
+    <h3>Scaffold <span class="meta" id="scaffold-meta"></span></h3>
+    <button id="scaffold-toggle" class="toggle-btn" type="button">View/Edit</button>
+    <div id="scaffold-detail" class="detail-section" style="display:none;"></div>
+  </div>
+  <div class="subsection">
+    <h3>Golden Dataset <span class="meta" id="golden-meta"></span></h3>
+    <button id="golden-toggle" class="toggle-btn" type="button">View</button>
+    <div id="golden-detail" class="detail-section" style="display:none;"></div>
+  </div>
+  <div class="subsection">
+    <h3>Harness Config <span class="meta" id="config-meta"></span></h3>
+    <button id="config-toggle" class="toggle-btn" type="button">View/Edit</button>
+    <div id="config-detail" class="detail-section" style="display:none;"></div>
+  </div>
 </div>
 
-<div class="card">
-  <h2>2. Validate Baseline</h2>
+<!-- Phase 2: Baseline -->
+<div class="card" id="phase-baseline">
+  <div class="phase-header"><h2>Phase 2: Baseline</h2><span class="status-badge" id="baseline-status"></span></div>
+  <div id="baseline-info" class="meta"></div>
+  <h3>2. Validate Baseline</h3>
   <button id="validate-btn" type="button">Run Validation</button>
   <div id="validate-result" class="result-area"></div>
+  <h3>Build Baseline</h3>
+  <button id="baseline-btn" type="button">Build Baseline</button>
+  <div id="baseline-result" class="result-area"></div>
 </div>
 
-<div class="card">
-  <h2>3. Optimization Mode</h2>
+<!-- Phase 3: Optimize -->
+<div class="card" id="phase-optimize">
+  <div class="phase-header"><h2>Phase 3: Optimize</h2><span class="status-badge" id="optimize-status"></span></div>
+  <h3>1. Select Agent</h3>
+  <label for="agent-select">Agent bundle</label>
+  <select id="agent-select"><option value="">Loading agents\\u2026</option></select>
+  <h3>3. Optimization Mode</h3>
   <label class="radio-label"><input type="radio" name="mode" value="prompt" checked> Prompt Mode</label>
   <label class="radio-label"><input type="radio" name="mode" value="code"> Code Mode</label>
-</div>
-
-<div class="card">
-  <h2>4. Run Optimizer</h2>
+  <h3>4. Run Optimizer</h3>
   <button id="run-btn" type="button">Run Optimizer</button>
   <div id="run-result" class="result-area"></div>
+  <h3>Frontier Summary</h3>
+  <div id="frontier-summary" class="result-area"></div>
+</div>
+
+<!-- Phase 4: Finalize -->
+<div class="card" id="phase-finalize">
+  <div class="phase-header"><h2>Phase 4: Finalize</h2><span class="status-badge" id="finalize-status"></span></div>
+  <div id="finalize-info" class="meta"></div>
+  <button id="finalize-btn" type="button">Finalize</button>
+  <div id="finalize-result" class="result-area"></div>
 </div>
 
 <h2 class="section-title">Rounds History</h2>
@@ -437,6 +958,105 @@ _DASHBOARD_TAIL = """
 <script>
 "use strict";
 function $(id) { return document.getElementById(id); }
+
+function fmt(val) {
+  return val != null ? val.toFixed(4) : "\\u2014";
+}
+
+function showLoading(el, msg) {
+  el.innerHTML = "";
+  var spinner = document.createElement("span");
+  spinner.className = "spinner";
+  el.appendChild(spinner);
+  el.appendChild(document.createTextNode(msg));
+}
+
+function showError(el, msg) {
+  el.innerHTML = "";
+  var span = document.createElement("span");
+  span.className = "error-msg";
+  span.textContent = msg;
+  el.appendChild(span);
+}
+
+function statusBadge(exists, readyText, incompleteText) {
+  var span = document.createElement("span");
+  if (exists) {
+    span.className = "badge keep";
+    span.textContent = readyText || "\\u2705 Ready";
+  } else {
+    span.className = "badge noop";
+    span.textContent = incompleteText || "\\u26a0\\ufe0f Incomplete";
+  }
+  return span;
+}
+
+// --- Phase 0: State loading ---
+
+async function loadState() {
+  try {
+    var res = await fetch("/api/state");
+    var state = await res.json();
+    renderState(state);
+  } catch (e) {
+    console.error("Failed to load state:", e);
+  }
+}
+
+function renderState(state) {
+  // Phase 1: Setup
+  var setupStatus = $("setup-status");
+  setupStatus.innerHTML = "";
+  var setupReady = state.scaffold.exists && state.golden_set.exists && state.config.exists;
+  setupStatus.appendChild(statusBadge(setupReady, "\\u2705 Ready", "\\u26a0\\ufe0f Incomplete"));
+  $("scaffold-meta").textContent = state.scaffold.exists
+    ? state.scaffold.skills_count + " skills, " + state.scaffold.rules_count + " rules"
+    : "not configured";
+  $("golden-meta").textContent = state.golden_set.exists
+    ? state.golden_set.count + " examples"
+    : "not configured";
+  $("config-meta").textContent = state.config.exists
+    ? "mode: " + (state.config.mode || "\\u2014") + ", backend: " + (state.config.optimizer_backend || "\\u2014")
+    : "not configured";
+
+  // Phase 2: Baseline
+  var baselineStatus = $("baseline-status");
+  baselineStatus.innerHTML = "";
+  baselineStatus.appendChild(statusBadge(state.baseline.exists, "\\u2705 Ready", "\\u26a0\\ufe0f Incomplete"));
+  var baselineInfo = $("baseline-info");
+  baselineInfo.innerHTML = "";
+  if (state.baseline.exists) {
+    baselineInfo.textContent = "Aggregate: " + fmt(state.baseline.aggregate)
+      + ", " + state.baseline.n_examples + " examples";
+  } else {
+    baselineInfo.textContent = "No baseline built yet.";
+  }
+
+  // Phase 3: Optimize
+  var optimizeStatus = $("optimize-status");
+  optimizeStatus.innerHTML = "";
+  optimizeStatus.appendChild(statusBadge(
+    state.rounds.count > 0,
+    "\\u2705 " + state.rounds.count + " rounds",
+    "\\u26a0\\ufe0f No rounds yet"
+  ));
+  loadFrontier();
+
+  // Phase 4: Finalize
+  var finalizeStatus = $("finalize-status");
+  finalizeStatus.innerHTML = "";
+  finalizeStatus.appendChild(statusBadge(state.finalized.exists, "\\u2705 Done", "\\u26a0\\ufe0f Pending"));
+  var finalizeInfo = $("finalize-info");
+  finalizeInfo.innerHTML = "";
+  if (state.finalized.exists) {
+    finalizeInfo.textContent = "Aggregate: " + fmt(state.finalized.aggregate);
+  } else {
+    finalizeInfo.textContent = "Not finalized yet.";
+  }
+  $("finalize-btn").disabled = !state.baseline.exists;
+}
+
+// --- Agent loading (existing) ---
 
 async function loadAgents() {
   var sel = $("agent-select");
@@ -466,25 +1086,7 @@ async function loadAgents() {
   }
 }
 
-function showLoading(el, msg) {
-  el.innerHTML = "";
-  var spinner = document.createElement("span");
-  spinner.className = "spinner";
-  el.appendChild(spinner);
-  el.appendChild(document.createTextNode(msg));
-}
-
-function showError(el, msg) {
-  el.innerHTML = "";
-  var span = document.createElement("span");
-  span.className = "error-msg";
-  span.textContent = msg;
-  el.appendChild(span);
-}
-
-function fmt(val) {
-  return val != null ? val.toFixed(4) : "\\u2014";
-}
+// --- Validation (existing) ---
 
 async function runValidation() {
   var btn = $("validate-btn");
@@ -512,6 +1114,232 @@ async function runValidation() {
     btn.disabled = false;
   }
 }
+
+// --- Baseline build (Phase 2) ---
+
+async function buildBaseline() {
+  var btn = $("baseline-btn");
+  var result = $("baseline-result");
+  btn.disabled = true;
+  showLoading(result, "Building baseline\\u2026");
+  try {
+    var res = await fetch("/api/baseline", { method: "POST" });
+    var data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Baseline failed");
+    result.innerHTML = "";
+    var badge = document.createElement("span");
+    badge.className = "badge keep";
+    badge.textContent = "Aggregate: " + fmt(data.aggregate);
+    result.appendChild(badge);
+    var meta = document.createElement("span");
+    meta.className = "meta";
+    meta.textContent = "  \\u00b7  " + data.n_examples + " examples  \\u00b7  mode: " + (data.mode || "\\u2014");
+    result.appendChild(meta);
+    loadState();
+  } catch (e) {
+    showError(result, e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// --- Scaffold detail (Phase 1) ---
+
+async function loadScaffoldDetail() {
+  var detail = $("scaffold-detail");
+  showLoading(detail, "Loading scaffold\\u2026");
+  try {
+    var res = await fetch("/api/scaffold");
+    var data = await res.json();
+    detail.innerHTML = "";
+    var pre = document.createElement("pre");
+    pre.className = "config-preview";
+    pre.textContent = JSON.stringify(data.config, null, 2);
+    detail.appendChild(pre);
+    if (data.files && data.files.length) {
+      var title = document.createElement("h4");
+      title.textContent = "Skill/Rule Files";
+      detail.appendChild(title);
+      data.files.forEach(function(f) {
+        var fileDiv = document.createElement("div");
+        fileDiv.className = "file-item";
+        var nameSpan = document.createElement("span");
+        nameSpan.textContent = f.name + " (" + f.type + ")";
+        fileDiv.appendChild(nameSpan);
+        var editBtn = document.createElement("button");
+        editBtn.textContent = "Edit";
+        editBtn.addEventListener("click", function() { editScaffoldFile(f.name); });
+        fileDiv.appendChild(editBtn);
+        detail.appendChild(fileDiv);
+      });
+    }
+  } catch (e) {
+    showError(detail, e.message);
+  }
+}
+
+async function editScaffoldFile(name) {
+  var detail = $("scaffold-detail");
+  detail.innerHTML = "";
+  var title = document.createElement("h4");
+  title.textContent = "Editing: " + name;
+  detail.appendChild(title);
+  try {
+    var res = await fetch("/api/scaffold/files/" + name);
+    var content = await res.text();
+    var area = document.createElement("textarea");
+    area.className = "edit-area";
+    area.id = "scaffold-file-edit";
+    area.value = content;
+    detail.appendChild(area);
+    var saveBtn = document.createElement("button");
+    saveBtn.textContent = "Save";
+    saveBtn.addEventListener("click", function() { saveScaffoldFile(name); });
+    detail.appendChild(saveBtn);
+    var backBtn = document.createElement("button");
+    backBtn.textContent = "Back";
+    backBtn.addEventListener("click", loadScaffoldDetail);
+    detail.appendChild(backBtn);
+  } catch (e) {
+    showError(detail, e.message);
+  }
+}
+
+async function saveScaffoldFile(name) {
+  var area = $("scaffold-file-edit");
+  if (!area) return;
+  try {
+    var res = await fetch("/api/scaffold/files/" + name, {
+      method: "PUT",
+      headers: { "Content-Type": "text/plain" },
+      body: area.value
+    });
+    if (!res.ok) throw new Error((await res.json()).detail || "Save failed");
+    loadScaffoldDetail();
+  } catch (e) {
+    showError($("scaffold-detail"), e.message);
+  }
+}
+
+// --- Golden set detail (Phase 1) ---
+
+async function loadGoldenDetail() {
+  var detail = $("golden-detail");
+  showLoading(detail, "Loading golden set\\u2026");
+  try {
+    var res = await fetch("/api/golden-set");
+    var data = await res.json();
+    detail.innerHTML = "";
+    var summary = document.createElement("div");
+    summary.className = "meta";
+    summary.textContent = "Total: " + data.total + " examples";
+    detail.appendChild(summary);
+    var bucketsDiv = document.createElement("div");
+    bucketsDiv.className = "meta";
+    var bucketParts = [];
+    for (var key in data.buckets) {
+      bucketParts.push(key + ": " + data.buckets[key]);
+    }
+    bucketsDiv.textContent = "Buckets: " + (bucketParts.join(", ") || "\\u2014");
+    detail.appendChild(bucketsDiv);
+    if (data.samples && data.samples.length) {
+      var title = document.createElement("h4");
+      title.textContent = "First " + data.samples.length + " Examples";
+      detail.appendChild(title);
+      data.samples.forEach(function(ex) {
+        var sampleDiv = document.createElement("div");
+        sampleDiv.className = "golden-sample";
+        sampleDiv.textContent = JSON.stringify(ex, null, 2);
+        detail.appendChild(sampleDiv);
+      });
+    }
+  } catch (e) {
+    showError(detail, e.message);
+  }
+}
+
+// --- Config detail (Phase 1) ---
+
+async function loadConfigDetail() {
+  var detail = $("config-detail");
+  showLoading(detail, "Loading config\\u2026");
+  try {
+    var res = await fetch("/api/config");
+    var data = await res.json();
+    detail.innerHTML = "";
+    var pre = document.createElement("pre");
+    pre.className = "config-preview";
+    pre.textContent = JSON.stringify(data, null, 2);
+    detail.appendChild(pre);
+  } catch (e) {
+    showError(detail, e.message);
+  }
+}
+
+// --- Frontier (Phase 3) ---
+
+async function loadFrontier() {
+  var container = $("frontier-summary");
+  try {
+    var res = await fetch("/api/frontier");
+    if (!res.ok) {
+      container.textContent = "No frontier yet.";
+      return;
+    }
+    var data = await res.json();
+    container.innerHTML = "";
+    var best = data.best || {};
+    var keys = Object.keys(best);
+    if (!keys.length) {
+      container.textContent = "No frontier yet.";
+      return;
+    }
+    keys.forEach(function(key) {
+      var row = document.createElement("div");
+      row.className = "score-row";
+      row.textContent = key + ": " + fmt(best[key]);
+      container.appendChild(row);
+    });
+  } catch (e) {
+    container.textContent = "No frontier yet.";
+  }
+}
+
+// --- Finalize (Phase 4) ---
+
+async function runFinalize() {
+  var btn = $("finalize-btn");
+  var result = $("finalize-result");
+  btn.disabled = true;
+  showLoading(result, "Finalizing\\u2026");
+  try {
+    var res = await fetch("/api/finalize", { method: "POST" });
+    var data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Finalize failed");
+    result.innerHTML = "";
+    var badge = document.createElement("span");
+    badge.className = "badge keep";
+    badge.textContent = "Aggregate: " + fmt(data.aggregate);
+    result.appendChild(badge);
+    if (data.per_judge) {
+      var judges = document.createElement("div");
+      judges.className = "score-row";
+      for (var key in data.per_judge) {
+        judges.appendChild(document.createTextNode(
+          key + ": " + fmt(data.per_judge[key]) + "  "
+        ));
+      }
+      result.appendChild(judges);
+    }
+    loadState();
+  } catch (e) {
+    showError(result, e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// --- Round result rendering (existing) ---
 
 function scoreSpan(label, val) {
   var span = document.createElement("span");
@@ -599,6 +1427,7 @@ async function runOptimizer() {
     var data = await res.json();
     if (!res.ok) throw new Error(data.detail || "Optimizer failed");
     renderRoundResult(data);
+    loadState();
   } catch (e) {
     showError(result, e.message);
   } finally {
@@ -606,10 +1435,39 @@ async function runOptimizer() {
   }
 }
 
+// --- Toggle helpers ---
+
+function toggleSection(detailId, toggleId, loadFn) {
+  var detail = $(detailId);
+  var btn = $(toggleId);
+  if (detail.style.display === "none") {
+    detail.style.display = "block";
+    btn.textContent = "Hide";
+    loadFn();
+  } else {
+    detail.style.display = "none";
+    btn.textContent = "View/Edit";
+  }
+}
+
+// --- Init ---
+
 document.addEventListener("DOMContentLoaded", function() {
+  loadState();
   loadAgents();
   $("validate-btn").addEventListener("click", runValidation);
+  $("baseline-btn").addEventListener("click", buildBaseline);
   $("run-btn").addEventListener("click", runOptimizer);
+  $("finalize-btn").addEventListener("click", runFinalize);
+  $("scaffold-toggle").addEventListener("click", function() {
+    toggleSection("scaffold-detail", "scaffold-toggle", loadScaffoldDetail);
+  });
+  $("golden-toggle").addEventListener("click", function() {
+    toggleSection("golden-detail", "golden-toggle", loadGoldenDetail);
+  });
+  $("config-toggle").addEventListener("click", function() {
+    toggleSection("config-detail", "config-toggle", loadConfigDetail);
+  });
 });
 </script>
 </body>
@@ -617,14 +1475,13 @@ document.addEventListener("DOMContentLoaded", function() {
 
 
 def _render_dashboard(rounds: list[dict[str, Any]]) -> str:
-    """Render the interactive orchestrator dashboard from round summaries.
+    """Render the interactive 4-phase wizard dashboard from round summaries.
 
-    The page embeds four workflow cards (agent selection, validation,
-    mode choice, run optimizer) above the rounds history table. Dynamic
-    data is fetched client-side via ``fetch()`` and inserted with
-    ``textContent`` / ``createElement`` (never ``innerHTML``) to prevent
-    XSS. Server-rendered values in the rounds table are escaped with
-    :func:`html.escape`.
+    The page embeds four phase cards (setup, baseline, optimize, finalize)
+    above the rounds history table. Dynamic data is fetched client-side via
+    ``fetch()`` and inserted with ``textContent`` / ``createElement`` (never
+    ``innerHTML``) to prevent XSS. Server-rendered values in the rounds
+    table are escaped with :func:`html.escape`.
     """
     if not rounds:
         rows_html = '<tr><td colspan="6" class="empty">No rounds yet.</td></tr>'
@@ -680,6 +1537,19 @@ app = FastAPI(title="Forge Orchestrator", lifespan=_lifespan)
 # detected round ID and performing conflicting git operations.
 _round_lock = threading.Lock()
 
+# Prevents two concurrent POST /api/baseline calls from racing on
+# evaluate_branch and the baseline cache file.
+_baseline_lock = threading.Lock()
+
+# Prevents two concurrent POST /api/finalize calls from racing on
+# evaluate_branch and the finalized output file.
+_finalize_lock = threading.Lock()
+
+
+# ---------------------------------------------------------------------------
+# Supporting endpoints (existing, kept)
+# ---------------------------------------------------------------------------
+
 
 @app.get("/health")
 async def health() -> dict[str, str]:
@@ -713,6 +1583,11 @@ async def validate() -> ValidationResponse:
         n_examples=report.n_rows,
         run_id=report.run_id,
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: Optimize (existing, kept)
+# ---------------------------------------------------------------------------
 
 
 @app.post("/rounds", response_model=RoundReportResponse)
@@ -758,6 +1633,244 @@ async def get_round(round_id: int) -> dict[str, Any]:
         raise HTTPException(
             status_code=500, detail=f"round {round_id} JSON is corrupt: {exc}"
         ) from exc
+
+
+# ---------------------------------------------------------------------------
+# Phase 0: Workflow state
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/state")
+async def get_state() -> dict[str, Any]:
+    """Return the status of all four workflow phases."""
+    return _workflow_state(get_repo_root())
+
+
+# ---------------------------------------------------------------------------
+# Phase 1: Setup
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/scaffold", response_model=ScaffoldResponse)
+async def get_scaffold() -> ScaffoldResponse:
+    """Return scaffold/harness.yaml parsed as JSON + list of skill/rule files."""
+    repo_root = get_repo_root()
+    config_path = _scaffold_config_path(repo_root)
+    if not config_path.is_file():
+        raise HTTPException(status_code=404, detail="scaffold/harness.yaml not found")
+    try:
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as exc:
+        raise HTTPException(
+            status_code=500, detail=f"scaffold/harness.yaml is corrupt: {exc}"
+        ) from exc
+    files = _list_scaffold_files(repo_root)
+    return ScaffoldResponse(config=config, files=[ScaffoldFileEntry(**f) for f in files])
+
+
+@app.put("/api/scaffold")
+async def put_scaffold(body: dict[str, Any]) -> dict[str, str]:
+    """Write scaffold/harness.yaml from a JSON body.
+
+    Accepts the full scaffold config (sampling, skills, rules, tools).
+    Comments are not preserved by ``yaml.safe_dump`` — acceptable because
+    the full commented template lives in version control.
+    """
+    repo_root = get_repo_root()
+    path = _scaffold_config_path(repo_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.write_text(
+            yaml.safe_dump(body, sort_keys=False, default_flow_style=False),
+            encoding="utf-8",
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"status": "ok"}
+
+
+@app.get("/api/scaffold/files/{filename}", response_class=PlainTextResponse)
+async def get_scaffold_file(filename: str) -> str:
+    """Return the raw text content of a skill/rule markdown file from scaffold/."""
+    _validate_scaffold_filename(filename)
+    repo_root = get_repo_root()
+    path = _find_scaffold_file(repo_root, filename)
+    if path is None:
+        raise HTTPException(status_code=404, detail=f"file {filename!r} not found in scaffold/")
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.put("/api/scaffold/files/{filename}")
+async def put_scaffold_file(filename: str, request: Request) -> dict[str, str]:
+    """Write raw text to a scaffold skill/rule markdown file."""
+    _validate_scaffold_filename(filename)
+    repo_root = get_repo_root()
+    content = (await request.body()).decode("utf-8")
+    path = _scaffold_file_write_path(repo_root, filename)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.write_text(content, encoding="utf-8")
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"status": "ok", "file": filename}
+
+
+@app.get("/api/golden-set", response_model=GoldenSetResponse)
+async def get_golden_set() -> GoldenSetResponse:
+    """Return golden dataset stats (total, per-bucket counts) + first 5 samples."""
+    stats = _golden_set_stats(get_repo_root())
+    return GoldenSetResponse(**stats)
+
+
+@app.get("/api/config")
+async def get_config() -> dict[str, Any]:
+    """Return harness/config.yaml parsed as JSON."""
+    path = _harness_config_path(get_repo_root())
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="harness/config.yaml not found")
+    try:
+        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as exc:
+        raise HTTPException(
+            status_code=500, detail=f"harness/config.yaml is corrupt: {exc}"
+        ) from exc
+
+
+@app.put("/api/config")
+async def put_config(body: dict[str, Any]) -> dict[str, str]:
+    """Update harness/config.yaml — only allowed fields are merged.
+
+    Top-level: ``mode``, ``runtime_endpoint``, ``optimizer_endpoint``,
+    ``judge_endpoint``. Nested sections (only listed sub-fields updated):
+    ``optimizer``, ``eval``, ``gate``, ``loop``.
+    """
+    repo_root = get_repo_root()
+    path = _harness_config_path(repo_root)
+    existing: dict[str, Any] = {}
+    if path.is_file():
+        try:
+            existing = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError as exc:
+            raise HTTPException(
+                status_code=500, detail=f"harness/config.yaml is corrupt: {exc}"
+            ) from exc
+    merged = _merge_config(existing, body)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.write_text(
+            yaml.safe_dump(merged, sort_keys=False, default_flow_style=False),
+            encoding="utf-8",
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: Baseline
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/baseline")
+async def build_baseline() -> dict[str, Any]:
+    """Build the baseline: run eval → CachedBaseline → eval/runs/baseline.json.
+
+    Runs ``_build_baseline_sync`` in a thread pool so the event loop
+    stays responsive. Overwrites any existing baseline.
+    """
+    if not _baseline_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="a baseline build is already running")
+    try:
+        repo_root = get_repo_root()
+        try:
+            baseline = await anyio.to_thread.run_sync(
+                partial(_build_baseline_sync, repo_root)
+            )
+        except Exception as exc:  # noqa: BLE001 — surface any baseline failure
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return baseline.to_dict()
+    finally:
+        _baseline_lock.release()
+
+
+@app.get("/api/baseline")
+async def get_baseline() -> dict[str, Any]:
+    """Return the cached baseline from eval/runs/baseline.json, or 404."""
+    baseline = load_baseline(get_repo_root())
+    if baseline is None:
+        raise HTTPException(status_code=404, detail="baseline not found")
+    return baseline.to_dict()
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: Optimize — frontier
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/frontier")
+async def get_frontier() -> dict[str, Any]:
+    """Return eval/runs/frontier.json parsed as JSON, or 404 if not found."""
+    repo_root = get_repo_root()
+    path = repo_root / "eval" / "runs" / "frontier.json"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="frontier not found")
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=500, detail=f"frontier JSON is corrupt: {exc}"
+        ) from exc
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: Finalize
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/finalize")
+async def finalize() -> dict[str, Any]:
+    """Run the held-out evaluation and write eval/runs/finalized.json.
+
+    Checks that ``eval/runs/frontier.json`` exists and
+    ``harness/config.yaml`` has ``eval.held_out_test: true``, then runs
+    ``_finalize_sync`` in a thread pool.
+    """
+    if not _finalize_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="finalization is already running")
+    try:
+        repo_root = get_repo_root()
+        try:
+            result = await anyio.to_thread.run_sync(
+                partial(_finalize_sync, repo_root)
+            )
+        except Exception as exc:  # noqa: BLE001 — surface any finalize failure
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return result
+    finally:
+        _finalize_lock.release()
+
+
+@app.get("/api/finalize")
+async def get_finalized() -> dict[str, Any]:
+    """Return eval/runs/finalized.json, or 404 if not found."""
+    repo_root = get_repo_root()
+    path = repo_root / "eval" / "runs" / "finalized.json"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="finalized report not found")
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=500, detail=f"finalized JSON is corrupt: {exc}"
+        ) from exc
+
+
+# ---------------------------------------------------------------------------
+# Dashboard (must be last — route ordering)
+# ---------------------------------------------------------------------------
 
 
 @app.get("/", response_class=HTMLResponse)
