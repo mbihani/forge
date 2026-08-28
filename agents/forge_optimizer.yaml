@@ -18,6 +18,16 @@
 # or touches git; the loop's applier does all of that. ``os_env`` is
 # caller-process (no sandbox) so the bundled file tools reach the
 # uploaded scaffold tree.
+#
+# The no-shell/no-git contract is enforced at TWO layers:
+#   1. ``guardrails.policies.filesystem_only`` — a CEL policy evaluated on
+#      every ``tool_call`` event that DENYs Bash / shell / terminal /
+#      code-execution tools at the server's policy layer, independent of
+#      the prompt. This is the real enforcement; the prompt is defense-in-depth.
+#   2. The prompt itself restates the prohibition (defense-in-depth).
+# The Omnigent agent YAML has no static ``tools:`` allowlist for the
+# harness's built-in tools — the ``tools:`` section is for sub-agents only
+# (verified against a live bundle). Tool restriction is policy-based.
 
 spec_version: 1
 
@@ -158,3 +168,20 @@ os_env:
   cwd: .
   sandbox:
     type: none
+
+# Policy-layer enforcement of the filesystem-only tool surface. The CEL
+# expression is evaluated on every ``tool_call`` event: any tool whose name
+# is a shell / Bash / terminal / code-execution surface is DENYed before it
+# runs; everything else (Read, Glob, Grep, Write, Edit) is ALLOWed. Git is
+# covered because it is always invoked through a shell. This is independent
+# of the prompt's no-shell instructions — defense-in-depth.
+guardrails:
+  policies:
+    filesystem_only:
+      type: function
+      "on": [tool_call]
+      function:
+        path: omnigent.inner.nessie.policies.cel_policy
+        arguments:
+          expression: >-
+            event.type == "tool_call" && (event.data.name == "Bash" || event.data.name == "sys_os_shell" || event.data.name == "shell" || event.data.name == "terminal" || event.data.name == "execute_code") ? {"result": "DENY", "reason": "Shell, Bash, and code execution are forbidden — the optimizer agent is filesystem-only."} : {"result": "ALLOW"}

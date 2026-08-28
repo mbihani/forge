@@ -116,20 +116,32 @@ class OmnigentBackend:
             stream_text, turns_used = await self._drain_stream(session_id)
 
             # The stream is the primary transcript source; fall back to the
-            # persisted conversation items if the stream produced no parseable
-            # action block (a dropped delta or a non-streaming harness).
+            # persisted conversation items only if the stream text did NOT
+            # yield a parseable action. Checking ``parse_action`` (not a raw
+            # triple-backtick scan) avoids letting an unrelated or malformed
+            # fence in the stream suppress a valid items fallback — a
+            # ``bad_json`` / ``schema_mismatch`` fence is just as much a
+            # non-success as no fence at all.
             transcript = stream_text
-            if "```" not in transcript:
+            stream_parse = parse_action(transcript)
+            if stream_parse.parse_status not in ("ok", "ok_last_of_many"):
                 items_text = await self._transcript_from_items(session_id)
                 if items_text:
                     transcript = items_text
 
             modified_files = await self._collect_modified_files(session_id, env_id)
-        except OmnigentError as exc:
-            # Surface the server error as a noop-producing transcript so the
-            # loop never crashes on a backend failure — same posture as the
-            # local backend's parse-failure path.
-            transcript = f"[omnigent backend error: {exc}]\n{exc.body}"
+        except Exception as exc:
+            # Degrade to a noop-producing transcript on ANY backend failure so
+            # the loop never crashes — same posture as the local backend's
+            # parse-failure path. ``OmnigentError`` carries a response body;
+            # transport failures (httpx.ConnectError, httpx.TimeoutException)
+            # and malformed-JSON / unexpected-shape errors do not, so the
+            # ``body`` is pulled defensively via getattr.
+            body = getattr(exc, "body", "")
+            note = f"[omnigent backend error: {exc}]"
+            if body:
+                note += f"\n{body}"
+            transcript = note
             modified_files = {}
             turns_used = None
 

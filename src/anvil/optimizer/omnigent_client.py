@@ -9,10 +9,10 @@ ingestion endpoint that sends a user message to the agent.
 
 Design notes:
 
-* **httpx** is the only HTTP dependency (already present transitively via
-  the anthropic / claude-agent-sdk extras). The client is injected
-  (``client=``) so tests can pass a fake :class:`httpx.AsyncClient`-shaped
-  object without a live server.
+* **httpx** is the only HTTP dependency (declared explicitly in
+  ``pyproject.toml``). The client is injected (``client=``) so tests can
+  pass a fake :class:`httpx.AsyncClient`-shaped object without a live
+  server.
 * **SSE** frames are ``event: <type>\\ndata: <json>\\n\\n``; the stream
   generator yields parsed ``(event_type, data_dict)`` tuples and stops on
   ``[DONE]`` or when the source closes.
@@ -105,7 +105,9 @@ class OmnigentClient:
         headers: dict[str, str] = {"Accept": "application/json"}
         if auth_token:
             headers["Authorization"] = f"Bearer {auth_token}"
-        self._client = client or httpx.AsyncClient(base_url=self._base_url, headers=headers)
+        self._client = client or httpx.AsyncClient(
+            base_url=self._base_url, headers=headers, timeout=timeout
+        )
         if client is not None:
             # Respect caller-provided client auth headers if not already set.
             for key, value in headers.items():

@@ -20,6 +20,7 @@ import tarfile
 from pathlib import Path
 from typing import Any
 
+import httpx
 import yaml
 
 from anvil.optimizer.omnigent_backend import (
@@ -323,6 +324,48 @@ def test_run_server_error_produces_noop_transcript(tmp_path: Path) -> None:
     # The error was surfaced as a noop-producing transcript.
     assert result.action.action == "noop"
     assert "omnigent backend error" in result.transcript
+    assert result.modified_files == {}
+    assert result.turns_used is None
+
+
+def test_run_transport_connect_error_produces_noop(tmp_path: Path) -> None:
+    """An httpx.ConnectError (server unreachable) degrades to a noop, not a crash."""
+
+    class _FailingClient(FakeOmnigentClient):
+        async def create_session(self, *a: Any, **kw: Any) -> dict:
+            raise httpx.ConnectError("connection refused")
+
+    backend = OmnigentBackend(
+        client=_FailingClient(),  # type: ignore[arg-type]
+        agent_bundle_path=_write_agent_yaml(tmp_path),
+        server_url="http://localhost:6767",
+    )
+    result = asyncio.run(backend.run(prompt="p", scaffold_files={}, max_turns=5, model="m"))
+
+    assert result.action.action == "noop"
+    assert "omnigent backend error" in result.transcript
+    assert "connection refused" in result.transcript
+    assert result.modified_files == {}
+    assert result.turns_used is None
+
+
+def test_run_transport_timeout_produces_noop(tmp_path: Path) -> None:
+    """An httpx.TimeoutException (request timed out) degrades to a noop, not a crash."""
+
+    class _FailingClient(FakeOmnigentClient):
+        async def send_message(self, session_id: str, text: str) -> dict:
+            raise httpx.TimeoutException("timed out waiting for response")
+
+    backend = OmnigentBackend(
+        client=_FailingClient(),  # type: ignore[arg-type]
+        agent_bundle_path=_write_agent_yaml(tmp_path),
+        server_url="http://localhost:6767",
+    )
+    result = asyncio.run(backend.run(prompt="p", scaffold_files={}, max_turns=5, model="m"))
+
+    assert result.action.action == "noop"
+    assert "omnigent backend error" in result.transcript
+    assert "timed out" in result.transcript
     assert result.modified_files == {}
     assert result.turns_used is None
 

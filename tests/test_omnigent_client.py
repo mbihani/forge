@@ -375,6 +375,18 @@ def test_no_auth_token_leaves_header_unset() -> None:
     assert "Authorization" not in fake.headers
 
 
+def test_timeout_is_wired_to_async_client() -> None:
+    """The timeout arg reaches httpx.AsyncClient, not stored unused."""
+    c = OmnigentClient("http://localhost:6767", None, timeout=42.0)
+    try:
+        # When no client is injected, a real httpx.AsyncClient is built and
+        # the timeout must be configured on it (not just stored on self).
+        assert c._client.timeout.read == 42.0
+        assert c._client.timeout.connect == 42.0
+    finally:
+        asyncio.run(c.aclose())
+
+
 def test_session_create_metadata_to_dict_omits_none() -> None:
     meta = SessionCreateMetadata(title="t")
     d = meta.to_dict()

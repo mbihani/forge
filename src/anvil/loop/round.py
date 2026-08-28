@@ -46,6 +46,7 @@ from anvil.optimizer import (
     get_backend,
     run_optimizer_session,
 )
+from anvil.optimizer.omnigent_backend import OmnigentBackend
 from anvil.runtime.loader import default_runtime_config_path
 
 
@@ -476,12 +477,20 @@ async def _run_omnigent_session(
         max_turns=max_turns,
     )
     backend = get_backend(cfg)
-    result = await backend.run(
-        prompt=prompt,
-        scaffold_files=scaffold_files,
-        max_turns=max_turns,
-        model=optimizer_endpoint,
-    )
+    try:
+        result = await backend.run(
+            prompt=prompt,
+            scaffold_files=scaffold_files,
+            max_turns=max_turns,
+            model=optimizer_endpoint,
+        )
+    finally:
+        # Close the factory-created OmnigentClient so its underlying
+        # ``httpx.AsyncClient`` connection pool does not leak. The local
+        # backend has no ``client`` attribute; the isinstance guard keeps
+        # the cleanup omnigent-specific without widening the Protocol.
+        if isinstance(backend, OmnigentBackend):
+            await backend.client.aclose()
     return result.action, result.transcript, result.parse_result
 
 

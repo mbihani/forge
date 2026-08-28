@@ -71,6 +71,53 @@ def test_agent_yaml_prompt_forbids_shell_and_git() -> None:
     assert "json-action" in prompt
 
 
+def test_agent_yaml_enforces_filesystem_only_via_policy() -> None:
+    """The no-shell/no-git contract is enforced at the policy layer, not prompt-only.
+
+    The Omnigent agent YAML has no static ``tools:`` allowlist for the
+    harness's built-in tools (the ``tools:`` section is for sub-agents only).
+    Tool restriction is done via ``guardrails.policies`` — a CEL policy
+    evaluated on every ``tool_call`` event. This test verifies the policy
+    exists and denies shell / Bash / code-execution surfaces.
+    """
+    data = _load()
+    guardrails = data.get("guardrails", {})
+    policies = guardrails.get("policies", {})
+    assert "filesystem_only" in policies, "expected a filesystem_only guardrail policy"
+
+    pol = policies["filesystem_only"]
+    assert pol["on"] == ["tool_call"]
+    expr = pol["function"]["arguments"]["expression"]
+    # The CEL expression must DENY shell / Bash / code-execution tools.
+    assert '"DENY"' in expr
+    for forbidden in ("Bash", "sys_os_shell", "shell", "terminal", "execute_code"):
+        assert f'"{forbidden}"' in expr, f"CEL policy must deny {forbidden!r}"
+
+
+def test_agent_yaml_has_no_shell_bash_git_tools() -> None:
+    """No shell, Bash, or git tool may appear as an allowed tool in the YAML.
+
+    There is no ``tools:`` allowlist for built-in tools (the ``tools:`` key,
+    when present, declares sub-agents — not permitted tools). This test
+    guards against a future edit accidentally whitelisting a shell surface.
+    """
+    data = _load()
+    # The ``tools:`` section (if present) declares sub-agents, not allowed
+    # built-in tools. Assert it does not list a shell/bash/git agent.
+    tools = data.get("tools", {})
+    if isinstance(tools, dict):
+        agents = tools.get("agents", [])
+        for agent in agents:
+            name = agent if isinstance(agent, str) else str(agent).lower()
+            assert name not in ("bash", "shell", "terminal", "git"), (
+                f"shell/bash/git sub-agent {name!r} must not be allowed"
+            )
+    # The guardrails block is present (enforced by the test above); its
+    # existence is the structural signal that shell/bash/git are denied.
+    yaml_text = _AGENT_YAML.read_text(encoding="utf-8")
+    assert "guardrails:" in yaml_text
+
+
 def test_agent_yaml_os_env_is_caller_process() -> None:
     data = _load()
     assert data["os_env"]["type"] == "caller_process"
