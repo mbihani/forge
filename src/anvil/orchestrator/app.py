@@ -11,7 +11,7 @@ Phase 1 — setup:
   * GET  /api/scaffold/files/{name} — raw text of a skill/rule markdown file.
   * PUT  /api/scaffold/files/{name} — write a skill/rule markdown file.
   * GET  /api/golden-set            — golden dataset stats + sample entries.
-  * GET  /api/config                — harness runtime config as JSON.
+  * GET  /api/config                — harness runtime config as JSON (secrets redacted).
   * PUT  /api/config                — update harness/config.yaml (allowed fields only).
 
 Phase 2 — baseline:
@@ -25,7 +25,7 @@ Phase 3 — optimize:
   * GET  /api/frontier              — read eval/runs/frontier.json.
 
 Phase 4 — finalize:
-  * POST /api/finalize              — run held-out eval → eval/runs/finalized.json.
+  * POST /api/finalize              — run held-out eval → eval/runs/finalized.json (terminal).
   * GET  /api/finalize              — read finalized report.
 
 Supporting:
@@ -34,8 +34,22 @@ Supporting:
   * POST /validate     — read-only baseline eval (diagnostic).
   * GET  /             — interactive 4-phase wizard dashboard.
 
-``run_round``, ``evaluate_branch``, ``_build_baseline_sync`` and
-``_finalize_sync`` are sync + blocking. All MUST run in a thread pool
+Security: ``GET /api/config`` redacts any field whose key contains
+``token``, ``secret``, ``password``, or ``credential`` (case-insensitive)
+before returning the config JSON.
+
+Terminal finalization: once ``eval/runs/finalized.json`` exists,
+``POST /api/finalize`` returns 409 and ``POST /rounds`` returns 409
+(unless ``force: true`` is passed in the request body).
+
+Shared mutation lock: a single ``_mutation_lock`` serializes ALL
+mutating operations (``POST /rounds``, ``POST /api/baseline``,
+``POST /api/finalize``, ``PUT /api/scaffold``,
+``PUT /api/scaffold/files/{name}``, ``PUT /api/config``) so concurrent
+requests don't race on shared scaffold/config/eval artifacts.
+
+``run_round``, ``evaluate_branch``, ``_build_baseline_sync``,
+``_finalize_sync`` and all synchronous file I/O MUST run in a thread pool
 (``anyio.to_thread.run_sync``) so the single uvicorn event loop stays
 responsive — calling them directly in an async handler freezes the loop
 and the Databricks App 502s.
@@ -49,8 +63,9 @@ import logging
 import os
 import re
 import subprocess
+import tempfile
 import threading
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
 from functools import partial
 from html import escape
@@ -82,8 +97,8 @@ logger = logging.getLogger("anvil.orchestrator")
 _ENV_VARS = [
     "OMNIGENT_SERVER_URL",
     "OMNIGENT_AUTH_TOKEN",
-    "GIT_REMOTE_URL",
     "GIT_TOKEN",
+    "GIT_REMOTE_URL",
     "ANVIL_AI_GATEWAY_URL",
     "ANVIL_EVAL_ENGINE",
     "MLFLOW_EXPERIMENT_NAME",
@@ -103,6 +118,11 @@ _VALID_DECISIONS = frozenset(d.value for d in Decision)
 # traversal (/, ..) and dot-prefixed names.
 _SAFE_FILENAME_RE = re.compile(r"^[a-zA-Z0-9_-]+\.md$")
 
+# Substrings that mark a config field as secret — any key containing
+# one of these (case-insensitive) is redacted by ``_redact_secrets``
+# before the config JSON is returned to the client.
+_REDACT_KEYWORDS = frozenset({"token", "secret", "password", "credential"})
+
 # Top-level config fields the PUT /api/config endpoint may update.
 _CONFIG_ALLOWED_TOP = frozenset({
     "mode",
@@ -115,7 +135,7 @@ _CONFIG_ALLOWED_TOP = frozenset({
 # may update within each.
 _CONFIG_ALLOWED_NESTED: dict[str, frozenset[str]] = {
     "optimizer": frozenset({"backend", "server_url", "auth_token", "agent_bundle_path"}),
-    "eval": frozenset({"default_mode", "n_workers", "scorers"}),
+    "eval": frozenset({"default_mode", "n_workers", "scorers", "held_out_test"}),
     "gate": frozenset({"type", "epsilon"}),
     "loop": frozenset({"target_rounds", "max_optimizer_turns"}),
 }
@@ -171,6 +191,7 @@ class RoundCreateRequest(BaseModel):
     max_turns: int | None = None
     mode: Literal["prompt", "code"] | None = None
     agent: str | None = None
+    force: bool = False
 
 
 class RoundReportResponse(BaseModel):
@@ -235,7 +256,13 @@ class GoldenSetResponse(BaseModel):
 
 
 class ConfigUpdateRequest(BaseModel):
-    """Body for PUT /api/config — partial config update (allowed fields only)."""
+    """Body for PUT /api/config — partial config update (allowed fields only).
+
+    Top-level: ``mode``, ``runtime_endpoint``, ``optimizer_endpoint``,
+    ``judge_endpoint``. Nested sections: ``optimizer``, ``eval``,
+    ``gate``, ``loop`` — each accepts a dict whose sub-fields are
+    allow-listed by ``_CONFIG_ALLOWED_NESTED``.
+    """
     mode: str | None = None
     runtime_endpoint: str | None = None
     optimizer_endpoint: str | None = None
@@ -342,9 +369,9 @@ def _update_harness_config(
             raw["optimizer"] = optimizer
             changed = True
     if changed:
-        path.write_text(
+        _atomic_write(
+            path,
             yaml.safe_dump(raw, sort_keys=False, default_flow_style=False),
-            encoding="utf-8",
         )
 
 
@@ -507,7 +534,8 @@ def _merge_config(existing: dict[str, Any], update: dict[str, Any]) -> dict[str,
     Nested sections (only listed sub-fields are updated):
       ``optimizer`` → ``backend``, ``server_url``, ``auth_token``,
       ``agent_bundle_path``.
-      ``eval`` → ``default_mode``, ``n_workers``, ``scorers``.
+      ``eval`` → ``default_mode``, ``n_workers``, ``scorers``,
+      ``held_out_test``.
       ``gate`` → ``type``, ``epsilon``.
       ``loop`` → ``target_rounds``, ``max_optimizer_turns``.
     """
@@ -524,6 +552,102 @@ def _merge_config(existing: dict[str, Any], update: dict[str, Any]) -> dict[str,
                     current[field] = section_update[field]
             result[section] = current
     return result
+
+
+# ---------------------------------------------------------------------------
+# Secret redaction (GET /api/config)
+# ---------------------------------------------------------------------------
+
+
+def _redact_secrets(obj: Any) -> Any:
+    """Recursively redact secret-bearing fields from a config structure.
+
+    Any dict key containing ``token``, ``secret``, ``password``, or
+    ``credential`` (case-insensitive) whose value is non-empty is replaced
+    with ``"***"``. Empty values (``""``, ``None``, ``0``) are left as-is
+    so the caller can distinguish "not set" from "set but redacted".
+    """
+    if isinstance(obj, dict):
+        result: dict[str, Any] = {}
+        for key, val in obj.items():
+            key_lower = str(key).lower()
+            if any(kw in key_lower for kw in _REDACT_KEYWORDS) and val:
+                result[key] = "***"
+            else:
+                result[key] = _redact_secrets(val)
+        return result
+    if isinstance(obj, list):
+        return [_redact_secrets(item) for item in obj]
+    return obj
+
+
+# ---------------------------------------------------------------------------
+# Atomic write helper
+# ---------------------------------------------------------------------------
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    """Write ``content`` to ``path`` atomically via a temp file + ``os.replace``.
+
+    The temp file is created in the same directory as the target so the
+    rename is guaranteed to be atomic (same filesystem). If any step
+    fails the temp file is cleaned up and the original is left intact.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(path.parent), prefix=path.name + ".", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.replace(tmp_name, str(path))
+    except BaseException:
+        with suppress(OSError):
+            os.unlink(tmp_name)
+        raise
+
+
+def _read_json_file_sync(path: Path) -> dict[str, Any]:
+    """Read a JSON file synchronously, raising FileNotFoundError if absent."""
+    if not path.is_file():
+        raise FileNotFoundError(str(path))
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+# ---------------------------------------------------------------------------
+# Sync I/O helpers for GET endpoints (run in thread pool)
+# ---------------------------------------------------------------------------
+
+
+def _get_scaffold_sync(repo_root: Path) -> dict[str, Any]:
+    """Read scaffold config + list skill/rule files (sync I/O)."""
+    config_path = _scaffold_config_path(repo_root)
+    if not config_path.is_file():
+        raise FileNotFoundError("scaffold/harness.yaml not found")
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    files = _list_scaffold_files(repo_root)
+    return {"config": config, "files": files}
+
+
+def _get_config_sync(repo_root: Path) -> dict[str, Any]:
+    """Read harness config + redact secrets (sync I/O)."""
+    path = _harness_config_path(repo_root)
+    if not path.is_file():
+        raise FileNotFoundError("harness/config.yaml not found")
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return _redact_secrets(raw)
+
+
+def _put_config_sync(repo_root: Path, update: dict[str, Any]) -> None:
+    """Merge + atomically write harness config (sync I/O)."""
+    path = _harness_config_path(repo_root)
+    existing: dict[str, Any] = {}
+    if path.is_file():
+        existing = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    merged = _merge_config(existing, update)
+    _atomic_write(
+        path, yaml.safe_dump(merged, sort_keys=False, default_flow_style=False)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -632,10 +756,7 @@ def _finalize_sync(repo_root: Path) -> dict[str, Any]:
     }
 
     finalized_path = repo_root / "eval" / "runs" / "finalized.json"
-    finalized_path.parent.mkdir(parents=True, exist_ok=True)
-    finalized_path.write_text(
-        json.dumps(payload, indent=2) + "\n", encoding="utf-8"
-    )
+    _atomic_write(finalized_path, json.dumps(payload, indent=2) + "\n")
     return payload
 
 
@@ -647,10 +768,9 @@ def _finalize_sync(repo_root: Path) -> dict[str, Any]:
 def _workflow_state(repo_root: Path) -> dict[str, Any]:
     """Return the status of all four workflow phases.
 
-    Checks for the existence and key fields of:
-    scaffold/harness.yaml, data/golden_set.jsonl, harness/config.yaml,
-    eval/runs/baseline.json, eval/runs/round_*.json,
-    eval/runs/frontier.json, eval/runs/finalized.json.
+    Each file read + YAML/JSON parse is individually wrapped in
+    try/except so a single malformed file never crashes the whole
+    state response — the affected phase just reports defaults.
     """
     # Phase 1: Scaffold
     scaffold_path = _scaffold_config_path(repo_root)
@@ -658,9 +778,12 @@ def _workflow_state(repo_root: Path) -> dict[str, Any]:
     skills_count = 0
     rules_count = 0
     if scaffold_exists:
-        raw = yaml.safe_load(scaffold_path.read_text(encoding="utf-8")) or {}
-        skills_count = len(raw.get("skills") or [])
-        rules_count = len(raw.get("rules") or [])
+        try:
+            raw = yaml.safe_load(scaffold_path.read_text(encoding="utf-8")) or {}
+            skills_count = len(raw.get("skills") or [])
+            rules_count = len(raw.get("rules") or [])
+        except (yaml.YAMLError, OSError):
+            pass
 
     # Phase 1: Golden set
     golden_path = _golden_set_path(repo_root)
@@ -668,19 +791,22 @@ def _workflow_state(repo_root: Path) -> dict[str, Any]:
     golden_count = 0
     golden_buckets: dict[str, int] = {}
     if golden_exists:
-        for line in golden_path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                ex = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(ex, dict):
-                continue
-            golden_count += 1
-            bucket = ex.get("category") or ex.get("bucket") or "unknown"
-            golden_buckets[bucket] = golden_buckets.get(bucket, 0) + 1
+        try:
+            for line in golden_path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    ex = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(ex, dict):
+                    continue
+                golden_count += 1
+                bucket = ex.get("category") or ex.get("bucket") or "unknown"
+                golden_buckets[bucket] = golden_buckets.get(bucket, 0) + 1
+        except (json.JSONDecodeError, OSError):
+            pass
 
     # Phase 1: Config
     config_path = _harness_config_path(repo_root)
@@ -688,12 +814,17 @@ def _workflow_state(repo_root: Path) -> dict[str, Any]:
     config_mode = ""
     config_backend = ""
     if config_exists:
-        raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-        config_mode = str(raw.get("mode", ""))
-        config_backend = str((raw.get("optimizer") or {}).get("backend", ""))
+        try:
+            raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+            config_mode = str(raw.get("mode", ""))
+            config_backend = str((raw.get("optimizer") or {}).get("backend", ""))
+        except (yaml.YAMLError, OSError):
+            pass
 
     # Phase 2: Baseline
-    baseline = load_baseline(repo_root)
+    baseline: CachedBaseline | None = None
+    with suppress(json.JSONDecodeError, KeyError, TypeError, ValueError, OSError):
+        baseline = load_baseline(repo_root)
     baseline_exists = baseline is not None
     baseline_aggregate = baseline.aggregate if baseline else None
     baseline_n = baseline.n_examples if baseline else 0
@@ -702,7 +833,8 @@ def _workflow_state(repo_root: Path) -> dict[str, Any]:
     runs_dir = repo_root / "eval" / "runs"
     rounds_count = 0
     if runs_dir.is_dir():
-        rounds_count = sum(1 for _ in runs_dir.glob("round_*.json"))
+        with suppress(OSError):
+            rounds_count = sum(1 for _ in runs_dir.glob("round_*.json"))
 
     # Phase 3: Frontier
     frontier_path = runs_dir / "frontier.json"
@@ -1053,7 +1185,8 @@ function renderState(state) {
   } else {
     finalizeInfo.textContent = "Not finalized yet.";
   }
-  $("finalize-btn").disabled = !state.baseline.exists;
+  // Disable finalize button if baseline OR frontier doesn't exist.
+  $("finalize-btn").disabled = !state.baseline.exists || !state.frontier.exists;
 }
 
 // --- Agent loading (existing) ---
@@ -1533,17 +1666,12 @@ async def _lifespan(app: FastAPI):
 
 app = FastAPI(title="Forge Orchestrator", lifespan=_lifespan)
 
-# Prevents two concurrent POST /rounds from racing on the same auto-
-# detected round ID and performing conflicting git operations.
-_round_lock = threading.Lock()
-
-# Prevents two concurrent POST /api/baseline calls from racing on
-# evaluate_branch and the baseline cache file.
-_baseline_lock = threading.Lock()
-
-# Prevents two concurrent POST /api/finalize calls from racing on
-# evaluate_branch and the finalized output file.
-_finalize_lock = threading.Lock()
+# Single shared lock for ALL mutating operations — prevents concurrent
+# mutations to shared scaffold/config/eval artifacts. The alias
+# ``_round_lock`` is kept for backward compat with existing tests that
+# import it directly.
+_mutation_lock = threading.Lock()
+_round_lock = _mutation_lock  # backward-compat alias for existing tests
 
 
 # ---------------------------------------------------------------------------
@@ -1586,16 +1714,22 @@ async def validate() -> ValidationResponse:
 
 
 # ---------------------------------------------------------------------------
-# Phase 3: Optimize (existing, kept)
+# Phase 3: Optimize (existing, kept — with terminal-finalization guard)
 # ---------------------------------------------------------------------------
 
 
 @app.post("/rounds", response_model=RoundReportResponse)
 async def start_round(req: RoundCreateRequest) -> RoundReportResponse:
-    if not _round_lock.acquire(blocking=False):
+    repo_root = get_repo_root()
+    finalized_path = repo_root / "eval" / "runs" / "finalized.json"
+    if finalized_path.is_file() and not req.force:
+        raise HTTPException(
+            status_code=409,
+            detail="optimization is finalized; cannot run more rounds",
+        )
+    if not _mutation_lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="a round is already running")
     try:
-        repo_root = get_repo_root()
         if req.mode is not None or req.agent is not None:
             _update_harness_config(repo_root, mode=req.mode, agent=req.agent)
         round_id = req.round_id if req.round_id is not None else _next_round_id(repo_root)
@@ -1614,7 +1748,7 @@ async def start_round(req: RoundCreateRequest) -> RoundReportResponse:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         return _round_report_to_response(report)
     finally:
-        _round_lock.release()
+        _mutation_lock.release()
 
 
 @app.get("/rounds", response_model=list[RoundSummaryResponse])
@@ -1643,7 +1777,7 @@ async def get_round(round_id: int) -> dict[str, Any]:
 @app.get("/api/state")
 async def get_state() -> dict[str, Any]:
     """Return the status of all four workflow phases."""
-    return _workflow_state(get_repo_root())
+    return await anyio.to_thread.run_sync(_workflow_state, get_repo_root())
 
 
 # ---------------------------------------------------------------------------
@@ -1654,18 +1788,16 @@ async def get_state() -> dict[str, Any]:
 @app.get("/api/scaffold", response_model=ScaffoldResponse)
 async def get_scaffold() -> ScaffoldResponse:
     """Return scaffold/harness.yaml parsed as JSON + list of skill/rule files."""
-    repo_root = get_repo_root()
-    config_path = _scaffold_config_path(repo_root)
-    if not config_path.is_file():
-        raise HTTPException(status_code=404, detail="scaffold/harness.yaml not found")
     try:
-        config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    except yaml.YAMLError as exc:
-        raise HTTPException(
-            status_code=500, detail=f"scaffold/harness.yaml is corrupt: {exc}"
-        ) from exc
-    files = _list_scaffold_files(repo_root)
-    return ScaffoldResponse(config=config, files=[ScaffoldFileEntry(**f) for f in files])
+        data = await anyio.to_thread.run_sync(_get_scaffold_sync, get_repo_root())
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return ScaffoldResponse(
+        config=data["config"],
+        files=[ScaffoldFileEntry(**f) for f in data["files"]],
+    )
 
 
 @app.put("/api/scaffold")
@@ -1676,17 +1808,19 @@ async def put_scaffold(body: dict[str, Any]) -> dict[str, str]:
     Comments are not preserved by ``yaml.safe_dump`` — acceptable because
     the full commented template lives in version control.
     """
-    repo_root = get_repo_root()
-    path = _scaffold_config_path(repo_root)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    if not _mutation_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="a scaffold update is already running")
     try:
-        path.write_text(
-            yaml.safe_dump(body, sort_keys=False, default_flow_style=False),
-            encoding="utf-8",
-        )
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return {"status": "ok"}
+        repo_root = get_repo_root()
+        path = _scaffold_config_path(repo_root)
+        content = yaml.safe_dump(body, sort_keys=False, default_flow_style=False)
+        try:
+            await anyio.to_thread.run_sync(partial(_atomic_write, path, content))
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return {"status": "ok"}
+    finally:
+        _mutation_lock.release()
 
 
 @app.get("/api/scaffold/files/{filename}", response_class=PlainTextResponse)
@@ -1707,66 +1841,61 @@ async def get_scaffold_file(filename: str) -> str:
 async def put_scaffold_file(filename: str, request: Request) -> dict[str, str]:
     """Write raw text to a scaffold skill/rule markdown file."""
     _validate_scaffold_filename(filename)
-    repo_root = get_repo_root()
     content = (await request.body()).decode("utf-8")
-    path = _scaffold_file_write_path(repo_root, filename)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    if not _mutation_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="a scaffold file update is already running")
     try:
-        path.write_text(content, encoding="utf-8")
-    except OSError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return {"status": "ok", "file": filename}
+        repo_root = get_repo_root()
+        path = _scaffold_file_write_path(repo_root, filename)
+        try:
+            await anyio.to_thread.run_sync(partial(_atomic_write, path, content))
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return {"status": "ok", "file": filename}
+    finally:
+        _mutation_lock.release()
 
 
 @app.get("/api/golden-set", response_model=GoldenSetResponse)
 async def get_golden_set() -> GoldenSetResponse:
     """Return golden dataset stats (total, per-bucket counts) + first 5 samples."""
-    stats = _golden_set_stats(get_repo_root())
+    stats = await anyio.to_thread.run_sync(_golden_set_stats, get_repo_root())
     return GoldenSetResponse(**stats)
 
 
 @app.get("/api/config")
 async def get_config() -> dict[str, Any]:
-    """Return harness/config.yaml parsed as JSON."""
-    path = _harness_config_path(get_repo_root())
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="harness/config.yaml not found")
+    """Return harness/config.yaml parsed as JSON, with secrets redacted."""
     try:
-        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except yaml.YAMLError as exc:
-        raise HTTPException(
-            status_code=500, detail=f"harness/config.yaml is corrupt: {exc}"
-        ) from exc
+        return await anyio.to_thread.run_sync(_get_config_sync, get_repo_root())
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.put("/api/config")
-async def put_config(body: dict[str, Any]) -> dict[str, str]:
+async def put_config(body: ConfigUpdateRequest) -> dict[str, str]:
     """Update harness/config.yaml — only allowed fields are merged.
 
     Top-level: ``mode``, ``runtime_endpoint``, ``optimizer_endpoint``,
     ``judge_endpoint``. Nested sections (only listed sub-fields updated):
     ``optimizer``, ``eval``, ``gate``, ``loop``.
     """
-    repo_root = get_repo_root()
-    path = _harness_config_path(repo_root)
-    existing: dict[str, Any] = {}
-    if path.is_file():
-        try:
-            existing = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        except yaml.YAMLError as exc:
-            raise HTTPException(
-                status_code=500, detail=f"harness/config.yaml is corrupt: {exc}"
-            ) from exc
-    merged = _merge_config(existing, body)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    if not _mutation_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="a config update is already running")
     try:
-        path.write_text(
-            yaml.safe_dump(merged, sort_keys=False, default_flow_style=False),
-            encoding="utf-8",
-        )
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return {"status": "ok"}
+        repo_root = get_repo_root()
+        update = body.model_dump(exclude_none=True)
+        try:
+            await anyio.to_thread.run_sync(
+                partial(_put_config_sync, repo_root, update)
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return {"status": "ok"}
+    finally:
+        _mutation_lock.release()
 
 
 # ---------------------------------------------------------------------------
@@ -1781,7 +1910,7 @@ async def build_baseline() -> dict[str, Any]:
     Runs ``_build_baseline_sync`` in a thread pool so the event loop
     stays responsive. Overwrites any existing baseline.
     """
-    if not _baseline_lock.acquire(blocking=False):
+    if not _mutation_lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="a baseline build is already running")
     try:
         repo_root = get_repo_root()
@@ -1793,13 +1922,16 @@ async def build_baseline() -> dict[str, Any]:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         return baseline.to_dict()
     finally:
-        _baseline_lock.release()
+        _mutation_lock.release()
 
 
 @app.get("/api/baseline")
 async def get_baseline() -> dict[str, Any]:
     """Return the cached baseline from eval/runs/baseline.json, or 404."""
-    baseline = load_baseline(get_repo_root())
+    try:
+        baseline = await anyio.to_thread.run_sync(load_baseline, get_repo_root())
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     if baseline is None:
         raise HTTPException(status_code=404, detail="baseline not found")
     return baseline.to_dict()
@@ -1813,12 +1945,11 @@ async def get_baseline() -> dict[str, Any]:
 @app.get("/api/frontier")
 async def get_frontier() -> dict[str, Any]:
     """Return eval/runs/frontier.json parsed as JSON, or 404 if not found."""
-    repo_root = get_repo_root()
-    path = repo_root / "eval" / "runs" / "frontier.json"
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="frontier not found")
+    path = get_repo_root() / "eval" / "runs" / "frontier.json"
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return await anyio.to_thread.run_sync(_read_json_file_sync, path)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="frontier not found") from None
     except json.JSONDecodeError as exc:
         raise HTTPException(
             status_code=500, detail=f"frontier JSON is corrupt: {exc}"
@@ -1834,14 +1965,21 @@ async def get_frontier() -> dict[str, Any]:
 async def finalize() -> dict[str, Any]:
     """Run the held-out evaluation and write eval/runs/finalized.json.
 
-    Checks that ``eval/runs/frontier.json`` exists and
-    ``harness/config.yaml`` has ``eval.held_out_test: true``, then runs
-    ``_finalize_sync`` in a thread pool.
+    Terminal: returns 409 if ``finalized.json`` already exists (delete
+    the file to re-run). Checks that ``eval/runs/frontier.json`` exists
+    and ``harness/config.yaml`` has ``eval.held_out_test: true``, then
+    runs ``_finalize_sync`` in a thread pool.
     """
-    if not _finalize_lock.acquire(blocking=False):
+    repo_root = get_repo_root()
+    finalized_path = repo_root / "eval" / "runs" / "finalized.json"
+    if finalized_path.is_file():
+        raise HTTPException(
+            status_code=409,
+            detail="finalization already exists; delete eval/runs/finalized.json to re-run",
+        )
+    if not _mutation_lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="finalization is already running")
     try:
-        repo_root = get_repo_root()
         try:
             result = await anyio.to_thread.run_sync(
                 partial(_finalize_sync, repo_root)
@@ -1850,18 +1988,17 @@ async def finalize() -> dict[str, Any]:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         return result
     finally:
-        _finalize_lock.release()
+        _mutation_lock.release()
 
 
 @app.get("/api/finalize")
 async def get_finalized() -> dict[str, Any]:
     """Return eval/runs/finalized.json, or 404 if not found."""
-    repo_root = get_repo_root()
-    path = repo_root / "eval" / "runs" / "finalized.json"
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="finalized report not found")
+    path = get_repo_root() / "eval" / "runs" / "finalized.json"
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return await anyio.to_thread.run_sync(_read_json_file_sync, path)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="finalized report not found") from None
     except json.JSONDecodeError as exc:
         raise HTTPException(
             status_code=500, detail=f"finalized JSON is corrupt: {exc}"
