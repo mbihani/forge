@@ -34,6 +34,15 @@ optimizer = [
     "claude-agent-sdk>=0.1.0",
     "anthropic>=0.40",
 ]
+# Orchestrator extras — the FastAPI control-plane app served by the
+# Databricks App (deploy/app.yaml). Kept out of the base install so
+# non-App deployments (CLI-only loop runs) stay light.
+orchestrator = [
+    "anvil[optimizer]",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
+    "jinja2>=3.1.0",
+]
 
 [build-system]
 requires = ["hatchling"]

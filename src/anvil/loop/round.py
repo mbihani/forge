@@ -320,7 +320,7 @@ def run_round(
         baseline_score=baseline_aggregate,
         mutated_score=mutated_score,
         score_delta=score_delta,
-        decision=str(decision),
+        decision=decision.value,
         mlflow_eval_run_id=eval_run_id,
         parse_status=parse_result.parse_status,
     )
@@ -561,7 +561,7 @@ score_delta: {sd}
 {rationale}
 
 ## Outcome
-Decision: **{str(decision).upper()}**. Score delta vs cached baseline:
+Decision: **{decision.value.upper()}**. Score delta vs cached baseline:
 {sd}.
 """
 
@@ -586,7 +586,7 @@ def _build_round_json(
         "branch": branch,
         "scaffold_commit_sha": commit_sha,
         "parent_commit_sha": parent_sha,
-        "decision": str(decision),
+        "decision": decision.value,
         "action_kind": action_kind,
         "parse_status": parse_status,
         "baseline_score": baseline_score,
