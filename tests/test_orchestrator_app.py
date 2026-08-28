@@ -8,8 +8,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 from fastapi.testclient import TestClient
 
+from anvil.eval import EvalReport
 from anvil.loop.decision import Decision
 from anvil.loop.round import RoundReport
 from anvil.orchestrator.app import app, get_repo_root, set_repo_root
@@ -160,7 +162,7 @@ def test_dashboard_escapes_xss_in_round_json(client: TestClient, tmp_path: Path)
     )
     response = client.get("/")
     assert response.status_code == 200
-    assert "<script>" not in response.text
+    assert "<script>alert(1)</script>" not in response.text
     assert "&lt;script&gt;" in response.text  # escaped form present
 
 
@@ -181,7 +183,7 @@ def test_render_dashboard_escapes_all_values() -> None:
             }
         ]
     )
-    assert "<script>" not in html_output
+    assert "<script>alert(1)</script>" not in html_output
     assert "&lt;script&gt;" in html_output
 
 
@@ -231,3 +233,233 @@ def test_start_round_conflict_409(client: TestClient) -> None:
         assert "already running" in response.json()["detail"]
     finally:
         _round_lock.release()
+
+
+# ---------------------------------------------------------------------------
+# GET /agents
+# ---------------------------------------------------------------------------
+
+
+def test_list_agents_empty(client: TestClient) -> None:
+    """GET /agents returns [] when no agents directory exists."""
+    response = client.get("/agents")
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_list_agents(client: TestClient, tmp_path: Path) -> None:
+    """GET /agents returns name, filename, path for each agents/*.yaml."""
+    agents_dir = tmp_path / "agents"
+    agents_dir.mkdir()
+    (agents_dir / "forge_optimizer.yaml").write_text(
+        "name: forge_optimizer\n", encoding="utf-8"
+    )
+    (agents_dir / "custom_agent.yaml").write_text(
+        "name: my_custom_agent\n", encoding="utf-8"
+    )
+    response = client.get("/agents")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 2
+    # sorted alphabetically by filename: custom_agent < forge_optimizer
+    assert data[0]["name"] == "my_custom_agent"
+    assert data[0]["filename"] == "custom_agent.yaml"
+    assert data[0]["path"] == "agents/custom_agent.yaml"
+    assert data[1]["name"] == "forge_optimizer"
+    assert data[1]["filename"] == "forge_optimizer.yaml"
+    assert data[1]["path"] == "agents/forge_optimizer.yaml"
+
+
+def test_list_agents_fallback_name(client: TestClient, tmp_path: Path) -> None:
+    """Agent YAML without a name field falls back to the file stem."""
+    agents_dir = tmp_path / "agents"
+    agents_dir.mkdir()
+    (agents_dir / "unnamed.yaml").write_text("foo: bar\n", encoding="utf-8")
+    response = client.get("/agents")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["name"] == "unnamed"
+
+
+# ---------------------------------------------------------------------------
+# POST /validate
+# ---------------------------------------------------------------------------
+
+
+def _fake_eval_report() -> EvalReport:
+    return EvalReport(
+        aggregate=0.85,
+        per_judge={"correctness": 0.9},
+        per_bucket={},
+        failures=[],
+        run_id="test-run-123",
+        experiment_id="exp-1",
+        n_rows=8,
+        mode="quick",
+        scorers=["correctness"],
+        evaluated_at="2024-01-01T00:00:00",
+    )
+
+
+def test_validate(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """POST /validate runs eval and returns the aggregate score."""
+    monkeypatch.setattr(
+        "anvil.orchestrator.app.evaluate_branch", lambda **kwargs: _fake_eval_report()
+    )
+    response = client.post("/validate")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["aggregate"] == 0.85
+    assert data["run_id"] == "test-run-123"
+    assert data["n_examples"] == 8
+    assert data["mode"] == "quick"
+
+
+def test_validate_failure(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """POST /validate surfaces eval failures as HTTP 500."""
+    def boom(**kwargs: Any) -> EvalReport:
+        raise RuntimeError("eval exploded")
+
+    monkeypatch.setattr("anvil.orchestrator.app.evaluate_branch", boom)
+    response = client.post("/validate")
+    assert response.status_code == 500
+    assert "eval exploded" in response.json()["detail"]
+
+
+def test_validate_runs_on_worker_thread(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """POST /validate must run evaluate_branch in a thread pool."""
+    main_thread_id = threading.current_thread().ident
+    captured: dict[str, Any] = {}
+
+    def mock_eval(**kwargs: Any) -> EvalReport:
+        captured["thread_id"] = threading.current_thread().ident
+        return _fake_eval_report()
+
+    monkeypatch.setattr("anvil.orchestrator.app.evaluate_branch", mock_eval)
+    response = client.post("/validate")
+    assert response.status_code == 200
+    assert captured["thread_id"] is not None
+    assert captured["thread_id"] != main_thread_id
+
+
+# ---------------------------------------------------------------------------
+# POST /rounds with mode + agent config writes
+# ---------------------------------------------------------------------------
+
+
+def test_start_round_writes_mode_and_agent(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """POST /rounds writes mode + agent_bundle_path to harness/config.yaml."""
+    config_dir = tmp_path / "harness"
+    config_dir.mkdir()
+    config_path = config_dir / "config.yaml"
+    config_path.write_text(
+        "mode: prompt\noptimizer:\n  backend: local\n"
+        "  agent_bundle_path: agents/forge_optimizer.yaml\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "anvil.orchestrator.app.run_round",
+        lambda **kwargs: RoundReport(
+            round_id=kwargs["round_id"],
+            branch="anvil/exp-round-1",
+            decision=Decision.KEEP,
+            action_kind="edit_skill",
+            parse_status="ok",
+            diff_summary="edited skill X",
+        ),
+    )
+    response = client.post(
+        "/rounds", json={"mode": "code", "agent": "agents/custom.yaml"}
+    )
+    assert response.status_code == 200
+    raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert raw["mode"] == "code"
+    assert raw["optimizer"]["agent_bundle_path"] == "agents/custom.yaml"
+
+
+def test_start_round_writes_mode_only(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """POST /rounds with only mode set updates just the mode key."""
+    config_dir = tmp_path / "harness"
+    config_dir.mkdir()
+    config_path = config_dir / "config.yaml"
+    original = (
+        "mode: prompt\noptimizer:\n  backend: local\n"
+        "  agent_bundle_path: agents/forge_optimizer.yaml\n"
+    )
+    config_path.write_text(original, encoding="utf-8")
+    monkeypatch.setattr(
+        "anvil.orchestrator.app.run_round",
+        lambda **kwargs: RoundReport(
+            round_id=kwargs["round_id"],
+            branch="anvil/exp-round-1",
+            decision=Decision.KEEP,
+            action_kind="edit_skill",
+            parse_status="ok",
+            diff_summary="edited skill X",
+        ),
+    )
+    response = client.post("/rounds", json={"mode": "code"})
+    assert response.status_code == 200
+    raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert raw["mode"] == "code"
+    assert raw["optimizer"]["agent_bundle_path"] == "agents/forge_optimizer.yaml"
+
+
+def test_start_round_no_config_write_when_unset(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """POST /rounds without mode/agent leaves harness/config.yaml untouched."""
+    config_dir = tmp_path / "harness"
+    config_dir.mkdir()
+    config_path = config_dir / "config.yaml"
+    original = "mode: prompt\noptimizer:\n  backend: local\n"
+    config_path.write_text(original, encoding="utf-8")
+    monkeypatch.setattr(
+        "anvil.orchestrator.app.run_round",
+        lambda **kwargs: RoundReport(
+            round_id=kwargs["round_id"],
+            branch="anvil/exp-round-1",
+            decision=Decision.KEEP,
+            action_kind="edit_skill",
+            parse_status="ok",
+            diff_summary="edited skill X",
+        ),
+    )
+    response = client.post("/rounds", json={})
+    assert response.status_code == 200
+    assert config_path.read_text(encoding="utf-8") == original
+
+
+# ---------------------------------------------------------------------------
+# Interactive dashboard UI
+# ---------------------------------------------------------------------------
+
+
+def test_dashboard_has_interactive_cards(client: TestClient) -> None:
+    """GET / renders the four workflow cards + the rounds table."""
+    response = client.get("/")
+    assert response.status_code == 200
+    text = response.text
+    assert "1. Select Agent" in text
+    assert "2. Validate Baseline" in text
+    assert "3. Optimization Mode" in text
+    assert "4. Run Optimizer" in text
+    assert 'id="agent-select"' in text
+    assert 'id="validate-btn"' in text
+    assert 'id="run-btn"' in text
+    assert 'name="mode"' in text
+    assert 'value="prompt"' in text
+    assert 'value="code"' in text
+    assert "Rounds History" in text
+    assert "/agents" in text
+    assert "/validate" in text
+    assert "/rounds" in text
