@@ -73,6 +73,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
+from anvil.data.mlflow_baseline import build_mlflow_baseline
 from anvil.eval import evaluate_branch
 from anvil.eval.cache import report_to_baseline, save_baseline
 from anvil.loop.frontier import load_frontier
@@ -113,6 +114,7 @@ class OptimizeRequest(BaseModel):
     eval_mode: str | None = None
     max_rounds: int = Field(default=10, ge=1)
     max_turns: int = Field(default=30, ge=1)
+    mlflow_experiment_id: str | None = None
 
 
 class CheckResult(BaseModel):
@@ -725,14 +727,27 @@ def _read_artifacts_sync(repo_path: Path) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _build_baseline_sync(repo_path: Path, eval_mode: str | None) -> dict:
+def _build_baseline_sync(
+    repo_path: Path, eval_mode: str | None, mlflow_experiment_id: str | None = None
+) -> dict:
     """Run eval on the current scaffold and write eval/runs/baseline.json.
 
     Mirrors ``scripts/make_baseline.build_baseline``: calls
     ``evaluate_branch``, reads endpoints from harness/config.yaml, gets the
     scaffold commit SHA from git, converts the EvalReport to a
     CachedBaseline via ``report_to_baseline``, and persists it.
+
+    When ``mlflow_experiment_id`` is provided, the baseline is seeded from
+    that MLflow experiment's judge results (via :func:`build_mlflow_baseline`)
+    instead of a local golden-set eval. The MLflow baseline carries an empty
+    ``scorer_fingerprint`` so the round loop's compatibility check is a
+    no-op, and it becomes the actual round gate once saved.
     """
+    if mlflow_experiment_id:
+        baseline = build_mlflow_baseline(experiment_id=mlflow_experiment_id)
+        save_baseline(repo_path, baseline)
+        return baseline.to_dict()
+
     scaffold_root = repo_path / "scaffold"
     config_path = repo_path / "harness" / "config.yaml"
     runtime_endpoint = ""
@@ -847,7 +862,11 @@ def _apply_artifacts(sess: SessionData, artifacts: dict[str, Any]) -> None:
 
 
 async def _run_optimization_task(
-    session_id: str, eval_mode: str | None, max_rounds: int, max_turns: int
+    session_id: str,
+    eval_mode: str | None,
+    max_rounds: int,
+    max_turns: int,
+    mlflow_experiment_id: str | None = None,
 ) -> None:
     """Background asyncio task that runs baseline + rounds.
 
@@ -870,7 +889,12 @@ async def _run_optimization_task(
         await anyio.to_thread.run_sync(partial(_ensure_parent_branch, sess.repo_path))
         # Baseline (blocking) in a thread pool.
         baseline = await anyio.to_thread.run_sync(
-            partial(_build_baseline_sync, sess.repo_path, eval_mode)
+            partial(
+                _build_baseline_sync,
+                sess.repo_path,
+                eval_mode,
+                mlflow_experiment_id,
+            )
         )
         with _session_lock:
             sess.baseline = baseline
@@ -1077,7 +1101,13 @@ async def start_optimize(session_id: str, req: OptimizeRequest) -> dict[str, str
     # so a git failure sets status to 'error' instead of leaving the
     # session stuck in 'building_baseline'.
     task = asyncio.create_task(
-        _run_optimization_task(session_id, eval_mode, req.max_rounds, req.max_turns)
+        _run_optimization_task(
+            session_id,
+            eval_mode,
+            req.max_rounds,
+            req.max_turns,
+            req.mlflow_experiment_id,
+        )
     )
     with _session_lock:
         sess._optimize_task = task
@@ -1309,6 +1339,8 @@ _DASHBOARD_HTML = """<!doctype html>
     <h2>Step 3 · Configure Optimization</h2>
     <label for="eval-mode">Eval mode</label>
     <select id="eval-mode"></select>
+    <label for="mlflow-experiment-id">MLflow Experiment ID (optional)</label>
+    <input id="mlflow-experiment-id" type="text" placeholder="e.g. 967014443183055 — seed baseline from MLflow judge results" autocomplete="off">
     <label for="max-rounds">Max rounds</label>
     <input id="max-rounds" type="number" value="10" min="1" max="200">
     <label for="max-turns">Max turns per round</label>
@@ -1438,6 +1470,7 @@ function renderConfigSummary(config) {
 async function startOptimize() {
   if (!sessionId) { alert('No active session'); return; }
   const evalMode = document.getElementById('eval-mode').value || null;
+  const mlflowExperimentId = document.getElementById('mlflow-experiment-id').value.trim() || null;
   const maxRounds = parseInt(document.getElementById('max-rounds').value, 10) || 10;
   const maxTurns = parseInt(document.getElementById('max-turns').value, 10) || 30;
   show('step4');
@@ -1447,7 +1480,7 @@ async function startOptimize() {
   try {
     const resp = await fetch('/api/session/' + sessionId + '/optimize', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ eval_mode: evalMode, max_rounds: maxRounds, max_turns: maxTurns })
+      body: JSON.stringify({ eval_mode: evalMode, mlflow_experiment_id: mlflowExperimentId, max_rounds: maxRounds, max_turns: maxTurns })
     });
     const data = await resp.json();
     if (resp.status !== 202) {

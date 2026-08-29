@@ -665,6 +665,60 @@ def test_optimize_max_rounds(
     assert len(resp.json()) == 3
 
 
+def test_optimize_mlflow_baseline(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """When ``mlflow_experiment_id`` is provided the baseline is seeded from
+    MLflow judge results (not local eval) and becomes the round gate."""
+    from anvil.eval.cache import CachedBaseline
+
+    sid = _create_valid_session(client, tmp_path, monkeypatch)
+    # evaluate_branch must NOT be called when mlflow_experiment_id is set.
+    eval_calls: list[dict] = []
+    monkeypatch.setattr(
+        app_module,
+        "evaluate_branch",
+        lambda **kw: eval_calls.append(kw) or _fake_eval_report(),
+    )
+    mlflow_baseline = CachedBaseline(
+        scaffold_commit_sha="mlflow-seed",
+        evaluated_at="2024-01-01T00:00:00",
+        mode="mlflow",
+        scorers=["accuracy", "field_amount"],
+        runtime_endpoint="",
+        judge_endpoint="",
+        aggregate=0.92,
+        per_judge={"accuracy": 0.92, "field_amount": 0.88},
+        per_bucket={},
+        n_examples=300,
+        mlflow_run_id=None,
+        scorer_fingerprint="",
+    )
+    mlflow_calls: list[dict] = []
+    monkeypatch.setattr(
+        app_module,
+        "build_mlflow_baseline",
+        lambda **kw: mlflow_calls.append(kw) or mlflow_baseline,
+    )
+    monkeypatch.setattr(app_module, "run_round", _make_mock_run_round())
+    resp = client.post(
+        f"/api/session/{sid}/optimize",
+        json={"max_rounds": 2, "max_turns": 5, "mlflow_experiment_id": "967014443183055"},
+    )
+    assert resp.status_code == 202
+    data = _wait_for_status(client, sid, {"optimizing", "optimized"})
+    assert data["status"] in {"optimizing", "optimized"}
+    # build_mlflow_baseline was called with the experiment ID.
+    assert len(mlflow_calls) == 1
+    assert mlflow_calls[0]["experiment_id"] == "967014443183055"
+    # Local eval was NOT invoked.
+    assert eval_calls == []
+    # MLflow baseline persisted to the session.
+    assert data["baseline"] is not None
+    assert data["baseline"]["mode"] == "mlflow"
+    assert data["baseline"]["aggregate"] == 0.92
+
+
 def test_optimize_already_optimizing(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
 ) -> None:
