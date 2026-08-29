@@ -11,6 +11,8 @@ invoked.
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import json
 import os
 import shutil
@@ -19,6 +21,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 import yaml
 from fastapi.testclient import TestClient
@@ -369,6 +372,33 @@ def test_create_session_clone_failure(
     assert "repository not found" in resp.json()["detail"]
 
 
+def test_create_session_clone_failure_redacts_token(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """B1: the github_token must never appear in the HTTP response or sess.error."""
+    secret = "ghp_supersecrettoken123"
+
+    def fail_clone(repo_url: str, dest_path: Path, github_token: str | None) -> str | None:
+        # Simulate git stderr echoing the authenticated URL.
+        return (
+            f"fatal: could not read Username for "
+            f"https://x-access-token:{github_token}@github.com/user/bad"
+        )
+
+    monkeypatch.setattr(app_module, "_clone_repo", fail_clone)
+    resp = client.post(
+        "/api/session",
+        json={"repo_url": "https://github.com/user/bad", "github_token": secret},
+    )
+    assert resp.status_code == 400
+    detail = resp.json()["detail"]
+    assert secret not in detail
+    assert "***" in detail
+    # The token must also not leak into the in-memory session error.
+    for sess in app_module._sessions.values():
+        assert secret not in (sess.error or "")
+
+
 def test_get_session(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
 ) -> None:
@@ -555,6 +585,34 @@ def test_validation_skill_file_missing(
     assert "missing.md" in checks["scaffold_skill_files"]["message"]
 
 
+def test_validation_invalid_config_still_has_all_checks(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """W1: when harness/config.yaml is missing, the report still has all 8 checks."""
+    source = tmp_path / "agent-repo"
+    _seed_repo(source, with_config=False)
+    monkeypatch.setattr(app_module, "_clone_repo", _mock_clone_factory(source))
+    resp = client.post("/api/session", json={"repo_url": "https://github.com/user/repo"})
+    data = resp.json()
+    checks = {c["name"]: c for c in data["validation"]["checks"]}
+    expected_names = {
+        "git_repo",
+        "scaffold_harness_yaml",
+        "scaffold_skill_files",
+        "golden_set_jsonl",
+        "harness_config_yaml",
+        "eval_modes",
+        "agent_code",
+        "parent_branch",
+    }
+    assert set(checks.keys()) == expected_names
+    # Dependent checks should be fail with a skip message.
+    assert checks["eval_modes"]["status"] == "fail"
+    assert "Skipped" in checks["eval_modes"]["message"]
+    assert checks["agent_code"]["status"] == "fail"
+    assert "Skipped" in checks["agent_code"]["message"]
+
+
 # ---------------------------------------------------------------------------
 # Optimization
 # ---------------------------------------------------------------------------
@@ -636,6 +694,84 @@ def test_optimize_not_validated(
     sid = resp.json()["session_id"]
     resp2 = client.post(f"/api/session/{sid}/optimize", json={"max_rounds": 1})
     assert resp2.status_code == 409
+
+
+def test_optimize_invalid_max_rounds(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """W3: max_rounds=0 is rejected with 422 validation error."""
+    sid = _create_valid_session(client, tmp_path, monkeypatch)
+    resp = client.post(f"/api/session/{sid}/optimize", json={"max_rounds": 0, "max_turns": 5})
+    assert resp.status_code == 422
+
+
+def test_optimize_invalid_max_turns(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """W3: max_turns=0 is rejected with 422 validation error."""
+    sid = _create_valid_session(client, tmp_path, monkeypatch)
+    resp = client.post(f"/api/session/{sid}/optimize", json={"max_rounds": 5, "max_turns": 0})
+    assert resp.status_code == 422
+
+
+def test_optimize_parent_branch_failure(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """B7: if _ensure_parent_branch fails the session goes to 'error', not stuck."""
+    sid = _create_valid_session(client, tmp_path, monkeypatch)
+
+    def boom_branch(repo_root: Path) -> None:
+        raise RuntimeError("cannot create parent branch")
+
+    monkeypatch.setattr(app_module, "_ensure_parent_branch", boom_branch)
+    monkeypatch.setattr(app_module, "evaluate_branch", lambda **kw: _fake_eval_report())
+    monkeypatch.setattr(app_module, "run_round", _make_mock_run_round())
+    client.post(f"/api/session/{sid}/optimize", json={"max_rounds": 1, "max_turns": 5})
+    data = _wait_for_status(client, sid, {"error"})
+    assert data["status"] == "error"
+    assert "parent branch" in data["error"]
+
+
+def test_optimize_parent_branch_git_error(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """W2: nonzero git exit code in _ensure_parent_branch raises (→ error status)."""
+    sid = _create_valid_session(client, tmp_path, monkeypatch)
+
+    # Make `git checkout -b` fail by redirecting to a bad git path.
+    real_run = subprocess.run
+
+    def fake_run(args, **kw):
+        if "checkout" in args and "-b" in args:
+            return subprocess.CompletedProcess(
+                args, 128, stdout="", stderr="fatal: already exists\n"
+            )
+        return real_run(args, **kw)
+
+    monkeypatch.setattr(app_module.subprocess, "run", fake_run)
+    # Remove the branch so _ensure_parent_branch actually tries to create it.
+    monkeypatch.setattr(app_module, "evaluate_branch", lambda **kw: _fake_eval_report())
+    monkeypatch.setattr(app_module, "run_round", _make_mock_run_round())
+    client.post(f"/api/session/{sid}/optimize", json={"max_rounds": 1, "max_turns": 5})
+    data = _wait_for_status(client, sid, {"error"})
+    assert data["status"] == "error"
+
+
+def test_run_round_failure(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """B6: if run_round raises, the session transitions to 'error'."""
+    sid = _create_valid_session(client, tmp_path, monkeypatch)
+    monkeypatch.setattr(app_module, "evaluate_branch", lambda **kw: _fake_eval_report())
+
+    def boom_round(**kw: Any) -> RoundReport:
+        raise RuntimeError("round exploded")
+
+    monkeypatch.setattr(app_module, "run_round", boom_round)
+    client.post(f"/api/session/{sid}/optimize", json={"max_rounds": 1, "max_turns": 5})
+    data = _wait_for_status(client, sid, {"error"})
+    assert data["status"] == "error"
+    assert "round exploded" in data["error"]
 
 
 def test_get_rounds_empty(
@@ -791,6 +927,62 @@ def test_finalize_already_finalized(
     assert resp2.status_code == 409
 
 
+def test_finalize_already_finalized_on_disk(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """B2: if finalized.json exists on disk, finalize returns 409 even if
+    the in-memory status is still 'optimized'."""
+    sid = _optimize_then_finalize_setup(client, tmp_path, monkeypatch, sessions_root)
+    sess = app_module._sessions[sid]
+    # Write finalized.json to disk but leave in-memory status as 'optimized'.
+    runs_dir = sess.repo_path / "eval" / "runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    (runs_dir / "finalized.json").write_text(
+        json.dumps({"aggregate": 0.99, "finalized_at": "2024-01-01T00:00:00"}), encoding="utf-8"
+    )
+    assert sess.status == "optimized"
+    resp = client.post(f"/api/session/{sid}/finalize")
+    assert resp.status_code == 409
+
+
+def test_finalize_while_optimizing(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """B3: finalize is rejected with 409 while optimization is running."""
+    sid = _create_valid_session(client, tmp_path, monkeypatch)
+    app_module._sessions[sid].status = "optimizing"
+    resp = client.post(f"/api/session/{sid}/finalize")
+    assert resp.status_code == 409
+
+
+def test_finalize_concurrent(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """B2: two concurrent finalize calls — exactly one succeeds (200), the other 409."""
+    sid = _optimize_then_finalize_setup(client, tmp_path, monkeypatch, sessions_root)
+    # Make _finalize_sync slow so both requests overlap in the 'finalizing' state.
+    original_finalize = app_module._finalize_sync
+
+    def slow_finalize(repo_path: Path) -> dict[str, Any]:
+        time.sleep(0.3)
+        return original_finalize(repo_path)
+
+    monkeypatch.setattr(app_module, "_finalize_sync", slow_finalize)
+
+    async def _run_concurrent() -> tuple[httpx.Response, httpx.Response]:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            r1, r2 = await asyncio.gather(
+                ac.post(f"/api/session/{sid}/finalize"),
+                ac.post(f"/api/session/{sid}/finalize"),
+            )
+            return r1, r2
+
+    r1, r2 = asyncio.run(_run_concurrent())
+    statuses = sorted([r1.status_code, r2.status_code])
+    assert statuses == [200, 409]
+
+
 def test_finalize_no_frontier(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
 ) -> None:
@@ -873,7 +1065,7 @@ def test_dashboard_has_polling(client: TestClient) -> None:
 def test_concurrent_sessions(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
 ) -> None:
-    """Two sessions optimize concurrently without interfering."""
+    """Two sessions optimize concurrently without interfering (B6: asyncio.gather)."""
     # Seed two repos.
     src_a = tmp_path / "repo-a"
     src_b = tmp_path / "repo-b"
@@ -901,8 +1093,25 @@ def test_concurrent_sessions(
     sid_b = resp_b.json()["session_id"]
     assert sid_a != sid_b
 
-    client.post(f"/api/session/{sid_a}/optimize", json={"max_rounds": 2, "max_turns": 5})
-    client.post(f"/api/session/{sid_b}/optimize", json={"max_rounds": 3, "max_turns": 5})
+    # B6: fire both /optimize requests concurrently via threading so the
+    # two background tasks run on the TestClient's event loop (which
+    # stays alive for polling).
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+        futs = [
+            ex.submit(
+                client.post,
+                f"/api/session/{sid_a}/optimize",
+                json={"max_rounds": 2, "max_turns": 5},
+            ),
+            ex.submit(
+                client.post,
+                f"/api/session/{sid_b}/optimize",
+                json={"max_rounds": 3, "max_turns": 5},
+            ),
+        ]
+        results = [f.result(timeout=30) for f in futs]
+    for r in results:
+        assert r.status_code == 202
 
     _wait_for_status(client, sid_a, {"optimized"})
     _wait_for_status(client, sid_b, {"optimized"})
@@ -1017,3 +1226,47 @@ def test_optimize_creates_parent_branch(
     _wait_for_status(client, sid, {"optimized"})
     # After optimize, anvil/exp was created.
     assert app_module._branch_exists(sess.repo_path, "anvil/exp")
+
+
+# ---------------------------------------------------------------------------
+# Lifespan / shutdown (B8)
+# ---------------------------------------------------------------------------
+
+
+def test_lifespan_cancels_tasks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """B8: lifespan shutdown cancels active optimization tasks and cleans up."""
+    source = tmp_path / "agent-repo"
+    _seed_repo(source)
+    monkeypatch.setattr(app_module, "_clone_repo", _mock_clone_factory(source))
+    monkeypatch.setattr(app_module, "evaluate_branch", lambda **kw: _fake_eval_report())
+    monkeypatch.setattr(app_module, "run_round", _make_mock_run_round())
+    # Make the baseline slow so the task is still running at shutdown.
+    # The function returns a dummy dict (not calling evaluate_branch) so
+    # the orphaned background thread has no side effects after the test
+    # ends and monkeypatch reverts.  anyio.to_thread.run_sync defaults to
+    # cancellable=False, so the lifespan shutdown waits for the thread to
+    # finish — keep the sleep short.
+    def slow_build(repo_path: Path, eval_mode: str | None) -> dict[str, Any]:
+        time.sleep(0.2)
+        return {"aggregate": 0.0, "scaffold_commit_sha": "unknown", "mode": "quick"}
+
+    monkeypatch.setattr(app_module, "_build_baseline_sync", slow_build)
+
+    task: asyncio.Task | None = None
+    repo_path: Path | None = None
+    with TestClient(app) as client:
+        resp = client.post("/api/session", json={"repo_url": "https://github.com/user/repo"})
+        sid = resp.json()["session_id"]
+        client.post(f"/api/session/{sid}/optimize", json={"max_rounds": 1, "max_turns": 5})
+        task = app_module._sessions[sid]._optimize_task
+        repo_path = app_module._sessions[sid].repo_path
+        assert task is not None
+        assert not task.done()
+    # After the context manager exits, lifespan shutdown has cancelled
+    # the task and cleaned up the repo directory.
+    assert task is not None
+    assert task.done()
+    assert repo_path is not None
+    assert not repo_path.exists()

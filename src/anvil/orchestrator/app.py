@@ -24,12 +24,17 @@ Session state machine::
     cloning → validating → validated (ready for optimize)
                            → invalid (show remediation)
     validated → [POST /optimize] → building_baseline → optimizing → optimized
-    optimized → [POST /finalize] → finalized
+    optimized → [POST /finalize] → finalizing → finalized
+                                     ↘ optimized (on failure, retry)
+    any state → error (on failure; finalized is terminal on disk)
 
 Sessions live in an in-memory ``_sessions`` dict guarded by a single
 ``_session_lock`` (state mutations only). Each session owns one
 background optimization task; concurrent sessions are fine but a single
-session can only optimize once at a time.
+session can only optimize once at a time. Finalization is gated by an
+atomic ``optimized → finalizing`` transition under the lock plus a
+disk check for ``finalized.json`` so concurrent finalize calls cannot
+both proceed.
 
 ALL blocking calls (git clone/branch, ``evaluate_branch``,
 ``run_round``, file I/O) run via ``anyio.to_thread.run_sync`` so the
@@ -51,6 +56,7 @@ import asyncio
 import dataclasses
 import json
 import logging
+import shutil
 import subprocess
 import threading
 import uuid
@@ -105,9 +111,8 @@ class CreateSessionRequest(BaseModel):
 
 class OptimizeRequest(BaseModel):
     eval_mode: str | None = None
-    max_rounds: int = 10
-    max_turns: int = 30
-    optimizer_backend: str | None = None
+    max_rounds: int = Field(default=10, ge=1)
+    max_turns: int = Field(default=30, ge=1)
 
 
 class CheckResult(BaseModel):
@@ -256,17 +261,25 @@ def _ensure_parent_branch(repo_root: Path) -> None:
     clone lacks that branch, create it pointing at the current HEAD,
     then restore the original checkout branch so the working tree is
     unchanged.
+
+    Raises ``RuntimeError`` if the branch creation fails (W2: nonzero
+    exit code is no longer silently ignored).
     """
     if _branch_exists(repo_root, _PARENT_BRANCH):
         return
     original = _current_branch(repo_root)
-    subprocess.run(
+    proc = subprocess.run(
         ["git", "-C", str(repo_root), "checkout", "-b", _PARENT_BRANCH],
         capture_output=True,
         text=True,
         check=False,
         timeout=30,
     )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"failed to create branch '{_PARENT_BRANCH}': "
+            f"{proc.stderr.strip() or 'unknown git error'}"
+        )
     if original and original != _PARENT_BRANCH:
         subprocess.run(
             ["git", "-C", str(repo_root), "checkout", original],
@@ -602,6 +615,18 @@ def _run_validation(repo_path: Path) -> tuple[dict, dict | None]:
     if config is not None:
         checks.append(_check_eval_modes(config))
         checks.append(_check_agent_code(repo_path, config))
+    else:
+        # W1: Always include all 8 checks. When the config prerequisite
+        # failed, mark the dependent checks as skipped/fail so the
+        # report always has exactly 8 entries.
+        for dep_name in ("eval_modes", "agent_code"):
+            checks.append(
+                {
+                    "name": dep_name,
+                    "status": "fail",
+                    "message": "Skipped: prerequisite check 'harness_config_yaml' failed",
+                }
+            )
     checks.append(_check_parent_branch(repo_path))
 
     any_fail = any(c["status"] == "fail" for c in checks)
@@ -658,6 +683,41 @@ def _read_json_file_sync(path: Path) -> dict[str, Any]:
     if not path.is_file():
         raise FileNotFoundError(str(path))
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _read_round_json_sync(path: Path) -> dict[str, Any] | None:
+    """Read a round JSON file. Return ``None`` if absent or corrupt.
+
+    B4: designed to run in a thread pool so file I/O doesn't block the
+    event loop.
+    """
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _read_artifacts_sync(repo_path: Path) -> dict[str, Any]:
+    """Read frontier/finalized/baseline JSON from disk.
+
+    B4: runs entirely in a thread pool so all file I/O is offloaded.
+    Returns a dict whose ``frontier`` key is always present (``None`` if
+    not found); ``finalized`` and ``baseline`` keys are only present when
+    the file exists and parsed successfully.
+    """
+    frontier = load_frontier(repo_path)
+    result: dict[str, Any] = {"frontier": frontier.to_dict() if frontier else None}
+    fin_path = repo_path / "eval" / "runs" / "finalized.json"
+    if fin_path.is_file():
+        with suppress(json.JSONDecodeError, OSError):
+            result["finalized"] = json.loads(fin_path.read_text(encoding="utf-8"))
+    base_path = repo_path / "eval" / "runs" / "baseline.json"
+    if base_path.is_file():
+        with suppress(json.JSONDecodeError, OSError):
+            result["baseline"] = json.loads(base_path.read_text(encoding="utf-8"))
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -747,12 +807,11 @@ def _require_session(session_id: str) -> SessionData:
     return sess
 
 
-def _session_to_response(sess: SessionData) -> dict[str, Any]:
+def _session_to_response(sess: SessionData, rounds: list[dict[str, Any]]) -> dict[str, Any]:
     """Build the JSON-serializable session response dict.
 
-    Reads the live round/baseline/frontier/finalized state from disk so a
-    polling client sees progress without depending on the background task
-    having updated the in-memory copy yet.
+    ``rounds`` is read from disk by the caller (in a thread pool) and
+    passed in so no file I/O happens under ``_session_lock``.
     """
     return {
         "session_id": sess.session_id,
@@ -761,25 +820,25 @@ def _session_to_response(sess: SessionData) -> dict[str, Any]:
         "validation": sess.validation,
         "config": sess.config,
         "baseline": sess.baseline,
-        "rounds": _list_round_summaries(sess.repo_path),
+        "rounds": rounds,
         "frontier": sess.frontier,
         "finalized": sess.finalized,
         "error": sess.error,
     }
 
 
-def _refresh_session_artifacts(sess: SessionData) -> None:
-    """Refresh frontier/finalized/baseline from disk into the session."""
-    frontier = load_frontier(sess.repo_path)
-    sess.frontier = frontier.to_dict() if frontier else None
-    fin_path = sess.repo_path / "eval" / "runs" / "finalized.json"
-    if fin_path.is_file():
-        with suppress(json.JSONDecodeError, OSError):
-            sess.finalized = json.loads(fin_path.read_text(encoding="utf-8"))
-    base_path = sess.repo_path / "eval" / "runs" / "baseline.json"
-    if base_path.is_file():
-        with suppress(json.JSONDecodeError, OSError):
-            sess.baseline = json.loads(base_path.read_text(encoding="utf-8"))
+def _apply_artifacts(sess: SessionData, artifacts: dict[str, Any]) -> None:
+    """Apply disk-read artifacts to the session (caller holds ``_session_lock``).
+
+    ``frontier`` is always overwritten (``None`` if not found).
+    ``finalized`` / ``baseline`` are only overwritten when present in the
+    dict (i.e. the file existed and parsed).
+    """
+    sess.frontier = artifacts["frontier"]
+    if "finalized" in artifacts:
+        sess.finalized = artifacts["finalized"]
+    if "baseline" in artifacts:
+        sess.baseline = artifacts["baseline"]
 
 
 # ---------------------------------------------------------------------------
@@ -792,15 +851,23 @@ async def _run_optimization_task(
 ) -> None:
     """Background asyncio task that runs baseline + rounds.
 
-    Each blocking step (baseline, each round) runs via
-    ``anyio.to_thread.run_sync`` so the event loop stays responsive and a
-    polling client sees the status transition building_baseline →
-    optimizing → optimized, with rounds appearing one at a time.
+    Each blocking step (parent-branch creation, baseline, each round,
+    file reads) runs via ``anyio.to_thread.run_sync`` so the event loop
+    stays responsive and a polling client sees the status transition
+    building_baseline → optimizing → optimized, with rounds appearing
+    one at a time.
+
+    B7: ``_ensure_parent_branch`` runs *inside* the task (not in the
+    request handler) so a git failure sets the session to ``error``
+    instead of leaving it stuck in ``building_baseline``.
     """
     try:
         sess = _get_session(session_id)
         if sess is None:
             return
+        # B7: Ensure the parent branch exists — inside the task so a
+        # failure transitions to 'error' instead of a stuck session.
+        await anyio.to_thread.run_sync(partial(_ensure_parent_branch, sess.repo_path))
         # Baseline (blocking) in a thread pool.
         baseline = await anyio.to_thread.run_sync(
             partial(_build_baseline_sync, sess.repo_path, eval_mode)
@@ -820,20 +887,21 @@ async def _run_optimization_task(
                     max_turns=max_turns,
                 )
             )
-            path = _round_json_path(sess.repo_path, i)
-            if path.is_file():
-                try:
-                    round_data = json.loads(path.read_text(encoding="utf-8"))
-                except (json.JSONDecodeError, OSError):
-                    round_data = None
-                if round_data is not None:
-                    with _session_lock:
-                        sess.rounds.append(round_data)
-            # Stop if a finalized.json appeared (a round triggered finalization).
-            if (sess.repo_path / "eval" / "runs" / "finalized.json").is_file():
+            # B4: Read round JSON in a thread pool (not under the lock).
+            round_data = await anyio.to_thread.run_sync(
+                _read_round_json_sync, _round_json_path(sess.repo_path, i)
+            )
+            if round_data is not None:
+                with _session_lock:
+                    sess.rounds.append(round_data)
+            # B4: Check finalized.json in a thread pool.
+            fin_path = sess.repo_path / "eval" / "runs" / "finalized.json"
+            if await anyio.to_thread.run_sync(fin_path.is_file):
                 break
+        # B4: Read artifacts in a thread pool, then update under lock.
+        artifacts = await anyio.to_thread.run_sync(_read_artifacts_sync, sess.repo_path)
         with _session_lock:
-            _refresh_session_artifacts(sess)
+            _apply_artifacts(sess, artifacts)
             sess.status = "finalized" if sess.finalized else "optimized"
     except Exception as exc:  # noqa: BLE001 — surface any failure
         with _session_lock:
@@ -842,6 +910,7 @@ async def _run_optimization_task(
                 sess.status = "error"
                 sess.error = str(exc)
         logger.exception("optimization task for session %s failed", session_id)
+        logger.exception("optimization task for session %s failed", session_id)
 
 
 # ---------------------------------------------------------------------------
@@ -849,10 +918,40 @@ async def _run_optimization_task(
 # ---------------------------------------------------------------------------
 
 
+def _cleanup_session(session_id: str) -> None:
+    """Remove a session's cloned repo directory (run in thread pool).
+
+    B8: called during shutdown for every session. Does NOT cancel the
+    optimization task — that is handled separately in the lifespan.
+    """
+    sess = _sessions.get(session_id)
+    if sess is None:
+        return
+    shutil.rmtree(sess.repo_path, ignore_errors=True)
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     logger.info("forge orchestrator startup — sessions root: %s", _SESSIONS_ROOT)
     yield
+    # B8: On shutdown, cancel active optimization tasks and clean up
+    # cloned repos so we don't leave temp directories behind.
+    logger.info("forge orchestrator shutdown — cancelling tasks + cleaning up")
+    tasks_to_cancel: list[asyncio.Task] = []
+    session_ids: list[str] = []
+    with _session_lock:
+        for sid, sess in _sessions.items():
+            session_ids.append(sid)
+            if sess._optimize_task is not None:
+                tasks_to_cancel.append(sess._optimize_task)
+    for t in tasks_to_cancel:
+        t.cancel()
+    if tasks_to_cancel:
+        await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
+    for sid in session_ids:
+        await anyio.to_thread.run_sync(partial(_cleanup_session, sid))
+    with _session_lock:
+        _sessions.clear()
 
 
 app = FastAPI(title="Forge Orchestrator", lifespan=_lifespan)
@@ -895,6 +994,11 @@ async def create_session(req: CreateSessionRequest) -> dict[str, Any]:
         partial(_clone_repo, req.repo_url, dest_path, req.github_token)
     )
     if err is not None:
+        # B1: Redact any embedded token from the git error message
+        # before storing it in the session or returning it to the client.
+        token = req.github_token
+        if token:
+            err = err.replace(token, "***")
         with _session_lock:
             sess.status = "invalid"
             sess.error = err
@@ -922,9 +1026,12 @@ async def create_session(req: CreateSessionRequest) -> dict[str, Any]:
 @app.get("/api/session/{session_id}")
 async def get_session(session_id: str) -> dict[str, Any]:
     sess = _require_session(session_id)
+    # B4: Read rounds + artifacts in a thread pool (not under the lock).
+    rounds = await anyio.to_thread.run_sync(_list_round_summaries, sess.repo_path)
+    artifacts = await anyio.to_thread.run_sync(_read_artifacts_sync, sess.repo_path)
     with _session_lock:
-        _refresh_session_artifacts(sess)
-        return _session_to_response(sess)
+        _apply_artifacts(sess, artifacts)
+        return _session_to_response(sess, rounds)
 
 
 @app.get("/api/session/{session_id}/validation")
@@ -966,9 +1073,9 @@ async def start_optimize(session_id: str, req: OptimizeRequest) -> dict[str, str
     eval_mode = req.eval_mode
     if eval_mode is None and sess.config:
         eval_mode = (sess.config.get("eval") or {}).get("default_mode")
-    # Create the parent branch (blocking git) in a thread pool — outside
-    # the lock so the event loop stays responsive.
-    await anyio.to_thread.run_sync(partial(_ensure_parent_branch, sess.repo_path))
+    # B7: _ensure_parent_branch now runs INSIDE the optimization task
+    # so a git failure sets status to 'error' instead of leaving the
+    # session stuck in 'building_baseline'.
     task = asyncio.create_task(
         _run_optimization_task(session_id, eval_mode, req.max_rounds, req.max_turns)
     )
@@ -980,7 +1087,8 @@ async def start_optimize(session_id: str, req: OptimizeRequest) -> dict[str, str
 @app.get("/api/session/{session_id}/rounds")
 async def list_rounds(session_id: str) -> list[dict[str, Any]]:
     sess = _require_session(session_id)
-    return _list_round_summaries(sess.repo_path)
+    # B4: file I/O offloaded to a thread pool.
+    return await anyio.to_thread.run_sync(_list_round_summaries, sess.repo_path)
 
 
 @app.get("/api/session/{session_id}/rounds/{round_id}")
@@ -1026,26 +1134,50 @@ async def get_frontier(session_id: str) -> dict[str, Any]:
 @app.post("/api/session/{session_id}/finalize")
 async def finalize(session_id: str) -> dict[str, Any]:
     sess = _require_session(session_id)
+    # B2: FIRST check if finalized.json already exists on disk — if it
+    # does, the session is terminal regardless of in-memory status.
+    fin_path = sess.repo_path / "eval" / "runs" / "finalized.json"
+    if await anyio.to_thread.run_sync(fin_path.is_file):
+        with _session_lock:
+            if sess.status != "finalized":
+                sess.status = "finalized"
+        raise HTTPException(status_code=409, detail="session already finalized")
+    # B2 + B3: Atomic state transition — only allow finalize from the
+    # 'optimized' state. Optimizing/building_baseline/finalizing all get
+    # 409 so finalization and rounds never mutate the repo concurrently.
     with _session_lock:
         if sess.status == "finalized":
             raise HTTPException(status_code=409, detail="session already finalized")
-        if sess.status not in ("optimized", "optimizing"):
+        if sess.status in ("optimizing", "building_baseline", "finalizing"):
             raise HTTPException(
                 status_code=409,
                 detail=f"session is in '{sess.status}' state; must be 'optimized'",
             )
+        if sess.status != "optimized":
+            raise HTTPException(
+                status_code=409,
+                detail=f"session is in '{sess.status}' state; must be 'optimized'",
+            )
+        # Atomically transition to 'finalizing' so a concurrent finalize
+        # call gets 409 before the eval starts.
+        sess.status = "finalizing"
+        sess.error = None
     # Frontier check + finalize run in a thread pool — lock is NOT held
     # across the await so the event loop stays responsive.
     frontier = await anyio.to_thread.run_sync(load_frontier, sess.repo_path)
     if frontier is None:
+        # B2: revert to 'optimized' so the user can retry.
+        with _session_lock:
+            sess.status = "optimized"
         raise HTTPException(
             status_code=409, detail="no frontier; run optimization before finalizing"
         )
     try:
         result = await anyio.to_thread.run_sync(partial(_finalize_sync, sess.repo_path))
     except Exception as exc:  # noqa: BLE001 — surface any finalize failure
+        # B2: revert to 'optimized' so the user can retry.
         with _session_lock:
-            sess.status = "error"
+            sess.status = "optimized"
             sess.error = str(exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     with _session_lock:
