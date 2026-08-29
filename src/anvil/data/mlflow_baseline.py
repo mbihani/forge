@@ -29,15 +29,22 @@ code runs on the local Mac and the forge deploy.
 from __future__ import annotations
 
 import json
+import math
+import os
+import shutil
 import subprocess
 from datetime import UTC, datetime
+from urllib.parse import quote
 
 from anvil.eval.cache import CachedBaseline
 
-# Default Databricks CLI binary — the newer one that supports ``api``. The
-# local Mac blackholes pypi/npm but the CLI is fine; on the forge deploy the
-# path may differ, so it is overridable via the ``cli`` parameter.
-_DEFAULT_CLI = "/usr/local/bin/databricks"
+# Hardcoded fallback for the Databricks CLI binary — the newer one that
+# supports ``api``. Used only when the CLI is not found on PATH. The local
+# Mac blackholes pypi/npm but the CLI is fine; on the forge deploy the path
+# may differ, so the binary is resolved at call time via
+# :func:`_resolve_cli` (PATH lookup first, this fallback second) and is
+# overridable via the ``cli`` parameter.
+_FALLBACK_CLI = "/usr/local/bin/databricks"
 
 # Non-per-field judge metrics to exclude when mapping to per-field slugs.
 # ``accuracy`` / ``accuracy_forgiven`` are top-level aggregates, ``comparisons``
@@ -47,6 +54,32 @@ _DEFAULT_NON_FIELD = frozenset(
 )
 
 
+def _resolve_cli(cli: str | None = None) -> str:
+    """Resolve the Databricks CLI binary path.
+
+    Prefers an explicit ``cli`` arg, then ``shutil.which`` (PATH lookup, so
+    the same code works on the local Mac and the forge deploy), then the
+    hardcoded :data:`_FALLBACK_CLI` path.
+    """
+    if cli:
+        return cli
+    found = shutil.which("databricks")
+    return found if found else _FALLBACK_CLI
+
+
+def _resolve_profile(profile: str | None = None) -> str:
+    """Resolve the Databricks CLI profile.
+
+    Prefers an explicit ``profile`` arg, then the ``DATABRICKS_PROFILE`` env
+    var, then ``"DEFAULT"`` (the conventional profile ``databricks configure``
+    sets up). Resolved at call time so env changes take effect without a
+    re-import.
+    """
+    if profile:
+        return profile
+    return os.environ.get("DATABRICKS_PROFILE") or "DEFAULT"
+
+
 def _api(
     method: str,
     path: str,
@@ -54,17 +87,29 @@ def _api(
     *,
     cli: str,
     profile: str,
+    timeout: int = 120,
 ) -> dict:
     """Call the Databricks REST API via the CLI; parse JSON after the banner.
 
     The Databricks CLI prints a version banner to stdout before the JSON
     payload. We find the first ``{`` and parse from there — robust against
     banner changes across CLI versions.
+
+    ``timeout`` (seconds) guards against a hung CLI call; a
+    :class:`subprocess.TimeoutExpired` is re-raised as a
+    :class:`RuntimeError` with a clear message.
     """
     cmd = [cli, "api", method, path, "--profile", profile]
     if body is not None:
         cmd += ["--json", json.dumps(body)]
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    try:
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, check=True, timeout=timeout
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"Databricks CLI call to {path} timed out after {timeout}s"
+        ) from exc
     out = proc.stdout
     brace = out.find("{")
     if brace < 0:
@@ -79,7 +124,7 @@ def _collect_run_ids(
     profile: str,
     bank_filter: str | None = None,
     page_size: int = 500,
-    max_pages: int = 40,
+    max_pages: int = 200,
 ) -> set[str]:
     """Paginate traces; return ``sourceRun`` ids, optionally filtered by bank.
 
@@ -87,13 +132,28 @@ def _collect_run_ids(
     field), not a run tag — so we must walk the traces to discover which runs
     belong to a given bank. When ``bank_filter`` is ``None`` every trace's
     source run is collected (no bank restriction).
+
+    Pagination continues until ``next_page_token`` is absent/empty (no
+    silent truncation). ``max_pages`` is a safety limit only — if reached
+    the experiment has too many pages and a :class:`RuntimeError` is raised
+    rather than silently dropping data.
     """
     run_ids: set[str] = set()
     token: str | None = None
-    for _ in range(max_pages):
-        q = f"/api/2.0/mlflow/traces?experiment_ids={experiment_id}&max_results={page_size}"
+    page = 0
+    while True:
+        page += 1
+        if page > max_pages:
+            raise RuntimeError(
+                f"experiment {experiment_id} has too many trace pages to "
+                f"process (safety limit {max_pages} reached)"
+            )
+        q = (
+            f"/api/2.0/mlflow/traces?experiment_ids={quote(experiment_id)}"
+            f"&max_results={page_size}"
+        )
         if token:
-            q += f"&page_token={token}"
+            q += f"&page_token={quote(token)}"
         data = _api("get", q, cli=cli, profile=profile)
         traces = data.get("traces", [])
         for t in traces:
@@ -119,12 +179,24 @@ def _collect_run_metrics(
     cli: str,
     profile: str,
     page_size: int = 1000,
-    max_pages: int = 40,
+    max_pages: int = 200,
 ) -> dict[str, dict]:
-    """Paginate ``runs/search``; return ``{run_id: {"metrics": {...}}}``."""
+    """Paginate ``runs/search``; return ``{run_id: {"metrics": {...}}}``.
+
+    Pagination continues until ``next_page_token`` is absent/empty (no
+    silent truncation). ``max_pages`` is a safety limit only — if reached
+    a :class:`RuntimeError` is raised rather than silently dropping runs.
+    """
     runs: dict[str, dict] = {}
     token: str | None = None
-    for _ in range(max_pages):
+    page_num = 0
+    while True:
+        page_num += 1
+        if page_num > max_pages:
+            raise RuntimeError(
+                f"experiment {experiment_id} has too many run pages to "
+                f"process (safety limit {max_pages} reached)"
+            )
         body: dict = {"experiment_ids": [experiment_id], "max_results": page_size}
         if token:
             body["page_token"] = token
@@ -148,9 +220,9 @@ def _mean(values: list[float]) -> float | None:
 def build_mlflow_baseline(
     experiment_id: str,
     bank_filter: str | None = None,
-    profile: str = "full",
+    profile: str | None = None,
     *,
-    cli: str = _DEFAULT_CLI,
+    cli: str | None = None,
     non_field_metrics: frozenset[str] = _DEFAULT_NON_FIELD,
 ) -> CachedBaseline:
     """Build a :class:`CachedBaseline` from an MLflow experiment's judge results.
@@ -158,18 +230,23 @@ def build_mlflow_baseline(
     Parameters
     ----------
     experiment_id:
-        Numeric MLflow experiment ID (e.g. ``"967014443183055"``).
+        Numeric MLflow experiment ID (e.g. ``"967014443183055"``). Must be a
+        non-empty string of digits (whitespace is stripped); a
+        :class:`ValueError` is raised otherwise.
     bank_filter:
         Optional bank name (e.g. ``"ICICI"``). When set, only runs that
         appear as a ``sourceRun`` on a trace whose ``mlflow.traceInputs.bank``
         matches are scored. When ``None``, every run carrying
         ``judge.accuracy`` is scored regardless of bank.
     profile:
-        Databricks CLI profile to use for the REST calls (default ``"full"``).
+        Databricks CLI profile to use for the REST calls. When ``None``
+        (default) the profile is resolved by :func:`_resolve_profile`: the
+        ``DATABRICKS_PROFILE`` env var, then ``"DEFAULT"``.
     cli:
-        Path to the Databricks CLI binary (default ``/usr/local/bin/databricks``
-        — the newer one that supports ``api``). Override when the deploy host
-        has the CLI elsewhere.
+        Path to the Databricks CLI binary. When ``None`` (default) the binary
+        is resolved by :func:`_resolve_cli`: ``shutil.which("databricks")``
+        (PATH lookup), then the hardcoded ``/usr/local/bin/databricks``
+        fallback. Override when the deploy host has the CLI elsewhere.
     non_field_metrics:
         Judge metric slugs (without the ``judge.`` prefix) that are NOT
         per-field scores and should be excluded from the per-field mapping.
@@ -184,13 +261,27 @@ def build_mlflow_baseline(
 
     Raises
     ------
+    ValueError
+        If ``experiment_id`` is not a non-empty numeric string.
     RuntimeError
         If no scored judge runs are found in the experiment (optionally
-        filtered by bank).
+        filtered by bank), if ``judge.accuracy`` has no finite values, or if
+        the experiment has too many pages to process.
     """
+    # Validate experiment_id: a non-empty numeric string (digits only).
+    eid = experiment_id.strip()
+    if not eid or not eid.isdigit():
+        raise ValueError(
+            f"experiment_id must be a non-empty numeric string (digits only), "
+            f"got {experiment_id!r}"
+        )
+
+    cli = _resolve_cli(cli)
+    profile = _resolve_profile(profile)
+
     if bank_filter:
         filtered_run_ids = _collect_run_ids(
-            experiment_id, cli=cli, profile=profile, bank_filter=bank_filter
+            eid, cli=cli, profile=profile, bank_filter=bank_filter
         )
         candidate_ids = filtered_run_ids
     else:
@@ -198,7 +289,7 @@ def build_mlflow_baseline(
         # judge.accuracy — skip the trace walk entirely.
         candidate_ids = None
 
-    all_runs = _collect_run_metrics(experiment_id, cli=cli, profile=profile)
+    all_runs = _collect_run_metrics(eid, cli=cli, profile=profile)
 
     if candidate_ids is not None:
         candidate_run_ids = candidate_ids
@@ -220,18 +311,32 @@ def build_mlflow_baseline(
     if not scored:
         bank_msg = f" for bank {bank_filter!r}" if bank_filter else ""
         raise RuntimeError(
-            f"no scored judge runs found in experiment {experiment_id}{bank_msg}"
+            f"no scored judge runs found in experiment {eid}{bank_msg}"
             " — cannot seed baseline"
         )
 
-    accuracy = _mean([m["judge.accuracy"] for m in scored if "judge.accuracy" in m])
-    forgiven = _mean(
-        [m["judge.accuracy_forgiven"] for m in scored if "judge.accuracy_forgiven" in m]
-    )
+    # Collect only finite metric values (skip NaN/inf). judge.accuracy must
+    # have at least one finite value or we cannot seed a baseline.
+    acc_vals = [
+        m["judge.accuracy"]
+        for m in scored
+        if "judge.accuracy" in m and math.isfinite(m["judge.accuracy"])
+    ]
+    if not acc_vals:
+        raise RuntimeError(
+            f"no finite judge.accuracy values found in experiment {eid}"
+            " — cannot seed baseline"
+        )
+    accuracy = _mean(acc_vals)
 
-    per_judge: dict[str, float] = {}
-    if accuracy is not None:
-        per_judge["accuracy"] = accuracy
+    forgiven_vals = [
+        m["judge.accuracy_forgiven"]
+        for m in scored
+        if "judge.accuracy_forgiven" in m and math.isfinite(m["judge.accuracy_forgiven"])
+    ]
+    forgiven = _mean(forgiven_vals)
+
+    per_judge: dict[str, float] = {"accuracy": accuracy}
     if forgiven is not None:
         per_judge["accuracy_forgiven"] = forgiven
 
@@ -243,7 +348,11 @@ def build_mlflow_baseline(
         if k.startswith("judge.") and k.removeprefix("judge.") not in non_field_metrics
     }
     for slug in sorted(field_keys):
-        vals = [m[f"judge.{slug}"] for m in scored if f"judge.{slug}" in m]
+        vals = [
+            m[f"judge.{slug}"]
+            for m in scored
+            if f"judge.{slug}" in m and math.isfinite(m[f"judge.{slug}"])
+        ]
         mean = _mean(vals)
         if mean is not None:
             per_judge[f"field_{slug}"] = mean
@@ -255,7 +364,7 @@ def build_mlflow_baseline(
         scorers=sorted(per_judge.keys()),
         runtime_endpoint="",
         judge_endpoint="",
-        aggregate=accuracy if accuracy is not None else 0.0,
+        aggregate=accuracy,
         per_judge=per_judge,
         per_bucket={},
         n_examples=len(scored),

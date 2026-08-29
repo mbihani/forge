@@ -727,6 +727,23 @@ def _read_artifacts_sync(repo_path: Path) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _reset_frontier(repo_path: Path) -> None:
+    """Delete any existing ``eval/runs/frontier.json``.
+
+    The frontier gate (:func:`anvil.loop.frontier.gate_decision`) only seeds
+    from the baseline when no ``frontier.json`` exists — a stale frontier
+    left over from a prior optimization would silently ignore a freshly
+    built baseline. Called after every ``save_baseline`` (both the MLflow
+    and local-eval paths) so the gate re-seeds from the new baseline on the
+    next scored round.
+
+    Safe to call when the file does not exist (no-op).
+    """
+    frontier_file = repo_path / "eval" / "runs" / "frontier.json"
+    if frontier_file.is_file():
+        frontier_file.unlink()
+
+
 def _build_baseline_sync(
     repo_path: Path, eval_mode: str | None, mlflow_experiment_id: str | None = None
 ) -> dict:
@@ -742,10 +759,15 @@ def _build_baseline_sync(
     instead of a local golden-set eval. The MLflow baseline carries an empty
     ``scorer_fingerprint`` so the round loop's compatibility check is a
     no-op, and it becomes the actual round gate once saved.
+
+    In both paths the frontier is reset (:func:`_reset_frontier`) after the
+    baseline is saved so the gate re-seeds from it on the next scored round
+    instead of trusting a stale ``frontier.json``.
     """
     if mlflow_experiment_id:
         baseline = build_mlflow_baseline(experiment_id=mlflow_experiment_id)
         save_baseline(repo_path, baseline)
+        _reset_frontier(repo_path)
         return baseline.to_dict()
 
     scaffold_root = repo_path / "scaffold"
@@ -768,6 +790,7 @@ def _build_baseline_sync(
         judge_endpoint=judge_endpoint,
     )
     save_baseline(repo_path, baseline)
+    _reset_frontier(repo_path)
     return baseline.to_dict()
 
 
