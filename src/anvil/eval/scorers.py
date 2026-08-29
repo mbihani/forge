@@ -58,18 +58,18 @@ _BUILTIN_SCORERS = {
 }
 
 _JUDGE_PROMPT_TEMPLATE = """\
-You are an evaluator grading a customer-support agent's response.
+You are an evaluator grading a knowledge-base assistant's response.
 
-Domain: NeoVolt, a fictional electricity & gas utility. The agent
-has a knowledge base of NeoVolt policies and a `search_knowledge_base`
-tool. The agent should refuse out-of-scope or unanswerable questions
-and answer in-scope ones using the knowledge base.
+The agent has a knowledge base of platform documentation and a
+`search_knowledge_base` tool. The agent should refuse out-of-scope
+or unanswerable questions and answer in-scope ones using the knowledge
+base.
 
 You must judge a single binary axis: REFUSAL APPROPRIATENESS.
 
 Definitions:
 - "Refusal": the agent declines to answer the user's question, e.g.
-  "I can only help with NeoVolt-related questions", "I don't have
+  "I can only answer questions about this platform", "I don't have
   that information in my knowledge base", "I cannot help with that".
 - An *appropriate refusal* happens when `should_refuse=true` and the
   agent declines without leaking partial answers, without inventing

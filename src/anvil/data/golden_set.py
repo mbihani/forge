@@ -1,4 +1,4 @@
-"""Loader for the synthetic NeoVolt golden evaluation set.
+"""Loader for the golden evaluation set.
 
 Reads ``data/golden_set.jsonl`` line-by-line and returns the list of
 example dicts. The eval runner consumes them directly — every
