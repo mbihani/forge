@@ -142,6 +142,7 @@ class SessionResponse(BaseModel):
     session_id: str
     status: str
     repo_url: str
+    agent_subpath: str | None = None
     validation: ValidationReport
     config: dict | None = None
     baseline: dict | None = None
@@ -169,6 +170,8 @@ class SessionData:
     frontier: dict | None
     finalized: dict | None
     error: str | None
+    agent_subpath: str | None = None  # subdirectory within the cloned repo
+    _clone_root: Path | None = field(default=None, repr=False)  # full clone path for cleanup
     _optimize_task: Any = field(default=None, repr=False)  # asyncio.Task | None
 
 
@@ -292,17 +295,76 @@ def _ensure_parent_branch(repo_root: Path) -> None:
         )
 
 
-def _clone_repo(repo_url: str, dest_path: Path, github_token: str | None) -> str | None:
+def _parse_github_url(url: str) -> tuple[str, str | None, str | None]:
+    """Extract ``(clone_url, branch, subpath)`` from a GitHub URL.
+
+    Handles subdirectory URLs like
+    ``https://github.com/user/repo/tree/main/statement-agent`` by splitting
+    the path after ``/tree/``: the last segment is the subdirectory, everything
+    between ``tree/`` and the last segment is the branch (branches can contain
+    slashes).
+
+    Examples::
+
+        https://github.com/user/repo
+            → ("https://github.com/user/repo", None, None)
+        https://github.com/user/repo/tree/main
+            → ("https://github.com/user/repo", "main", None)
+        https://github.com/user/repo/tree/main/statement-agent
+            → ("https://github.com/user/repo", "main", "statement-agent")
+        https://github.com/user/repo/tree/feature/foo/bar
+            → ("https://github.com/user/repo", "feature/foo", "bar")
+
+    Non-GitHub URLs are returned as-is with no branch or subpath.
+    ``.git`` suffixes are stripped from the clone URL.
+    """
+    if not url.startswith("https://github.com/"):
+        return (url, None, None)
+
+    clean = url.rstrip("/")
+    tree_marker = "/tree/"
+    tree_idx = clean.find(tree_marker)
+    if tree_idx == -1:
+        clone_url = clean
+        if clone_url.endswith(".git"):
+            clone_url = clone_url[:-4]
+        return (clone_url, None, None)
+
+    clone_url = clean[:tree_idx]
+    if clone_url.endswith(".git"):
+        clone_url = clone_url[:-4]
+
+    after_tree = clean[tree_idx + len(tree_marker):]
+    parts = after_tree.split("/")
+    if len(parts) <= 1:
+        branch = parts[0] if parts and parts[0] else None
+        return (clone_url, branch, None)
+    # Last segment is the subpath; the rest is the branch (may have slashes).
+    subpath = parts[-1]
+    branch = "/".join(parts[:-1])
+    return (clone_url, branch or None, subpath or None)
+
+
+def _clone_repo(
+    repo_url: str, dest_path: Path, github_token: str | None, branch: str | None = None
+) -> str | None:
     """Clone ``repo_url`` into ``dest_path``. Return ``None`` on success or
     an error message on failure (run in a thread pool).
+
+    When ``branch`` is not ``None``, passes ``--branch <branch>`` to
+    ``git clone`` so a specific branch is checked out.
     """
     url = repo_url
     if github_token and url.startswith("https://github.com/"):
         url = f"https://x-access-token:{github_token}@github.com/" + url[len("https://github.com/"):]
     dest_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = ["git", "clone"]
+    if branch is not None:
+        cmd += ["--branch", branch]
+    cmd += [url, str(dest_path)]
     try:
         proc = subprocess.run(
-            ["git", "clone", url, str(dest_path)],
+            cmd,
             capture_output=True,
             text=True,
             check=False,
@@ -324,6 +386,152 @@ def _load_yaml(path: Path) -> Any:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
+# ---------------------------------------------------------------------------
+# Smart remediation — scan alternative structures and map them to Forge
+# expectations so the user gets actionable guidance instead of a generic
+# "create scaffold/harness.yaml" message.
+# ---------------------------------------------------------------------------
+
+
+def _scan_agent_root(repo_path: Path) -> dict[str, list[str]]:
+    """Scan the agent root for common alternative structures.
+
+    Returns a dict mapping finding categories to lists of filenames (or
+    descriptive strings).  Used by :func:`_build_smart_remediation` to
+    prepend specific, actionable guidance when a validation check fails.
+
+    Categories scanned:
+
+    - ``prompts`` — ``prompts/`` dir with ``.txt`` files
+    - ``schemas`` — ``schema/`` dir with ``.json`` files
+    - ``python_skills`` — ``skills/`` dir with ``.py`` files
+    - ``judge`` — ``judge/evaluator.py`` or ``judge/scorer.py``
+    - ``tests`` — ``tests/`` directory
+    - ``harness_py`` — ``harness/`` dir with ``.py`` files but no ``config.yaml``
+    - ``config_py`` — ``config.py`` or ``config*.py`` at the repo root
+    - ``data_dir`` — ``data/`` directory (exists, maybe no ``golden_set.jsonl``)
+    """
+    findings: dict[str, list[str]] = {}
+
+    prompts_dir = repo_path / "prompts"
+    if prompts_dir.is_dir():
+        txt_files = sorted(p.name for p in prompts_dir.glob("*.txt"))
+        if txt_files:
+            findings["prompts"] = txt_files
+
+    schema_dir = repo_path / "schema"
+    if schema_dir.is_dir():
+        json_files = sorted(p.name for p in schema_dir.glob("*.json"))
+        if json_files:
+            findings["schemas"] = json_files
+
+    skills_dir = repo_path / "skills"
+    if skills_dir.is_dir():
+        py_files = sorted(p.name for p in skills_dir.glob("*.py"))
+        if py_files:
+            findings["python_skills"] = py_files
+
+    judge_dir = repo_path / "judge"
+    if judge_dir.is_dir():
+        judge_files = [n for n in ("evaluator.py", "scorer.py") if (judge_dir / n).is_file()]
+        if judge_files:
+            findings["judge"] = judge_files
+
+    if (repo_path / "tests").is_dir():
+        findings["tests"] = ["tests/ directory found"]
+
+    harness_dir = repo_path / "harness"
+    if harness_dir.is_dir():
+        py_files = sorted(p.name for p in harness_dir.glob("*.py"))
+        if py_files and not (harness_dir / "config.yaml").is_file():
+            findings["harness_py"] = py_files
+
+    config_py = sorted(p.name for p in repo_path.glob("config*.py") if p.is_file())
+    if config_py:
+        findings["config_py"] = config_py
+
+    if (repo_path / "data").is_dir():
+        findings["data_dir"] = ["data/ directory found"]
+
+    return findings
+
+
+def _build_smart_remediation(
+    check_name: str, repo_path: Path, findings: dict[str, list[str]]
+) -> str | None:
+    """Return specific remediation text based on the failed check and what
+    was found in the repo.
+
+    Returns ``None`` when no relevant findings exist for the given check,
+    so the caller keeps the existing static remediation unchanged.
+    """
+    if check_name == "scaffold_harness_yaml":
+        prompts = findings.get("prompts")
+        if prompts:
+            files_str = ", ".join(prompts)
+            return (
+                f"Found prompts/ with {files_str}. Decompose each prompt file's "
+                f"sections (transaction rules, rewards rules, edge cases, etc.) into "
+                f"separate scaffold/*.md skill files, then reference them in "
+                f"scaffold/harness.yaml under the 'skills' list."
+            )
+
+    elif check_name == "golden_set_jsonl":
+        schemas = findings.get("schemas")
+        if schemas:
+            files_str = ", ".join(schemas)
+            return (
+                f"Found schema/ with {files_str}. Use these schema definitions as "
+                f"the expected_parsed_json structure for your golden_set.jsonl test "
+                f"cases. Each golden set line should have: example_id, query (or "
+                f"input), and expected_parsed_json matching the relevant bank's schema."
+            )
+
+    elif check_name == "harness_config_yaml":
+        harness_py = findings.get("harness_py")
+        if harness_py:
+            files_str = ", ".join(harness_py)
+            return (
+                f"Found harness/ with {files_str}. Create harness/config.yaml (Forge's "
+                f"config format) with: mode (prompt or code), runtime_endpoint, "
+                f"optimizer_endpoint, eval section, gate section. Reference your "
+                f"existing config_ws4.py for endpoint names and eval settings."
+            )
+
+    elif check_name == "agent_code":
+        python_skills = findings.get("python_skills")
+        if python_skills:
+            files_str = ", ".join(python_skills)
+            return (
+                f"Found skills/ with {files_str}. For code mode, move or wrap these in "
+                f"an agents/ directory. Create agents/<name>.py with a class implementing "
+                f"a predict() method that delegates to your existing skill functions."
+            )
+
+    return None
+
+
+def _prepend_smart_remediation(
+    result: dict, repo_path: Path, findings: dict[str, list[str]] | None
+) -> dict:
+    """Prepend smart remediation to a failed check's static remediation.
+
+    Smart remediation is only added when the check failed AND relevant
+    alternative structures were found.  When no relevant findings exist the
+    existing static remediation is kept unchanged.  The smart text is
+    prepended (separated by a newline) so the user sees the specific
+    guidance first, then the generic fallback.
+    """
+    if findings is None or result.get("status") != "fail":
+        return result
+    smart = _build_smart_remediation(result["name"], repo_path, findings)
+    if smart is None:
+        return result
+    existing = result.get("remediation") or ""
+    result["remediation"] = f"{smart}\n{existing}" if existing else smart
+    return result
+
+
 def _check_git_repo(repo_path: Path) -> dict:
     if _git_head_sha(repo_path) == "unknown":
         return {
@@ -336,21 +544,27 @@ def _check_git_repo(repo_path: Path) -> dict:
     return {"name": "git_repo", "status": "pass", "message": "Valid git repository."}
 
 
-def _check_scaffold_harness_yaml(repo_path: Path) -> dict:
+def _check_scaffold_harness_yaml(
+    repo_path: Path, findings: dict[str, list[str]] | None = None
+) -> dict:
     path = repo_path / "scaffold" / "harness.yaml"
     if not path.is_file():
-        return {
-            "name": "scaffold_harness_yaml",
-            "status": "fail",
-            "message": "scaffold/harness.yaml not found",
-            "remediation": "Create scaffold/harness.yaml with a 'skills' list and "
-            "'sampling' dict. Each skill has a 'file' field pointing to a markdown "
-            "file in scaffold/. Decompose your agent's prompt into sections — each "
-            "section becomes one skill. Example from the Savesage ICICI integration: "
-            "skills = [identity.md, transaction_rules.md, rewards_rules.md, "
-            "missing_data.md, edge_cases.md, icici_bank_rules.md, "
-            "icici_card_identity.md, icici_rewards_layouts.md]",
-        }
+        return _prepend_smart_remediation(
+            {
+                "name": "scaffold_harness_yaml",
+                "status": "fail",
+                "message": "scaffold/harness.yaml not found",
+                "remediation": "Create scaffold/harness.yaml with a 'skills' list and "
+                "'sampling' dict. Each skill has a 'file' field pointing to a markdown "
+                "file in scaffold/. Decompose your agent's prompt into sections — each "
+                "section becomes one skill. Example from the Savesage ICICI integration: "
+                "skills = [identity.md, transaction_rules.md, rewards_rules.md, "
+                "missing_data.md, edge_cases.md, icici_bank_rules.md, "
+                "icici_card_identity.md, icici_rewards_layouts.md]",
+            },
+            repo_path,
+            findings,
+        )
     try:
         raw = _load_yaml(path)
     except yaml.YAMLError:
@@ -399,19 +613,25 @@ def _check_scaffold_skill_files(repo_path: Path, skills: list[Any]) -> dict:
     }
 
 
-def _check_golden_set_jsonl(repo_path: Path) -> dict:
+def _check_golden_set_jsonl(
+    repo_path: Path, findings: dict[str, list[str]] | None = None
+) -> dict:
     path = repo_path / "data" / "golden_set.jsonl"
     if not path.is_file():
-        return {
-            "name": "golden_set_jsonl",
-            "status": "fail",
-            "message": "data/golden_set.jsonl not found",
-            "remediation": "Create data/golden_set.jsonl with test examples. Each line is a "
-            "JSON object with at minimum: example_id (unique string), query or input "
-            "(the user's request), category (classification like "
-            "direct/multi_hop/distractor/out_of_scope), and expected or expectations "
-            "(the ground truth answer).",
-        }
+        return _prepend_smart_remediation(
+            {
+                "name": "golden_set_jsonl",
+                "status": "fail",
+                "message": "data/golden_set.jsonl not found",
+                "remediation": "Create data/golden_set.jsonl with test examples. Each line is a "
+                "JSON object with at minimum: example_id (unique string), query or input "
+                "(the user's request), category (classification like "
+                "direct/multi_hop/distractor/out_of_scope), and expected or expectations "
+                "(the ground truth answer).",
+            },
+            repo_path,
+            findings,
+        )
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except OSError as exc:
@@ -455,22 +675,28 @@ def _check_golden_set_jsonl(repo_path: Path) -> dict:
     }
 
 
-def _check_harness_config_yaml(repo_path: Path) -> tuple[dict, dict | None]:
+def _check_harness_config_yaml(
+    repo_path: Path, findings: dict[str, list[str]] | None = None
+) -> tuple[dict, dict | None]:
     """Return (check_result, parsed_config_dict_or_None)."""
     path = repo_path / "harness" / "config.yaml"
     if not path.is_file():
         return (
-            {
-                "name": "harness_config_yaml",
-                "status": "fail",
-                "message": "harness/config.yaml not found",
-                "remediation": "Create harness/config.yaml with: mode (prompt or code), "
-                "runtime_endpoint (FMAPI model name like databricks-claude-sonnet-4-6), "
-                "optimizer_endpoint (like databricks-claude-opus-4-7), eval section "
-                "(default_mode, modes with row counts, scorers list), gate section "
-                "(type: frontier recommended). Copy the forge repo's harness/config.yaml "
-                "as a starting template.",
-            },
+            _prepend_smart_remediation(
+                {
+                    "name": "harness_config_yaml",
+                    "status": "fail",
+                    "message": "harness/config.yaml not found",
+                    "remediation": "Create harness/config.yaml with: mode (prompt or code), "
+                    "runtime_endpoint (FMAPI model name like databricks-claude-sonnet-4-6), "
+                    "optimizer_endpoint (like databricks-claude-opus-4-7), eval section "
+                    "(default_mode, modes with row counts, scorers list), gate section "
+                    "(type: frontier recommended). Copy the forge repo's harness/config.yaml "
+                    "as a starting template.",
+                },
+                repo_path,
+                findings,
+            ),
             None,
         )
     try:
@@ -542,7 +768,9 @@ def _check_eval_modes(config: dict) -> dict:
     return {"name": "eval_modes", "status": "pass", "message": "eval.modes present."}
 
 
-def _check_agent_code(repo_path: Path, config: dict) -> dict:
+def _check_agent_code(
+    repo_path: Path, config: dict, findings: dict[str, list[str]] | None = None
+) -> dict:
     mode = config.get("mode")
     if mode != "code":
         return {
@@ -553,13 +781,17 @@ def _check_agent_code(repo_path: Path, config: dict) -> dict:
     agents_dir = repo_path / "agents"
     has_py = agents_dir.is_dir() and any(agents_dir.glob("*.py"))
     if not has_py:
-        return {
-            "name": "agent_code",
-            "status": "fail",
-            "message": "mode is 'code' but no Python files found in agents/",
-            "remediation": "For code mode, create a Python file in agents/ with a class "
-            "implementing a predict() method.",
-        }
+        return _prepend_smart_remediation(
+            {
+                "name": "agent_code",
+                "status": "fail",
+                "message": "mode is 'code' but no Python files found in agents/",
+                "remediation": "For code mode, create a Python file in agents/ with a class "
+                "implementing a predict() method.",
+            },
+            repo_path,
+            findings,
+        )
     if not config.get("agent_module"):
         return {
             "name": "agent_code",
@@ -596,9 +828,12 @@ def _run_validation(repo_path: Path) -> tuple[dict, dict | None]:
     The config is returned (unredacted) so the session can store a redacted
     copy; ``None`` when the config check failed.
     """
+    # Scan for alternative structures once — used by smart remediation.
+    findings = _scan_agent_root(repo_path)
+
     checks: list[dict] = []
     checks.append(_check_git_repo(repo_path))
-    checks.append(_check_scaffold_harness_yaml(repo_path))
+    checks.append(_check_scaffold_harness_yaml(repo_path, findings))
 
     skills: list[Any] = []
     harness_path = repo_path / "scaffold" / "harness.yaml"
@@ -611,12 +846,12 @@ def _run_validation(repo_path: Path) -> tuple[dict, dict | None]:
             pass
 
     checks.append(_check_scaffold_skill_files(repo_path, skills))
-    checks.append(_check_golden_set_jsonl(repo_path))
-    config_check, config = _check_harness_config_yaml(repo_path)
+    checks.append(_check_golden_set_jsonl(repo_path, findings))
+    config_check, config = _check_harness_config_yaml(repo_path, findings)
     checks.append(config_check)
     if config is not None:
         checks.append(_check_eval_modes(config))
-        checks.append(_check_agent_code(repo_path, config))
+        checks.append(_check_agent_code(repo_path, config, findings))
     else:
         # W1: Always include all 8 checks. When the config prerequisite
         # failed, mark the dependent checks as skipped/fail so the
@@ -854,6 +1089,7 @@ def _session_to_response(sess: SessionData, rounds: list[dict[str, Any]]) -> dic
     return {
         "session_id": sess.session_id,
         "repo_url": sess.repo_url,
+        "agent_subpath": sess.agent_subpath,
         "status": sess.status,
         "validation": sess.validation,
         "config": sess.config,
@@ -970,11 +1206,16 @@ def _cleanup_session(session_id: str) -> None:
 
     B8: called during shutdown for every session. Does NOT cancel the
     optimization task — that is handled separately in the lifespan.
+
+    When a subdirectory URL was used, ``repo_path`` points at the
+    subdirectory but the full clone lives at ``_clone_root`` — clean up
+    the clone root so no temp files leak.
     """
     sess = _sessions.get(session_id)
     if sess is None:
         return
-    shutil.rmtree(sess.repo_path, ignore_errors=True)
+    root = sess._clone_root or sess.repo_path
+    shutil.rmtree(root, ignore_errors=True)
 
 
 @asynccontextmanager
@@ -1016,9 +1257,18 @@ async def health() -> dict[str, str]:
 
 @app.post("/api/session")
 async def create_session(req: CreateSessionRequest) -> dict[str, Any]:
-    """Clone the agent repo, validate it, return a new session."""
+    """Clone the agent repo, validate it, return a new session.
+
+    Supports subdirectory URLs like
+    ``https://github.com/user/repo/tree/main/statement-agent`` — the
+    repo is cloned at the root and validation/optimization run against
+    the specified subdirectory.
+    """
     session_id = uuid.uuid4().hex[:12]
     dest_path = _SESSIONS_ROOT / session_id
+
+    # Parse the URL for subdirectory + branch support.
+    clone_url, branch, subpath = _parse_github_url(req.repo_url)
 
     sess = SessionData(
         session_id=session_id,
@@ -1032,13 +1282,20 @@ async def create_session(req: CreateSessionRequest) -> dict[str, Any]:
         frontier=None,
         finalized=None,
         error=None,
+        agent_subpath=subpath,
+        _clone_root=dest_path,
     )
     with _session_lock:
         _sessions[session_id] = sess
 
-    # Clone (blocking) in a thread pool.
+    # Clone (blocking) in a thread pool.  Only pass --branch when a
+    # branch was extracted from the URL so existing callers (plain URLs)
+    # are unaffected.
+    clone_kwargs: dict[str, Any] = {}
+    if branch is not None:
+        clone_kwargs["branch"] = branch
     err = await anyio.to_thread.run_sync(
-        partial(_clone_repo, req.repo_url, dest_path, req.github_token)
+        partial(_clone_repo, clone_url, dest_path, req.github_token, **clone_kwargs)
     )
     if err is not None:
         # B1: Redact any embedded token from the git error message
@@ -1051,11 +1308,22 @@ async def create_session(req: CreateSessionRequest) -> dict[str, Any]:
             sess.error = err
         raise HTTPException(status_code=400, detail=err)
 
+    # Resolve the agent root — the subdirectory if a subpath was given.
+    agent_root = dest_path / subpath if subpath else dest_path
+    if subpath and not agent_root.is_dir():
+        with _session_lock:
+            sess.status = "invalid"
+            sess.error = f"subdirectory '{subpath}' not found in repository"
+        raise HTTPException(
+            status_code=400, detail=f"subdirectory '{subpath}' not found in repository"
+        )
+
     with _session_lock:
+        sess.repo_path = agent_root
         sess.status = "validating"
 
     # Validate (file I/O + git) in a thread pool.
-    report, config = await anyio.to_thread.run_sync(partial(_run_validation, dest_path))
+    report, config = await anyio.to_thread.run_sync(partial(_run_validation, agent_root))
     with _session_lock:
         sess.validation = report
         sess.status = "validated" if report["status"] == "valid" else "invalid"
@@ -1067,6 +1335,7 @@ async def create_session(req: CreateSessionRequest) -> dict[str, Any]:
         "status": sess.status,
         "validation": report,
         "config": sess.config,
+        "agent_subpath": subpath,
     }
 
 
