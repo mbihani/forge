@@ -665,6 +665,159 @@ def test_optimize_max_rounds(
     assert len(resp.json()) == 3
 
 
+def test_optimize_mlflow_baseline(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """When ``mlflow_experiment_id`` is provided the baseline is seeded from
+    MLflow judge results (not local eval) and becomes the round gate."""
+    from anvil.eval.cache import CachedBaseline
+
+    sid = _create_valid_session(client, tmp_path, monkeypatch)
+    # evaluate_branch must NOT be called when mlflow_experiment_id is set.
+    eval_calls: list[dict] = []
+    monkeypatch.setattr(
+        app_module,
+        "evaluate_branch",
+        lambda **kw: eval_calls.append(kw) or _fake_eval_report(),
+    )
+    mlflow_baseline = CachedBaseline(
+        scaffold_commit_sha="mlflow-seed",
+        evaluated_at="2024-01-01T00:00:00",
+        mode="mlflow",
+        scorers=["accuracy", "field_amount"],
+        runtime_endpoint="",
+        judge_endpoint="",
+        aggregate=0.92,
+        per_judge={"accuracy": 0.92, "field_amount": 0.88},
+        per_bucket={},
+        n_examples=300,
+        mlflow_run_id=None,
+        scorer_fingerprint="",
+    )
+    mlflow_calls: list[dict] = []
+    monkeypatch.setattr(
+        app_module,
+        "build_mlflow_baseline",
+        lambda **kw: mlflow_calls.append(kw) or mlflow_baseline,
+    )
+    monkeypatch.setattr(app_module, "run_round", _make_mock_run_round())
+    resp = client.post(
+        f"/api/session/{sid}/optimize",
+        json={"max_rounds": 2, "max_turns": 5, "mlflow_experiment_id": "967014443183055"},
+    )
+    assert resp.status_code == 202
+    data = _wait_for_status(client, sid, {"optimizing", "optimized"})
+    assert data["status"] in {"optimizing", "optimized"}
+    # build_mlflow_baseline was called with the experiment ID.
+    assert len(mlflow_calls) == 1
+    assert mlflow_calls[0]["experiment_id"] == "967014443183055"
+    # Local eval was NOT invoked.
+    assert eval_calls == []
+    # MLflow baseline persisted to the session.
+    assert data["baseline"] is not None
+    assert data["baseline"]["mode"] == "mlflow"
+    assert data["baseline"]["aggregate"] == 0.92
+
+
+def test_build_baseline_mlflow_resets_stale_frontier(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BLOCKING 1: building an MLflow baseline deletes a stale frontier.json
+    so the gate re-seeds from the new baseline on the next scored round
+    (a stale frontier would otherwise silently bypass the MLflow baseline)."""
+    from anvil.eval.cache import CachedBaseline
+
+    repo = tmp_path / "agent-repo"
+    _seed_repo(repo)
+    runs = repo / "eval" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    # Seed a stale frontier from a prior optimization.
+    (runs / "frontier.json").write_text(
+        json.dumps(
+            {
+                "best": {"aggregate": 0.5, "correctness": 0.4},
+                "objectives": ["aggregate", "correctness"],
+                "pareto": False,
+                "directions": {},
+                "sources": {},
+                "epsilon": 0.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    mlflow_baseline = CachedBaseline(
+        scaffold_commit_sha="mlflow-seed",
+        evaluated_at="2024-01-01T00:00:00",
+        mode="mlflow",
+        scorers=["accuracy"],
+        runtime_endpoint="",
+        judge_endpoint="",
+        aggregate=0.92,
+        per_judge={"accuracy": 0.92},
+        per_bucket={},
+        n_examples=300,
+        mlflow_run_id=None,
+        scorer_fingerprint="",
+    )
+    monkeypatch.setattr(app_module, "build_mlflow_baseline", lambda **kw: mlflow_baseline)
+    result = app_module._build_baseline_sync(repo, None, "967014443183055")
+    # The stale frontier was deleted so the gate will re-seed from the baseline.
+    assert not (runs / "frontier.json").exists()
+    assert result["mode"] == "mlflow"
+    assert result["aggregate"] == 0.92
+
+
+def test_build_baseline_local_eval_resets_stale_frontier(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BLOCKING 1: building a local-eval baseline also deletes a stale
+    frontier.json — the fix applies to both baseline paths."""
+    repo = tmp_path / "agent-repo"
+    _seed_repo(repo)
+    runs = repo / "eval" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    (runs / "frontier.json").write_text(
+        json.dumps({"best": {"aggregate": 0.5}, "objectives": ["aggregate"]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(app_module, "evaluate_branch", lambda **kw: _fake_eval_report())
+    result = app_module._build_baseline_sync(repo, "quick", None)
+    assert not (runs / "frontier.json").exists()
+    assert result["mode"] == "quick"
+
+
+def test_build_baseline_reset_frontier_safe_when_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The frontier reset is a no-op when no frontier.json exists (no crash)."""
+    from anvil.eval.cache import CachedBaseline
+
+    repo = tmp_path / "agent-repo"
+    _seed_repo(repo)
+    runs = repo / "eval" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    assert not (runs / "frontier.json").exists()
+    mlflow_baseline = CachedBaseline(
+        scaffold_commit_sha="mlflow-seed",
+        evaluated_at="2024-01-01T00:00:00",
+        mode="mlflow",
+        scorers=["accuracy"],
+        runtime_endpoint="",
+        judge_endpoint="",
+        aggregate=0.9,
+        per_judge={"accuracy": 0.9},
+        per_bucket={},
+        n_examples=10,
+        mlflow_run_id=None,
+        scorer_fingerprint="",
+    )
+    monkeypatch.setattr(app_module, "build_mlflow_baseline", lambda **kw: mlflow_baseline)
+    result = app_module._build_baseline_sync(repo, None, "123")
+    # No crash; baseline still built; no frontier left behind.
+    assert result["mode"] == "mlflow"
+    assert not (runs / "frontier.json").exists()
+
+
 def test_optimize_already_optimizing(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
 ) -> None:
