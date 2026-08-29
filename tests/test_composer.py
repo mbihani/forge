@@ -86,13 +86,13 @@ def test_compose_emits_identity_first_even_when_listed_late(tmp_path: Path) -> N
     """
     files = {
         "skills/greeting.md": _plain_skill("greeting", "Greet politely."),
-        "skills/identity.md": _identity_skill("You are a NeoVolt assistant."),
+        "skills/identity.md": _identity_skill("You are a Test agent."),
     }
     root = _scaffold(tmp_path, harness, files)
     composed = compose_prompt(root, audience="runtime")
 
     # Identity body appears before the greeting body in the prompt text.
-    assert composed.text.index("NeoVolt assistant") < composed.text.index("Greet politely")
+    assert composed.text.index("Test agent") < composed.text.index("Greet politely")
 
     # Manifest records identity first.
     assert composed.manifest.files[0].kind == "identity"

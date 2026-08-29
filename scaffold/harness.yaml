@@ -13,23 +13,22 @@ skills:
 rules:
 - file: no_repeat_failed_mutations.md
 - file: answer_scope_discipline.md
-- file: answer_specificity.md
 tools:
 - name: search_knowledge_base
-  description: 'Search the NeoVolt policy knowledge base by natural-language
+  description: 'Search the knowledge base by natural-language query.
 
-    query. Returns the top-k matching policy documents, each with
+    Returns the top-k matching documents, each with doc_id, title,
 
-    doc_id, title, and a snippet of the body. Use whenever the user
+    and a snippet of the body. Use whenever the user asks about the
 
-    asks about NeoVolt policies — billing, outages, tariffs,
+    platform — features, pricing, API, integrations, rate limits,
 
-    payments, meters, account, safety, connections, regulatory
+    service tiers, data regions, account setup, SLAs, or support
 
-    rights, or emergency contacts. If the result is "No matching
+    plans. If the result is "No matching policy documents." the
 
-    policy documents." the question is out of scope for this
+    question is out of scope for this knowledge base and you should
 
-    knowledge base and you should say so.
+    say so.
 
     '

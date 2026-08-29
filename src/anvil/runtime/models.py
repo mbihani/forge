@@ -284,7 +284,7 @@ class EvalConfig(BaseModel):
         ``{name: <str>}`` dict, which :class:`ScorerConfig` then parses
         with ``type=llm`` and ``weight=1.0``. A list of dicts (the new
         shape) and a list of already-built ``ScorerConfig`` objects pass
-        through unchanged. The shipped NeoVolt scaffold lists scorers as
+        through unchanged. The shipped scaffold lists scorers as
         strings, so this keeps it scoring identically without a config
         migration."""
         if not isinstance(v, list):
