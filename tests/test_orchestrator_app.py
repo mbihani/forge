@@ -169,7 +169,9 @@ def _seed_repo(
 def _mock_clone_factory(source: Path):
     """Return a mock ``_clone_repo`` that copies ``source`` into ``dest``."""
 
-    def _mock(repo_url: str, dest_path: Path, github_token: str | None) -> str | None:
+    def _mock(
+        repo_url: str, dest_path: Path, github_token: str | None, **_kw: Any
+    ) -> str | None:
         dest_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(str(source), str(dest_path))
         return None
@@ -1270,3 +1272,271 @@ def test_lifespan_cancels_tasks(
     assert task.done()
     assert repo_path is not None
     assert not repo_path.exists()
+
+
+# ---------------------------------------------------------------------------
+# URL parsing (subdirectory support)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_github_url_plain() -> None:
+    """Plain repo URL → no branch, no subpath."""
+    clone_url, branch, subpath = app_module._parse_github_url(
+        "https://github.com/mbihani/savesage"
+    )
+    assert clone_url == "https://github.com/mbihani/savesage"
+    assert branch is None
+    assert subpath is None
+
+
+def test_parse_github_url_with_branch() -> None:
+    """URL with /tree/main → branch=main, no subpath."""
+    clone_url, branch, subpath = app_module._parse_github_url(
+        "https://github.com/mbihani/savesage/tree/main"
+    )
+    assert clone_url == "https://github.com/mbihani/savesage"
+    assert branch == "main"
+    assert subpath is None
+
+
+def test_parse_github_url_with_subpath() -> None:
+    """URL with /tree/main/statement-agent → branch=main, subpath=statement-agent."""
+    clone_url, branch, subpath = app_module._parse_github_url(
+        "https://github.com/mbihani/savesage/tree/main/statement-agent"
+    )
+    assert clone_url == "https://github.com/mbihani/savesage"
+    assert branch == "main"
+    assert subpath == "statement-agent"
+
+
+def test_parse_github_url_deep_subpath() -> None:
+    """URL with /tree/feature/foo/bar → branch=feature/foo, subpath=bar.
+
+    Branches can contain slashes; the last path segment is the subpath.
+    """
+    clone_url, branch, subpath = app_module._parse_github_url(
+        "https://github.com/mbihani/savesage/tree/feature/foo/bar"
+    )
+    assert clone_url == "https://github.com/mbihani/savesage"
+    assert branch == "feature/foo"
+    assert subpath == "bar"
+
+
+def test_parse_github_url_dot_git() -> None:
+    """URL with .git suffix → stripped."""
+    clone_url, branch, subpath = app_module._parse_github_url(
+        "https://github.com/mbihani/savesage.git"
+    )
+    assert clone_url == "https://github.com/mbihani/savesage"
+    assert branch is None
+    assert subpath is None
+
+
+def test_parse_github_url_trailing_slash() -> None:
+    """URL with trailing slash → handled."""
+    clone_url, branch, subpath = app_module._parse_github_url(
+        "https://github.com/mbihani/savesage/"
+    )
+    assert clone_url == "https://github.com/mbihani/savesage"
+    assert branch is None
+    assert subpath is None
+
+
+def test_parse_non_github_url() -> None:
+    """Non-GitHub URL → returned as-is, no branch/subpath."""
+    clone_url, branch, subpath = app_module._parse_github_url(
+        "https://gitlab.com/user/repo"
+    )
+    assert clone_url == "https://gitlab.com/user/repo"
+    assert branch is None
+    assert subpath is None
+
+
+# ---------------------------------------------------------------------------
+# Subdirectory session tests
+# ---------------------------------------------------------------------------
+
+
+def test_create_session_with_subpath(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """Create a session with a subdirectory URL; validation runs against the subdir."""
+    source = tmp_path / "agent-repo"
+    source.mkdir(parents=True)
+    # Seed a valid agent structure inside a subdirectory.
+    subdir = source / "statement-agent"
+    _seed_repo(subdir)
+    monkeypatch.setattr(app_module, "_clone_repo", _mock_clone_factory(source))
+    resp = client.post(
+        "/api/session",
+        json={"repo_url": "https://github.com/user/repo/tree/main/statement-agent"},
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["status"] == "validated", data
+    assert data["validation"]["status"] == "valid"
+    assert data["agent_subpath"] == "statement-agent"
+    # The session's repo_path points at the subdirectory, not the clone root.
+    sess = app_module._sessions[data["session_id"]]
+    assert sess.repo_path == sessions_root / data["session_id"] / "statement-agent"
+    assert sess._clone_root == sessions_root / data["session_id"]
+
+
+def test_create_session_subpath_not_found(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """Subdirectory doesn't exist in the cloned repo → error."""
+    source = tmp_path / "agent-repo"
+    _seed_repo(source)  # valid structure at root, no subdirectory
+    monkeypatch.setattr(app_module, "_clone_repo", _mock_clone_factory(source))
+    resp = client.post(
+        "/api/session",
+        json={"repo_url": "https://github.com/user/repo/tree/main/nonexistent"},
+    )
+    assert resp.status_code == 400
+    assert "nonexistent" in resp.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Smart remediation
+# ---------------------------------------------------------------------------
+
+
+def test_scan_agent_root(tmp_path: Path) -> None:
+    """_scan_agent_root detects all alternative structure categories."""
+    root = tmp_path / "agent"
+    root.mkdir()
+    # prompts/ with .txt files
+    prompts = root / "prompts"
+    prompts.mkdir()
+    (prompts / "icici.txt").write_text("rules", encoding="utf-8")
+    (prompts / "hdfc.txt").write_text("rules", encoding="utf-8")
+    # schema/ with .json files
+    schema = root / "schema"
+    schema.mkdir()
+    (schema / "icici.json").write_text("{}", encoding="utf-8")
+    # skills/ with .py files
+    skills = root / "skills"
+    skills.mkdir()
+    (skills / "extract.py").write_text("# extract", encoding="utf-8")
+    # judge/ with evaluator.py
+    judge = root / "judge"
+    judge.mkdir()
+    (judge / "evaluator.py").write_text("# eval", encoding="utf-8")
+    # tests/ directory
+    (root / "tests").mkdir()
+    # harness/ with .py but no config.yaml
+    harness = root / "harness"
+    harness.mkdir()
+    (harness / "config_ws4.py").write_text("# config", encoding="utf-8")
+    # config.py at root
+    (root / "config.py").write_text("# config", encoding="utf-8")
+    # data/ directory
+    (root / "data").mkdir()
+
+    findings = app_module._scan_agent_root(root)
+    assert findings["prompts"] == ["hdfc.txt", "icici.txt"]
+    assert findings["schemas"] == ["icici.json"]
+    assert findings["python_skills"] == ["extract.py"]
+    assert findings["judge"] == ["evaluator.py"]
+    assert findings["tests"] == ["tests/ directory found"]
+    assert findings["harness_py"] == ["config_ws4.py"]
+    assert findings["config_py"] == ["config.py"]
+    assert findings["data_dir"] == ["data/ directory found"]
+
+
+def test_smart_remediation_prompts_found(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """scaffold/harness.yaml missing but prompts/ has .txt files → remediation
+    mentions the specific prompt files found."""
+    source = tmp_path / "agent-repo"
+    _seed_repo(source, with_scaffold=False)
+    prompts_dir = source / "prompts"
+    prompts_dir.mkdir()
+    (prompts_dir / "icici.txt").write_text("rules", encoding="utf-8")
+    (prompts_dir / "hdfc.txt").write_text("rules", encoding="utf-8")
+    monkeypatch.setattr(app_module, "_clone_repo", _mock_clone_factory(source))
+    resp = client.post("/api/session", json={"repo_url": "https://github.com/user/repo"})
+    data = resp.json()
+    checks = {c["name"]: c for c in data["validation"]["checks"]}
+    assert checks["scaffold_harness_yaml"]["status"] == "fail"
+    remediation = checks["scaffold_harness_yaml"]["remediation"]
+    assert "icici.txt" in remediation
+    assert "hdfc.txt" in remediation
+    # Smart remediation is prepended — static remediation still present.
+    assert "scaffold/harness.yaml" in remediation
+
+
+def test_smart_remediation_schemas_found(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """golden_set.jsonl missing but schema/ has .json files → remediation
+    mentions the schema files."""
+    source = tmp_path / "agent-repo"
+    _seed_repo(source, with_golden=False)
+    schema_dir = source / "schema"
+    schema_dir.mkdir()
+    (schema_dir / "icici.json").write_text("{}", encoding="utf-8")
+    (schema_dir / "hdfc.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(app_module, "_clone_repo", _mock_clone_factory(source))
+    resp = client.post("/api/session", json={"repo_url": "https://github.com/user/repo"})
+    data = resp.json()
+    checks = {c["name"]: c for c in data["validation"]["checks"]}
+    assert checks["golden_set_jsonl"]["status"] == "fail"
+    remediation = checks["golden_set_jsonl"]["remediation"]
+    assert "icici.json" in remediation
+    assert "hdfc.json" in remediation
+    # Static remediation still present.
+    assert "golden_set.jsonl" in remediation
+
+
+def test_smart_remediation_no_findings(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """No alternative structure found → keep existing static remediation only."""
+    source = tmp_path / "agent-repo"
+    _seed_repo(source, with_scaffold=False)
+    monkeypatch.setattr(app_module, "_clone_repo", _mock_clone_factory(source))
+    resp = client.post("/api/session", json={"repo_url": "https://github.com/user/repo"})
+    data = resp.json()
+    checks = {c["name"]: c for c in data["validation"]["checks"]}
+    assert checks["scaffold_harness_yaml"]["status"] == "fail"
+    remediation = checks["scaffold_harness_yaml"]["remediation"]
+    # No smart remediation — only static text.
+    assert "prompts/" not in remediation
+    assert "scaffold/harness.yaml" in remediation
+
+
+def test_smart_remediation_harness_py_found(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """harness/config.yaml missing but harness/ has .py files → remediation
+    mentions them."""
+    source = tmp_path / "agent-repo"
+    _seed_repo(source, with_config=False)
+    harness_dir = source / "harness"
+    harness_dir.mkdir(exist_ok=True)
+    (harness_dir / "config_ws4.py").write_text("config = {}", encoding="utf-8")
+    (harness_dir / "auth.py").write_text("auth = {}", encoding="utf-8")
+    monkeypatch.setattr(app_module, "_clone_repo", _mock_clone_factory(source))
+    resp = client.post("/api/session", json={"repo_url": "https://github.com/user/repo"})
+    data = resp.json()
+    checks = {c["name"]: c for c in data["validation"]["checks"]}
+    assert checks["harness_config_yaml"]["status"] == "fail"
+    remediation = checks["harness_config_yaml"]["remediation"]
+    assert "config_ws4.py" in remediation
+    assert "auth.py" in remediation
+    # Static remediation still present.
+    assert "harness/config.yaml" in remediation
+
+
+def test_session_response_includes_agent_subpath(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """GET /api/session/{id} includes agent_subpath in the response."""
+    sid = _create_valid_session(client, tmp_path, monkeypatch)
+    resp = client.get(f"/api/session/{sid}")
+    data = resp.json()
+    assert "agent_subpath" in data
+    assert data["agent_subpath"] is None  # plain URL → no subpath
