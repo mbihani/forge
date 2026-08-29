@@ -41,3 +41,6 @@ mlruns/
 # any *.tmp.json or scratch/ output stays out.
 eval/runs/*.tmp.json
 eval/scratch/
+
+# Local MLflow SQLite store (test runs)
+mlflow.db
