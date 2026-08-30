@@ -43,6 +43,14 @@ executor:
     # bounded — 50 turns is ample without being wasteful. Override per session
     # via the ``max_turns`` arg to the conversion task.
     max_turns: 50
+    # The managed Omnigent server wires no elicitation (approval) handler, so
+    # the harness default ``auto`` permission_mode routes every non-Skill tool
+    # call through an approval that never arrives — the agent would only see
+    # the ``Skill`` tool and could not run shell/git. ``bypassPermissions``
+    # lets the agent actually execute; the guardrails policy below (which
+    # denies only the destructive set: force-push, hard reset, branch delete,
+    # raw cardholder-data commit) is the real backstop.
+    permission_mode: bypassPermissions
   # Mirrored under ``extra`` for consistency with forge_optimizer.yaml.
   extra:
     max_turns: 50

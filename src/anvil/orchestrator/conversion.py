@@ -138,6 +138,8 @@ def build_conversion_prompt(
     target_branch: str,
     findings: dict[str, Any],
     gh_token: str | None = None,
+    clone_url: str | None = None,
+    agent_subpath: str | None = None,
 ) -> str:
     """Generate the agent instruction text (the first USER message).
 
@@ -152,13 +154,26 @@ def build_conversion_prompt(
     so the agent can operate on private repos (per the user's design decision).
     The token NEVER appears in committed files or the progress log — only in
     this instruction to the agent.
+
+    ``clone_url`` is the clean, git-cloneable repo root (no ``/tree/...``
+    subpath). When supplied it — not ``repo_url`` — is tokenized for the
+    clone/push remote URL, because ``repo_url`` may be a GitHub *web tree* URL
+    (e.g. ``…/tree/main/statement-agent``) that ``git clone`` cannot use.
+    ``agent_subpath`` (e.g. ``statement-agent``) tells the agent which
+    subdirectory of the cloned repo is the AGENT ROOT — where every forge file
+    must be created; ``None`` means the repo root.
     """
     # Build the clone/push remote URL, embedding the token for private repos.
-    tokenized_clone_url = repo_url
-    if gh_token and repo_url.startswith("https://github.com/"):
+    # Use the clean clone_url (repo root, e.g. https://github.com/owner/repo)
+    # when available — ``repo_url`` may be a GitHub *web tree* URL
+    # (…/tree/main/statement-agent) that is NOT a valid git remote. Fall back
+    # to ``repo_url`` for backward safety when no clone_url is supplied.
+    effective_clone_url = clone_url or repo_url
+    tokenized_clone_url = effective_clone_url
+    if gh_token and effective_clone_url.startswith("https://github.com/"):
         tokenized_clone_url = (
             f"https://x-access-token:{gh_token}@github.com/"
-            + repo_url[len("https://github.com/"):]
+            + effective_clone_url[len("https://github.com/"):]
         )
 
     # Summarize the detected alternative structures for the agent.
@@ -191,6 +206,19 @@ def build_conversion_prompt(
             "URL.\n\n"
         )
 
+    # Human-readable rendering of the agent root for the prompt. The agent
+    # creates forge files inside this subdirectory of the cloned repo (or at
+    # the repo root when no subpath was given). Avoids rendering a bare
+    # ``None/`` when agent_subpath is unset.
+    subpath_display = agent_subpath or "(repo root)"
+    if agent_subpath:
+        agent_root_note = (
+            f"The agent root is `{agent_subpath}/` inside the cloned repo "
+            "(i.e. clone the repo root, then operate inside that subdirectory)."
+        )
+    else:
+        agent_root_note = "The agent root is the repo root."
+
     return f"""Convert this repository to the forge-compatible structure.
 
 ## Repository
@@ -198,11 +226,19 @@ def build_conversion_prompt(
 - Repo URL: {repo_url}
 - Base branch: {base_branch}
 - Target branch (create + push ONLY this): {target_branch}
+- Agent subpath: {subpath_display}
 
 {token_note}## Clone + push URLs
 
 - Clone URL (use this for `git clone`): {tokenized_clone_url}
 - For `git push origin {target_branch}` use the same tokenized remote.
+
+## Agent root
+
+All forge-compatible files (scaffold/harness.yaml, scaffold/skills/*.md,
+harness/config.yaml, scripts/build_golden_set.py, .gitignore) must be created
+at the AGENT ROOT. {agent_root_note} If no subpath is given, the agent root is
+the repo root.
 
 ## Detected alternative structures (convert from these)
 
@@ -210,11 +246,14 @@ def build_conversion_prompt(
 
 ## What to do (ALL ADDITIVE — never edit or delete existing files)
 
-1. Clone the repo at the base branch using the clone URL above. Clone into a
-   fresh temp directory; do not touch the orchestrator's working copy.
+1. Clone the repo at the base branch using the clone URL above (this is the
+   repo ROOT, not a `/tree/...` subpath). Clone into a fresh temp directory;
+   do not touch the orchestrator's working copy. Then `cd` into the agent
+   root (see "## Agent root") before creating any files.
 2. Create the target branch from the base branch:
    `git checkout -b {target_branch}`. Never operate on the base branch.
-3. Create these forge-compatible files ADDITIVELY:
+3. Create these forge-compatible files ADDITIVELY at the AGENT ROOT (see
+   "## Agent root" — inside `{subpath_display}/` if a subpath was given):
    - `scaffold/harness.yaml` — a `skills` list (one entry per skill file you
      create, `{{file: <rel-path>}}`) and a `sampling` dict (temperature ~0.3,
      max_tokens ~2048).
@@ -433,6 +472,8 @@ async def _run_conversion_task(session_id: str, target_branch: str) -> None:
             target_branch=target_branch,
             findings=findings,
             gh_token=gh_token,
+            clone_url=clone_url,
+            agent_subpath=agent_subpath,
         )
 
         _progress("agent_session", "Creating the Omnigent conversion session.")
