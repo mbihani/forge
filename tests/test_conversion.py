@@ -11,19 +11,26 @@ bundle spec (``agents/forge_converter.yaml``). The background task's Omnigent
 
 from __future__ import annotations
 
+import asyncio
 import io
 import os
 import subprocess
 import tarfile
 from pathlib import Path
+from typing import Any
 
+import pytest
 import yaml
 
 from anvil.optimizer.omnigent_backend import _build_agent_bundle
+from anvil.optimizer.omnigent_client import OmnigentClient, OmnigentError
 from anvil.orchestrator.conversion import (
+    _CONVERTER_MODEL,
     DEFAULT_TARGET_BRANCH,
     ConversionResult,
     _build_pr_url,
+    _send_with_retry,
+    _wait_for_runner,
     build_conversion_prompt,
     check_pii_in_commit,
 )
@@ -307,7 +314,7 @@ def test_converter_agent_yaml_executor_shape() -> None:
     data = _load_converter()
     executor = data["executor"]
     assert executor["type"] == "omnigent"
-    assert executor["model"] == "databricks-claude-opus-4-7"
+    assert executor["model"] == "databricks-claude-opus-4-8"
     assert executor["config"]["harness"] == "claude-sdk"
     assert executor["config"]["max_turns"] == 50
 
@@ -342,12 +349,133 @@ def test_converter_agent_bundle_builds_and_substitutes() -> None:
     """The converter YAML packages into a tar.gz with model/max_turns substituted
     (same contract as the optimizer bundle)."""
     bundle = _build_agent_bundle(
-        _CONVERTER_YAML, model="databricks-claude-opus-4-7", max_turns=50
+        _CONVERTER_YAML, model="databricks-claude-opus-4-8", max_turns=50
     )
     with tarfile.open(fileobj=io.BytesIO(bundle), mode="r:gz") as tar:
         assert tar.getnames() == ["config.yaml"]
         config = yaml.safe_load(tar.extractfile("config.yaml").read())  # type: ignore[union-attr]
     assert config["name"] == "forge-converter"
-    assert config["executor"]["model"] == "databricks-claude-opus-4-7"
+    assert config["executor"]["model"] == "databricks-claude-opus-4-8"
     assert config["executor"]["config"]["max_turns"] == 50
     assert "prompt" in config
+
+
+# ---------------------------------------------------------------------------
+# Two-step managed-host flow: _CONVERTER_MODEL + the runner helpers
+# ---------------------------------------------------------------------------
+
+
+class _FakeRunnerClient:
+    """Minimal async stand-in for :class:`OmnigentClient` exercising only the
+    methods the managed-host helpers touch (``get_session`` / ``send_message``).
+
+    ``get_session_returns`` is consumed in order (clamped to the last entry).
+    ``send_raises`` raises the listed :class:`OmnigentError`s in order, then
+    ``send_message`` succeeds.
+    """
+
+    def __init__(
+        self,
+        *,
+        get_session_returns: list[dict[str, Any]] | None = None,
+        send_raises: list[OmnigentError] | None = None,
+    ) -> None:
+        self.get_session_returns = get_session_returns or []
+        self.send_raises = send_raises or []
+        self.get_calls = 0
+        self.send_calls = 0
+
+    async def get_session(self, session_id: str) -> dict[str, Any]:
+        self.get_calls += 1
+        if not self.get_session_returns:
+            return {}
+        idx = min(self.get_calls - 1, len(self.get_session_returns) - 1)
+        return self.get_session_returns[idx]
+
+    async def send_message(self, session_id: str, text: str) -> dict[str, Any]:
+        if self.send_calls < len(self.send_raises):
+            exc = self.send_raises[self.send_calls]
+            self.send_calls += 1
+            raise exc
+        self.send_calls += 1
+        return {"queued": True}
+
+
+def _noop_progress(*_args: Any, **_kwargs: Any) -> None:
+    """Progress sink that discards every step message."""
+
+
+def test_converter_model_targets_opus_4_8() -> None:
+    """The converter agent runs on databricks-claude-opus-4-8 on the managed
+    host — the same model feeds both the bundle build and the model_override."""
+    assert _CONVERTER_MODEL == "databricks-claude-opus-4-8"
+
+
+def test_create_session_from_agent_is_available() -> None:
+    """The two-step flow depends on OmnigentClient.create_session_from_agent
+    existing as a distinct method from the multipart create_session."""
+    assert hasattr(OmnigentClient, "create_session_from_agent")
+    assert OmnigentClient.create_session_from_agent is not OmnigentClient.create_session
+
+
+def test_send_with_retry_retries_on_transient_503() -> None:
+    """A transient 503 (runner still provisioning) is retried up to max_attempts;
+    once send_message succeeds the helper returns without re-raising."""
+    client = _FakeRunnerClient(
+        send_raises=[
+            OmnigentError("runner busy", status_code=503),
+            OmnigentError("runner busy", status_code=503),
+        ]
+    )
+
+    async def _run() -> None:
+        await _send_with_retry(
+            client, "s1", "convert please", _noop_progress, max_attempts=3, delay=0.0
+        )
+
+    asyncio.run(_run())
+    # Two 503 raises + one success → three send attempts.
+    assert client.send_calls == 3
+
+
+def test_send_with_retry_raises_non_503_immediately() -> None:
+    """A non-503 OmnigentError is surfaced immediately — no retry, no sleep."""
+    client = _FakeRunnerClient(send_raises=[OmnigentError("boom", status_code=500)])
+
+    async def _run() -> None:
+        with pytest.raises(OmnigentError):
+            await _send_with_retry(
+                client, "s1", "convert please", _noop_progress, max_attempts=3, delay=0.0
+            )
+
+    asyncio.run(_run())
+    assert client.send_calls == 1  # no retry on non-503
+
+
+def test_wait_for_runner_polls_until_online() -> None:
+    """_wait_for_runner polls get_session until runner_online flips True."""
+    client = _FakeRunnerClient(
+        get_session_returns=[
+            {"runner_online": False},
+            {"runner_online": False},
+            {"runner_online": True},
+        ]
+    )
+
+    async def _run() -> None:
+        await _wait_for_runner(client, "s1", _noop_progress, max_attempts=6, delay=0.0)
+
+    asyncio.run(_run())
+    assert client.get_calls == 3
+
+
+def test_wait_for_runner_gives_up_without_raising() -> None:
+    """When the runner never comes online within max_attempts the helper gives
+    up gracefully (no raise) so the caller can still attempt send_message."""
+    client = _FakeRunnerClient(get_session_returns=[{"runner_online": False}] * 6)
+
+    async def _run() -> None:
+        await _wait_for_runner(client, "s1", _noop_progress, max_attempts=6, delay=0.0)
+
+    asyncio.run(_run())
+    assert client.get_calls == 6
