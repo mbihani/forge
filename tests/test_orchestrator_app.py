@@ -587,6 +587,64 @@ def test_validation_skill_file_missing(
     assert "missing.md" in checks["scaffold_skill_files"]["message"]
 
 
+def test_check_scaffold_skill_files_accepts_canonical_layout(tmp_path: Path) -> None:
+    skills_dir = tmp_path / "scaffold" / "skills"
+    skills_dir.mkdir(parents=True)
+    (skills_dir / "identity.md").write_text("# Identity\n", encoding="utf-8")
+
+    result = app_module._check_scaffold_skill_files(tmp_path, [{"file": "identity.md"}])
+
+    assert result["status"] == "pass"
+
+
+def test_check_scaffold_skill_files_accepts_legacy_layout(tmp_path: Path) -> None:
+    scaffold_dir = tmp_path / "scaffold"
+    scaffold_dir.mkdir()
+    (scaffold_dir / "identity.md").write_text("# Identity\n", encoding="utf-8")
+
+    result = app_module._check_scaffold_skill_files(tmp_path, [{"file": "identity.md"}])
+
+    assert result["status"] == "pass"
+
+
+def test_check_scaffold_skill_files_fails_when_missing(tmp_path: Path) -> None:
+    result = app_module._check_scaffold_skill_files(tmp_path, [{"file": "missing.md"}])
+
+    assert result["status"] == "fail"
+    assert "scaffold/skills/ (or scaffold/)" in result["message"]
+
+
+def test_check_golden_set_warns_when_build_script_exists(tmp_path: Path) -> None:
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "build_golden_set.py").write_text("", encoding="utf-8")
+
+    result = app_module._check_golden_set_jsonl(tmp_path)
+
+    assert result["status"] == "warn"
+    assert "build it locally" in result["message"]
+
+
+def test_check_golden_set_fails_when_data_and_build_script_absent(tmp_path: Path) -> None:
+    result = app_module._check_golden_set_jsonl(tmp_path)
+
+    assert result["status"] == "fail"
+    assert result["message"] == "data/golden_set.jsonl not found"
+
+
+def test_check_golden_set_still_validates_existing_jsonl(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    golden_set = data_dir / "golden_set.jsonl"
+    golden_set.write_text('{"example_id": "valid", "query": "question"}\n', encoding="utf-8")
+    assert app_module._check_golden_set_jsonl(tmp_path)["status"] == "pass"
+
+    golden_set.write_text('{"example_id": "missing-query"}\n', encoding="utf-8")
+    result = app_module._check_golden_set_jsonl(tmp_path)
+    assert result["status"] == "fail"
+    assert "missing required field" in result["message"]
+
+
 def test_validation_invalid_config_still_has_all_checks(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
 ) -> None:
