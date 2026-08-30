@@ -29,6 +29,7 @@ from anvil.orchestrator.conversion import (
     DEFAULT_TARGET_BRANCH,
     ConversionResult,
     _build_pr_url,
+    _run_conversion_task,
     _run_managed_session,
     _send_with_retry,
     _wait_for_runner,
@@ -614,3 +615,112 @@ def test_run_managed_session_two_step_flow() -> None:
     # (order-agnostic — the finally deletes managed first, then registration).
     assert sorted(client.delete_session_calls) == ["managed-sess-id", "reg-sess-id"]
     assert client.aclose_calls == 1
+
+
+# ---------------------------------------------------------------------------
+# _run_conversion_task: re-validation must unpack _run_validation's 3-tuple
+# ---------------------------------------------------------------------------
+
+
+def test_run_conversion_task_revalidation_unpacks_3tuple(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: ``_run_conversion_task`` unpacked ``_run_validation`` into 2
+    variables, but it returns a 3-tuple ``(report, config, findings)`` — so the
+    re-validation step raised ``ValueError: too many values to unpack (expected
+    2)``. Mock ``_run_validation`` to return a 3-tuple and assert the task
+    completes (no ValueError) and stores the re-validation report.
+
+    ``app.py`` already unpacks all three (``report, config, findings = …``);
+    this pins the conversion flow against the same shape.
+    """
+    from anvil.orchestrator import app as app_module
+    from anvil.orchestrator import conversion as conversion_module
+    from anvil.orchestrator.app import SessionData
+
+    session_id = "sess-revalid"
+    target_branch = "forge-compat"
+    sessions_root = tmp_path / "sessions"
+    sessions_root.mkdir()
+    monkeypatch.setattr(app_module, "_SESSIONS_ROOT", sessions_root)
+
+    # Seed a convertible session the task reads (repo url, token, findings, …).
+    sess = SessionData(
+        session_id=session_id,
+        repo_url="https://github.com/owner/repo",
+        repo_path=tmp_path / "clone",
+        status="invalid",
+        validation={"status": "invalid", "checks": [], "convertible": True},
+        config=None,
+        baseline=None,
+        rounds=[],
+        frontier=None,
+        finalized=None,
+        error=None,
+        conversion=ConversionResult(),
+        _findings={},
+        _github_token="ghp_testtoken",
+    )
+    app_module._sessions[session_id] = sess
+
+    # Mock every external dependency the task touches before re-validation.
+    monkeypatch.setattr(app_module, "_current_branch", lambda _root: "main")
+    monkeypatch.setattr(
+        app_module,
+        "_parse_github_url",
+        lambda _url: ("https://github.com/owner/repo", "owner", "repo"),
+    )
+    monkeypatch.setattr(
+        conversion_module, "_build_agent_bundle", lambda *a, **kw: b"bundle-bytes"
+    )
+    monkeypatch.setattr(conversion_module, "OmnigentClient", lambda *a, **kw: object())
+    monkeypatch.setenv("OMNIGENT_SERVER_URL", "http://test")
+    monkeypatch.setenv("OMNIGENT_AUTH_TOKEN", "tok")
+
+    async def _fake_managed_session(*_args: Any, **_kw: Any) -> str:
+        return ""
+
+    monkeypatch.setattr(conversion_module, "_run_managed_session", _fake_managed_session)
+
+    # _clone_repo must materialize the converted checkout dir (so the subpath
+    # check passes) and return None (no error string).
+    def _fake_clone(_url: str, dest: Path, _token: str | None, _branch: str) -> str | None:
+        dest.mkdir(parents=True, exist_ok=True)
+        return None
+
+    monkeypatch.setattr(app_module, "_clone_repo", _fake_clone)
+    monkeypatch.setattr(conversion_module, "check_pii_in_commit", lambda *_a, **_kw: [])
+
+    # The crux: _run_validation returns a 3-tuple. Before the fix this raised
+    # ``ValueError: too many values to unpack (expected 2)``.
+    reval_report = {"status": "valid", "checks": [], "convertible": False}
+    reval_config = {"runtime_endpoint": "ep"}
+    reval_findings = {"prompts": ["p1.txt"]}
+    validation_calls: list[Path] = []
+
+    def _fake_run_validation(repo_path: Path):
+        validation_calls.append(repo_path)
+        return (reval_report, reval_config, reval_findings)
+
+    monkeypatch.setattr(app_module, "_run_validation", _fake_run_validation)
+
+    async def _run() -> None:
+        await _run_conversion_task(session_id, target_branch)
+
+    try:
+        # Must not raise ValueError (or anything else).
+        asyncio.run(_run())
+
+        # Re-validation was actually invoked once on the converted checkout.
+        assert len(validation_calls) == 1
+
+        # The task reached "completed" and stored the re-validation report.
+        assert sess.conversion is not None
+        assert sess.conversion.status == "completed"
+        assert sess.conversion.branch_name == target_branch
+        assert sess.conversion.error is None
+        assert sess.conversion.revalidation is not None
+        assert sess.conversion.revalidation["status"] == "valid"
+        assert sess.conversion.revalidation["pii_findings"] == []
+    finally:
+        app_module._sessions.pop(session_id, None)
