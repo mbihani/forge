@@ -55,16 +55,21 @@ from anvil.optimizer.omnigent_client import (
 
 logger = logging.getLogger("anvil.orchestrator.conversion")
 
-# TODO: For production, create a pre-registered omnigent agent (forge-converter)
-# and use OmnigentClient.create_session_from_agent(agent_id=...) instead of
-# uploading a bundle each time. This avoids the tar.gz build + upload overhead
-# per conversion. Until then the bundle is built fresh from
-# agents/forge_converter.yaml on every conversion (per the user's design
-# decision: upload the bundle each time).
+# Two-step managed-host flow. The managed Omnigent server returns 503
+# ("No runner bound for session") when a session is created from a multipart
+# bundle upload alone — the upload registers the agent but no managed runner
+# is provisioned. So the converter uploads the bundle to *register* the agent
+# (and discards that throwaway session), then opens a SECOND session via
+# OmnigentClient.create_session_from_agent(agent_id, host_type="managed",
+# model_override=...) which triggers the managed host to auto-provision a
+# runner. Messages then get HTTP 202 instead of 503.
 
 # Repo root (this file is at src/anvil/orchestrator/conversion.py).
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _CONVERTER_AGENT_YAML = _REPO_ROOT / "agents" / "forge_converter.yaml"
+
+# Model for the converter agent on the managed Omnigent host.
+_CONVERTER_MODEL = "databricks-claude-opus-4-8"
 
 # Default conversion branch name (overridable via ConvertRequest.target_branch).
 DEFAULT_TARGET_BRANCH = "forge-compat"
@@ -221,7 +226,7 @@ def build_conversion_prompt(
      code with a predict() entrypoint exists), `runtime_endpoint`,
      `optimizer_endpoint`, `judge_endpoint` (derive from `harness/*.py` /
      `config*.py`; default runtime/judge to `databricks-claude-sonnet-4-6`,
-     optimizer to `databricks-claude-opus-4-7`), an `eval` section
+     optimizer to `databricks-claude-opus-4-8`), an `eval` section
      (`default_mode`, `modes` with `{{quick: {{rows: 12}}, standard: {{rows: 24}},
      full: {{rows: 304}}}}`, `scorers: [correctness]`, `held_out_test: true`),
      and `gate: {{type: frontier}}`.
@@ -412,7 +417,7 @@ async def _run_conversion_task(session_id: str, target_branch: str) -> None:
             partial(
                 _build_agent_bundle,
                 _CONVERTER_AGENT_YAML,
-                model="databricks-claude-opus-4-7",
+                model=_CONVERTER_MODEL,
                 max_turns=50,
             )
         )
@@ -432,35 +437,7 @@ async def _run_conversion_task(session_id: str, target_branch: str) -> None:
 
         _progress("agent_session", "Creating the Omnigent conversion session.")
         client = OmnigentClient(server_url, auth_token)
-        omnigent_session_id: str | None = None
-        try:
-            created = await client.create_session(
-                bundle,
-                metadata=SessionCreateMetadata(title=f"forge-converter {target_branch}"),
-            )
-            omnigent_session_id = created["session_id"]
-            _progress(
-                "agent_session",
-                f"Omnigent session created ({omnigent_session_id}).",
-            )
-
-            await client.send_message(omnigent_session_id, prompt)
-            _progress("agent_running", "Agent is converting the repository...")
-
-            transcript = await _drain_conversion_stream(
-                client, omnigent_session_id, _progress
-            )
-            _progress(
-                "agent_done",
-                "Agent finished. "
-                + (transcript[:200] + "…" if len(transcript) > 200 else transcript),
-            )
-        finally:
-            if omnigent_session_id is not None:
-                with suppress(OmnigentError):
-                    await client.delete_session(omnigent_session_id)
-            with suppress(Exception):
-                await client.aclose()
+        await _run_managed_session(client, bundle, prompt, target_branch, _progress)
 
         # ---- Re-clone the converted branch + re-validate ----
         _progress(
@@ -538,6 +515,120 @@ async def _run_conversion_task(session_id: str, target_branch: str) -> None:
             pass
         _set(status="failed", error=message)
         _progress("failed", f"Conversion failed: {message}")
+
+
+async def _run_managed_session(
+    client: OmnigentClient,
+    bundle: bytes,
+    prompt: str,
+    target_branch: str,
+    progress: Any,
+) -> str:
+    """Two-step managed-host flow: upload the bundle to register the agent,
+    create a managed session (``host_type="managed"``) that auto-provisions
+    a runner, send the prompt, drain the stream, and tombstone BOTH sessions
+    in the ``finally`` block.
+
+    Returns the agent's transcript string. Extracted from
+    :func:`_run_conversion_task` so the full flow (multipart register →
+    managed session → send → drain → cleanup) is unit-testable with a fake
+    OmnigentClient.
+    """
+    omnigent_session_id: str | None = None
+    registration_session_id: str | None = None
+    try:
+        # Step 1: Upload the bundle to register the agent (multipart).
+        # This creates a session WITHOUT a managed runner — we only need the
+        # agent_id. Capture the registration session id FIRST so that a
+        # response missing ``agent_id`` (KeyError) still lets the finally
+        # tombstone the throwaway registration session (no leak).
+        created = await client.create_session(
+            bundle,
+            metadata=SessionCreateMetadata(title=f"forge-converter {target_branch}"),
+        )
+        registration_session_id = created["session_id"]
+        agent_id = created["agent_id"]
+        progress("agent_session", f"Agent registered ({agent_id}).")
+
+        # Step 2: Create a managed session bound to the registered agent.
+        # host_type="managed" triggers the managed host to auto-provision a
+        # runner — without it the server returns 503 "No runner bound".
+        managed = await client.create_session_from_agent(
+            agent_id,
+            host_type="managed",
+            model_override=_CONVERTER_MODEL,
+            title=f"forge-converter {target_branch}",
+        )
+        omnigent_session_id = managed["id"]
+        progress("agent_session", f"Managed session created ({omnigent_session_id}).")
+
+        # Step 3: Wait briefly for the runner if not yet online.
+        if not managed.get("runner_online"):
+            await _wait_for_runner(client, omnigent_session_id, progress)
+
+        # Step 4: Send the conversion prompt (retry on transient 503).
+        await _send_with_retry(client, omnigent_session_id, prompt, progress)
+        progress("agent_running", "Agent is converting the repository...")
+
+        transcript = await _drain_conversion_stream(client, omnigent_session_id, progress)
+        progress(
+            "agent_done",
+            "Agent finished. "
+            + (transcript[:200] + "…" if len(transcript) > 200 else transcript),
+        )
+        return transcript
+    finally:
+        if omnigent_session_id is not None:
+            with suppress(OmnigentError):
+                await client.delete_session(omnigent_session_id)
+        if registration_session_id is not None:
+            with suppress(OmnigentError):
+                await client.delete_session(registration_session_id)
+        with suppress(Exception):
+            await client.aclose()
+
+
+async def _wait_for_runner(
+    client: OmnigentClient, session_id: str, progress: Any,
+    *, max_attempts: int = 6, delay: float = 2.0,
+) -> None:
+    """Poll get_session until runner_online is True (or give up).
+
+    The managed host usually provisions the runner synchronously in the
+    create response, but a brief async window is possible. This polls
+    rather than blocking indefinitely so a stuck host surfaces as a
+    clear send_message error instead of a hang.
+    """
+    for attempt in range(1, max_attempts + 1):
+        with suppress(OmnigentError):
+            snapshot = await client.get_session(session_id)
+            if snapshot.get("runner_online"):
+                return
+        if attempt < max_attempts:
+            progress("agent_session", f"Waiting for runner… ({attempt}/{max_attempts})")
+            await anyio.sleep(delay)
+    progress("agent_session", "Runner not yet online; attempting message anyway.")
+
+
+async def _send_with_retry(
+    client: OmnigentClient, session_id: str, text: str, progress: Any,
+    *, max_attempts: int = 3, delay: float = 3.0,
+) -> None:
+    """Send a message, retrying on transient 503 (runner still provisioning)."""
+    last_err: OmnigentError | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            await client.send_message(session_id, text)
+            return
+        except OmnigentError as exc:
+            last_err = exc
+            if exc.status_code == 503 and attempt < max_attempts:
+                progress("agent_session", f"Runner busy, retrying… ({attempt}/{max_attempts})")
+                await anyio.sleep(delay)
+                continue
+            raise
+    assert last_err is not None
+    raise last_err
 
 
 async def _drain_conversion_stream(

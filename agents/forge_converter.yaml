@@ -36,7 +36,7 @@ executor:
   type: omnigent
   # Strong code-generation model — conversion is structural code/file work.
   # Override per session via the ``model`` arg to the conversion task.
-  model: databricks-claude-opus-4-7
+  model: databricks-claude-opus-4-8
   config:
     harness: claude-sdk
     # Conversion is complex (clone + scan + multi-file generation + git) but
@@ -108,7 +108,7 @@ prompt: |
      `runtime_endpoint`/`optimizer_endpoint`/`judge_endpoint` from the existing
      `harness/*.py` or `config*.py` (look for endpoint names; default to
      `databricks-claude-sonnet-4-6` for runtime/judge and
-     `databricks-claude-opus-4-7` for optimizer if not found), an `eval`
+     `databricks-claude-opus-4-8` for optimizer if not found), an `eval`
      section with `default_mode`, `modes` (quick/standard/full with rows),
      `scorers: [correctness]`, `held_out_test: true`, and
      `gate: {type: frontier}`.

@@ -11,19 +11,27 @@ bundle spec (``agents/forge_converter.yaml``). The background task's Omnigent
 
 from __future__ import annotations
 
+import asyncio
 import io
 import os
 import subprocess
 import tarfile
 from pathlib import Path
+from typing import Any
 
+import pytest
 import yaml
 
 from anvil.optimizer.omnigent_backend import _build_agent_bundle
+from anvil.optimizer.omnigent_client import OmnigentClient, OmnigentError
 from anvil.orchestrator.conversion import (
+    _CONVERTER_MODEL,
     DEFAULT_TARGET_BRANCH,
     ConversionResult,
     _build_pr_url,
+    _run_managed_session,
+    _send_with_retry,
+    _wait_for_runner,
     build_conversion_prompt,
     check_pii_in_commit,
 )
@@ -307,7 +315,7 @@ def test_converter_agent_yaml_executor_shape() -> None:
     data = _load_converter()
     executor = data["executor"]
     assert executor["type"] == "omnigent"
-    assert executor["model"] == "databricks-claude-opus-4-7"
+    assert executor["model"] == "databricks-claude-opus-4-8"
     assert executor["config"]["harness"] == "claude-sdk"
     assert executor["config"]["max_turns"] == 50
 
@@ -342,12 +350,267 @@ def test_converter_agent_bundle_builds_and_substitutes() -> None:
     """The converter YAML packages into a tar.gz with model/max_turns substituted
     (same contract as the optimizer bundle)."""
     bundle = _build_agent_bundle(
-        _CONVERTER_YAML, model="databricks-claude-opus-4-7", max_turns=50
+        _CONVERTER_YAML, model="databricks-claude-opus-4-8", max_turns=50
     )
     with tarfile.open(fileobj=io.BytesIO(bundle), mode="r:gz") as tar:
         assert tar.getnames() == ["config.yaml"]
         config = yaml.safe_load(tar.extractfile("config.yaml").read())  # type: ignore[union-attr]
     assert config["name"] == "forge-converter"
-    assert config["executor"]["model"] == "databricks-claude-opus-4-7"
+    assert config["executor"]["model"] == "databricks-claude-opus-4-8"
     assert config["executor"]["config"]["max_turns"] == 50
     assert "prompt" in config
+
+
+# ---------------------------------------------------------------------------
+# Two-step managed-host flow: _CONVERTER_MODEL + the runner helpers
+# ---------------------------------------------------------------------------
+
+
+class _FakeRunnerClient:
+    """Minimal async stand-in for :class:`OmnigentClient` exercising only the
+    methods the managed-host helpers touch (``get_session`` / ``send_message``).
+
+    ``get_session_returns`` is consumed in order (clamped to the last entry).
+    ``send_raises`` raises the listed :class:`OmnigentError`s in order, then
+    ``send_message`` succeeds.
+    """
+
+    def __init__(
+        self,
+        *,
+        get_session_returns: list[dict[str, Any]] | None = None,
+        send_raises: list[OmnigentError] | None = None,
+    ) -> None:
+        self.get_session_returns = get_session_returns or []
+        self.send_raises = send_raises or []
+        self.get_calls = 0
+        self.send_calls = 0
+
+    async def get_session(self, session_id: str) -> dict[str, Any]:
+        self.get_calls += 1
+        if not self.get_session_returns:
+            return {}
+        idx = min(self.get_calls - 1, len(self.get_session_returns) - 1)
+        return self.get_session_returns[idx]
+
+    async def send_message(self, session_id: str, text: str) -> dict[str, Any]:
+        if self.send_calls < len(self.send_raises):
+            exc = self.send_raises[self.send_calls]
+            self.send_calls += 1
+            raise exc
+        self.send_calls += 1
+        return {"queued": True}
+
+
+def _noop_progress(*_args: Any, **_kwargs: Any) -> None:
+    """Progress sink that discards every step message."""
+
+
+def test_converter_model_targets_opus_4_8() -> None:
+    """The converter agent runs on databricks-claude-opus-4-8 on the managed
+    host — the same model feeds both the bundle build and the model_override."""
+    assert _CONVERTER_MODEL == "databricks-claude-opus-4-8"
+
+
+def test_create_session_from_agent_is_available() -> None:
+    """The two-step flow depends on OmnigentClient.create_session_from_agent
+    existing as a distinct method from the multipart create_session."""
+    assert hasattr(OmnigentClient, "create_session_from_agent")
+    assert OmnigentClient.create_session_from_agent is not OmnigentClient.create_session
+
+
+def test_send_with_retry_retries_on_transient_503() -> None:
+    """A transient 503 (runner still provisioning) is retried up to max_attempts;
+    once send_message succeeds the helper returns without re-raising."""
+    client = _FakeRunnerClient(
+        send_raises=[
+            OmnigentError("runner busy", status_code=503),
+            OmnigentError("runner busy", status_code=503),
+        ]
+    )
+
+    async def _run() -> None:
+        await _send_with_retry(
+            client, "s1", "convert please", _noop_progress, max_attempts=3, delay=0.0
+        )
+
+    asyncio.run(_run())
+    # Two 503 raises + one success → three send attempts.
+    assert client.send_calls == 3
+
+
+def test_send_with_retry_raises_non_503_immediately() -> None:
+    """A non-503 OmnigentError is surfaced immediately — no retry, no sleep."""
+    client = _FakeRunnerClient(send_raises=[OmnigentError("boom", status_code=500)])
+
+    async def _run() -> None:
+        with pytest.raises(OmnigentError):
+            await _send_with_retry(
+                client, "s1", "convert please", _noop_progress, max_attempts=3, delay=0.0
+            )
+
+    asyncio.run(_run())
+    assert client.send_calls == 1  # no retry on non-503
+
+
+def test_wait_for_runner_polls_until_online() -> None:
+    """_wait_for_runner polls get_session until runner_online flips True."""
+    client = _FakeRunnerClient(
+        get_session_returns=[
+            {"runner_online": False},
+            {"runner_online": False},
+            {"runner_online": True},
+        ]
+    )
+
+    async def _run() -> None:
+        await _wait_for_runner(client, "s1", _noop_progress, max_attempts=6, delay=0.0)
+
+    asyncio.run(_run())
+    assert client.get_calls == 3
+
+
+def test_wait_for_runner_gives_up_without_raising() -> None:
+    """When the runner never comes online within max_attempts the helper gives
+    up gracefully (no raise) so the caller can still attempt send_message."""
+    client = _FakeRunnerClient(get_session_returns=[{"runner_online": False}] * 6)
+
+    async def _run() -> None:
+        await _wait_for_runner(client, "s1", _noop_progress, max_attempts=6, delay=0.0)
+
+    asyncio.run(_run())
+    assert client.get_calls == 6
+
+
+# ---------------------------------------------------------------------------
+# Two-step managed-host flow: _run_managed_session (end-to-end with a fake)
+# ---------------------------------------------------------------------------
+
+
+class _FakeManagedSessionClient:
+    """Async stand-in for :class:`OmnigentClient` exercising the FULL two-step
+    managed-host flow end-to-end: ``create_session`` (multipart register) →
+    ``create_session_from_agent`` (managed) → ``send_message`` →
+    ``stream_session`` → ``delete_session`` (+ ``aclose`` / ``get_session``).
+
+    Records every call so the test can assert ordering and arguments.
+    ``stream_events`` is the ``(event_type, data)`` sequence yielded by
+    ``stream_session`` (consumed by :func:`_drain_conversion_stream`).
+    """
+
+    def __init__(self, *, stream_events: list[tuple[str, dict[str, Any]]]) -> None:
+        self.stream_events = stream_events
+        self.create_session_calls: list[dict[str, Any]] = []
+        self.create_session_from_agent_calls: list[dict[str, Any]] = []
+        self.send_message_calls: list[dict[str, Any]] = []
+        self.stream_session_calls: list[str] = []
+        self.delete_session_calls: list[str] = []
+        self.aclose_calls = 0
+
+    async def create_session(
+        self, bundle_bytes: bytes, metadata: Any = None, *, bundle_filename: str = "agent.tar.gz"
+    ) -> dict[str, Any]:
+        self.create_session_calls.append(
+            {"bundle": bundle_bytes, "metadata": metadata, "bundle_filename": bundle_filename}
+        )
+        return {"session_id": "reg-sess-id", "agent_id": "agent-xyz", "agent_name": "forge-converter"}
+
+    async def create_session_from_agent(
+        self,
+        agent_id: str,
+        *,
+        title: str | None = None,
+        initial_items: list[dict[str, Any]] | None = None,
+        host_id: str | None = None,
+        host_type: str | None = None,
+        workspace: str | None = None,
+        model_override: str | None = None,
+    ) -> dict[str, Any]:
+        self.create_session_from_agent_calls.append(
+            {
+                "agent_id": agent_id,
+                "title": title,
+                "host_type": host_type,
+                "model_override": model_override,
+            }
+        )
+        return {"id": "managed-sess-id", "runner_online": True}
+
+    async def send_message(self, session_id: str, text: str) -> dict[str, Any]:
+        self.send_message_calls.append({"session_id": session_id, "text": text})
+        return {"queued": True, "item_id": "item-1"}
+
+    async def stream_session(self, session_id: str):
+        self.stream_session_calls.append(session_id)
+        for event in self.stream_events:
+            yield event
+
+    async def get_session(self, session_id: str) -> dict[str, Any]:
+        # Present for _wait_for_runner; not reached when create_session_from_agent
+        # already reports runner_online=True.
+        return {"runner_online": True}
+
+    async def delete_session(self, session_id: str) -> dict[str, Any]:
+        self.delete_session_calls.append(session_id)
+        return {"deleted": True}
+
+    async def aclose(self) -> None:
+        self.aclose_calls += 1
+
+
+def test_run_managed_session_two_step_flow() -> None:
+    """_run_managed_session runs the full two-step managed-host flow:
+    multipart register (→ agent_id) → managed session (host_type="managed" +
+    model_override=_CONVERTER_MODEL, reading ``id`` NOT ``session_id``) →
+    send_message on the managed id → drain → BOTH sessions tombstoned."""
+    transcript_text = "Conversion complete. Created scaffold/harness.yaml."
+    events = [
+        # An assistant item_done so the drained transcript is non-empty …
+        (
+            "response.output_item.done",
+            {
+                "item": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": transcript_text}],
+                }
+            },
+        ),
+        # … then response.completed so _drain_conversion_stream breaks.
+        ("response.completed", {}),
+    ]
+    client = _FakeManagedSessionClient(stream_events=events)
+    bundle = b"fake-bundle-bytes"
+
+    async def _run() -> str:
+        return await _run_managed_session(
+            client, bundle, "convert the repo", "forge-compat", _noop_progress
+        )
+
+    transcript = asyncio.run(_run())
+
+    # Step 1: multipart create_session called first, carrying the bundle bytes.
+    assert len(client.create_session_calls) == 1
+    assert client.create_session_calls[0]["bundle"] == bundle
+
+    # Step 2: create_session_from_agent gets the agent_id from step 1,
+    # host_type="managed", and model_override=_CONVERTER_MODEL.
+    assert len(client.create_session_from_agent_calls) == 1
+    agent_call = client.create_session_from_agent_calls[0]
+    assert agent_call["agent_id"] == "agent-xyz"
+    assert agent_call["host_type"] == "managed"
+    assert agent_call["model_override"] == _CONVERTER_MODEL
+
+    # The managed session's `id` (NOT `session_id`) drives send + stream.
+    assert len(client.send_message_calls) == 1
+    assert client.send_message_calls[0]["session_id"] == "managed-sess-id"
+    assert client.send_message_calls[0]["text"] == "convert the repo"
+    assert client.stream_session_calls == ["managed-sess-id"]
+
+    # The returned transcript is the agent's response text.
+    assert transcript == transcript_text
+
+    # Finally: both the managed and the registration sessions are tombstoned
+    # (order-agnostic — the finally deletes managed first, then registration).
+    assert sorted(client.delete_session_calls) == ["managed-sess-id", "reg-sess-id"]
+    assert client.aclose_calls == 1
