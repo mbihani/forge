@@ -629,8 +629,10 @@ def _check_scaffold_harness_yaml(
                 "message": "scaffold/harness.yaml not found",
                 "remediation": "Create scaffold/harness.yaml with a 'skills' list and "
                 "'sampling' dict. Each skill has a 'file' field pointing to a markdown "
-                "file in scaffold/. Decompose your agent's prompt into sections — each "
-                "section becomes one skill. Example from the Savesage ICICI integration: "
+                "file in scaffold/skills/ using its basename (for example, identity.md "
+                "resolves to scaffold/skills/identity.md). Decompose your agent's prompt "
+                "into sections — each section becomes one skill. Example from the Savesage "
+                "ICICI integration (files live in scaffold/skills/): "
                 "skills = [identity.md, transaction_rules.md, rewards_rules.md, "
                 "missing_data.md, edge_cases.md, icici_bank_rules.md, "
                 "icici_card_identity.md, icici_rewards_layouts.md]",
@@ -655,7 +657,9 @@ def _check_scaffold_harness_yaml(
             "status": "fail",
             "message": "Missing 'skills' or 'sampling' section",
             "remediation": "Create scaffold/harness.yaml with a 'skills' list and "
-            "'sampling' dict.",
+            "'sampling' dict. Each skill's 'file' value should be the basename of a file "
+            "in scaffold/skills/ (for example, identity.md resolves to "
+            "scaffold/skills/identity.md).",
         }
     return {
         "name": "scaffold_harness_yaml",
@@ -671,13 +675,17 @@ def _check_scaffold_skill_files(repo_path: Path, skills: list[Any]) -> dict:
         rel = entry.get("file")
         if not rel:
             continue
-        if not (repo_path / "scaffold" / rel).is_file():
+        canonical_path = repo_path / "scaffold" / "skills" / rel
+        legacy_path = repo_path / "scaffold" / rel
+        if not canonical_path.is_file() and not legacy_path.is_file():
             return {
                 "name": "scaffold_skill_files",
                 "status": "fail",
-                "message": f"Skill file '{rel}' referenced in harness.yaml not found in scaffold/",
-                "remediation": "Create the missing skill markdown file in scaffold/. "
-                "Each skill file is a section of the agent's system prompt.",
+                "message": f"Skill file '{rel}' referenced in harness.yaml not found in "
+                "scaffold/skills/ (or scaffold/)",
+                "remediation": "Create the missing skill markdown file in scaffold/skills/. "
+                "Each skill file is a section of the agent's system prompt; scaffold/ is "
+                "also supported for backward compatibility.",
             }
     return {
         "name": "scaffold_skill_files",
@@ -691,6 +699,16 @@ def _check_golden_set_jsonl(
 ) -> dict:
     path = repo_path / "data" / "golden_set.jsonl"
     if not path.is_file():
+        if (repo_path / "scripts" / "build_golden_set.py").is_file():
+            return {
+                "name": "golden_set_jsonl",
+                "status": "warn",
+                "message": "data/golden_set.jsonl not found — build it locally",
+                "remediation": "Build the golden set locally with scripts/build_golden_set.py. "
+                "The data is cardholder PII and is gitignored by design — the repo is "
+                "structurally forge-compatible; the optimizer will need the golden set "
+                "before the first scored round.",
+            }
         return _prepend_smart_remediation(
             {
                 "name": "golden_set_jsonl",
