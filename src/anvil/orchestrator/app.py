@@ -58,8 +58,11 @@ import json
 import logging
 import os
 import shutil
+import signal
 import subprocess
+import sys
 import threading
+import traceback
 import uuid
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
@@ -71,19 +74,36 @@ from typing import Any
 import anyio
 import yaml
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from anvil.data.mlflow_baseline import build_mlflow_baseline
-from anvil.eval import evaluate_branch
-from anvil.eval.cache import report_to_baseline, save_baseline
-from anvil.loop.frontier import load_frontier
-from anvil.loop.round import run_round
-from anvil.orchestrator.conversion import (
-    DEFAULT_TARGET_BRANCH,
-    ConversionResult,
-    _run_conversion_task,
-)
+# Heavy imports — wrapped so the app still starts when optional deps
+# (mlflow, openai, …) are missing on serverless compute. On failure each
+# name is set to None and the error is captured in ``_STARTUP_ERROR``;
+# endpoints that need these imports return 503 with the error message.
+_STARTUP_ERROR: Exception | None = None
+try:
+    from anvil.data.mlflow_baseline import build_mlflow_baseline
+    from anvil.eval import evaluate_branch
+    from anvil.eval.cache import report_to_baseline, save_baseline
+    from anvil.loop.frontier import load_frontier
+    from anvil.loop.round import run_round
+    from anvil.orchestrator.conversion import (
+        DEFAULT_TARGET_BRANCH,
+        ConversionResult,
+        _run_conversion_task,
+    )
+except Exception as exc:  # noqa: BLE001 — capture any import failure
+    _STARTUP_ERROR = exc
+    build_mlflow_baseline = None  # type: ignore[assignment]
+    evaluate_branch = None  # type: ignore[assignment]
+    report_to_baseline = None  # type: ignore[assignment]
+    save_baseline = None  # type: ignore[assignment]
+    load_frontier = None  # type: ignore[assignment]
+    run_round = None  # type: ignore[assignment]
+    DEFAULT_TARGET_BRANCH = None  # type: ignore[assignment]
+    ConversionResult = None  # type: ignore[assignment]
+    _run_conversion_task = None  # type: ignore[assignment]
 
 logger = logging.getLogger("anvil.orchestrator")
 
@@ -1286,8 +1306,134 @@ def _cleanup_session(session_id: str) -> None:
     shutil.rmtree(root, ignore_errors=True)
 
 
+# ---------------------------------------------------------------------------
+# Crash diagnostics — signal handlers + excepthook write to
+# /tmp/forge-crash-log.txt and stderr (captured by the platform) so we can
+# diagnose serverless crashes that kill the process ~1 min after startup.
+# Also best-effort mirrors the log to a Databricks workspace file via REST.
+# ---------------------------------------------------------------------------
+
+_CRASH_LOG_FILE = Path("/tmp/forge-crash-log.txt")
+
+
+def _write_crash_log_to_databricks(entry: str) -> None:
+    """Best-effort write the crash log to a Databricks workspace file.
+
+    Reads ``DATABRICKS_HOST`` + ``DATABRICKS_TOKEN`` from the environment.
+    On serverless compute these are often unset — falls back to deriving the
+    host from ``OMNIGENT_SERVER_URL`` (stripping the ``/api/2.0/omnigent``
+    suffix) and using ``OMNIGENT_AUTH_TOKEN`` as the token. Any failure is
+    swallowed silently (best-effort only).
+    """
+    host = os.getenv("DATABRICKS_HOST")
+    token = os.getenv("DATABRICKS_TOKEN")
+    if not host or not token:
+        omnigent_url = os.getenv("OMNIGENT_SERVER_URL")
+        omnigent_token = os.getenv("OMNIGENT_AUTH_TOKEN")
+        if omnigent_url and omnigent_token:
+            host = omnigent_url
+            suffix = "/api/2.0/omnigent"
+            if host.endswith(suffix):
+                host = host[: -len(suffix)]
+            token = omnigent_token
+    if not host or not token:
+        return
+    try:
+        import httpx  # lazy import — best-effort, may not be installed
+    except ImportError:
+        return
+    url = (
+        f"{host}/api/2.0/workspace-files/write"
+        "?path=/Users/mayanck.bihani@databricks.com/forge-crash-log.txt&overwrite=true"
+    )
+    try:
+        resp = httpx.put(
+            url,
+            content=entry,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+    except Exception:  # noqa: BLE001 — best-effort, swallow all failures
+        pass
+
+
+def _write_crash_log(source: str, exc: BaseException | None = None) -> None:
+    """Append a crash record to the crash log file + stderr.
+
+    ``source`` is a short label (e.g. ``"signal: SIGTERM"``);
+    ``exc``, when given, is formatted with its traceback.
+    """
+    ts = datetime.now(UTC).isoformat(timespec="seconds")
+    if exc is not None:
+        tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        entry = f"[{ts}] {source}\n{tb}\n"
+    else:
+        entry = f"[{ts}] {source}\n"
+    # Local file (append so successive crashes accumulate).
+    try:
+        with _CRASH_LOG_FILE.open("a", encoding="utf-8") as fh:
+            fh.write(entry)
+    except OSError:
+        pass
+    # stderr is captured by the Databricks Apps log infrastructure.
+    print(entry, file=sys.stderr, flush=True)
+    # Best-effort mirror to a Databricks workspace file.
+    _write_crash_log_to_databricks(entry)
+
+
+def _signal_handler(signum: int, frame: Any) -> None:
+    """Write signal info to the crash log on SIGTERM/SIGINT."""
+    try:
+        sig_name = signal.Signals(signum).name
+    except ValueError:
+        sig_name = f"signal-{signum}"
+    _write_crash_log(f"signal: {sig_name} ({signum})")
+
+
+def _async_exception_handler(loop: asyncio.AbstractEventLoop, context: dict[str, Any]) -> None:
+    """Custom asyncio exception handler — writes unhandled async exceptions
+    to the crash log, then delegates to the default handler."""
+    exc = context.get("exception")
+    msg = context.get("message", "unhandled async exception")
+    source = f"asyncio: {msg}"
+    _write_crash_log(source, exc if isinstance(exc, BaseException) else None)
+    loop.default_exception_handler(context)
+
+
+def _excepthook(
+    exc_type: type[BaseException], exc_value: BaseException, exc_tb: Any
+) -> None:
+    """Global excepthook — writes unhandled exceptions to the crash log."""
+    if issubclass(exc_type, KeyboardInterrupt):
+        # Let the default handler deal with Ctrl-C.
+        sys.__excepthook__(exc_type, exc_value, exc_tb)
+        return
+    _write_crash_log("unhandled exception", exc_value)
+
+
+# Register the signal handlers + excepthook at import time so they are
+# active before the event loop starts.
+signal.signal(signal.SIGTERM, _signal_handler)
+signal.signal(signal.SIGINT, _signal_handler)
+sys.excepthook = _excepthook
+
+
+def _require_imports() -> None:
+    """Raise 503 if the heavy imports failed at startup.
+
+    Called by endpoints that depend on the optional heavy imports
+    (mlflow, openai, the anvil eval/loop/conversion modules) so the user
+    gets a clear error instead of a ``NoneType is not callable`` crash.
+    """
+    if _STARTUP_ERROR is not None:
+        raise HTTPException(status_code=503, detail=str(_STARTUP_ERROR))
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    # Catch unhandled async exceptions and write them to the crash log.
+    asyncio.get_event_loop().set_exception_handler(_async_exception_handler)
     logger.info("forge orchestrator startup — sessions root: %s", _SESSIONS_ROOT)
     yield
     # B8: On shutdown, cancel active optimization tasks and clean up
@@ -1322,7 +1468,29 @@ app = FastAPI(title="Forge Orchestrator", lifespan=_lifespan)
 
 @app.get("/health")
 async def health() -> dict[str, str]:
+    if _STARTUP_ERROR is not None:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "degraded", "error": str(_STARTUP_ERROR)},
+        )
     return {"status": "ok"}
+
+
+@app.get("/crash-log")
+async def crash_log() -> dict[str, Any]:
+    """Return the contents of the crash log file.
+
+    When the heavy imports failed at startup, the ``_STARTUP_ERROR`` is
+    included alongside the crash log so a single request surfaces both.
+    """
+    try:
+        content = _CRASH_LOG_FILE.read_text(encoding="utf-8")
+    except (OSError, FileNotFoundError):
+        content = "No crash logged"
+    result: dict[str, Any] = {"crash_log": content}
+    if _STARTUP_ERROR is not None:
+        result["startup_error"] = str(_STARTUP_ERROR)
+    return result
 
 
 @app.post("/api/session")
@@ -1416,6 +1584,7 @@ async def create_session(req: CreateSessionRequest) -> dict[str, Any]:
 
 @app.get("/api/session/{session_id}")
 async def get_session(session_id: str) -> dict[str, Any]:
+    _require_imports()
     sess = _require_session(session_id)
     # B4: Read rounds + artifacts in a thread pool (not under the lock).
     rounds = await anyio.to_thread.run_sync(_list_round_summaries, sess.repo_path)
@@ -1446,6 +1615,7 @@ async def get_session_config(session_id: str) -> dict[str, Any]:
 
 @app.post("/api/session/{session_id}/optimize", status_code=202)
 async def start_optimize(session_id: str, req: OptimizeRequest) -> dict[str, str]:
+    _require_imports()
     sess = _require_session(session_id)
     # Check-and-set under the lock: mark in-progress atomically so a
     # concurrent POST gets 409. The lock is released BEFORE any await.
@@ -1516,6 +1686,7 @@ async def get_baseline(session_id: str) -> dict[str, Any]:
 
 @app.get("/api/session/{session_id}/frontier")
 async def get_frontier(session_id: str) -> dict[str, Any]:
+    _require_imports()
     sess = _require_session(session_id)
     frontier = await anyio.to_thread.run_sync(load_frontier, sess.repo_path)
     if frontier is None:
@@ -1530,6 +1701,7 @@ async def get_frontier(session_id: str) -> dict[str, Any]:
 
 @app.post("/api/session/{session_id}/finalize")
 async def finalize(session_id: str) -> dict[str, Any]:
+    _require_imports()
     sess = _require_session(session_id)
     # B2: FIRST check if finalized.json already exists on disk — if it
     # does, the session is terminal regardless of in-memory status.
@@ -1617,6 +1789,7 @@ async def start_convert(session_id: str, req: ConvertRequest) -> dict[str, Any]:
       here means the caller bypassed the UI.
     * 409 when a conversion is already running/pending on this session.
     """
+    _require_imports()
     sess = _require_session(session_id)
     if not OMNIGENT_SERVER_URL:
         raise HTTPException(
