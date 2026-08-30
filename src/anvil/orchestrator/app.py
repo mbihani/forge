@@ -1850,8 +1850,9 @@ async function validateRepo() {
       summary.appendChild(el('span', 'Fix the issues above, then re-validate.', null));
       // The "Convert to forge-compatible" button appears only when the repo
       // failed validation BUT has a recognizable savesage-style alternative
-      // structure the auto-converter can transform. Gated on `convertible`.
-      if (data.convertible === true) {
+      // structure the auto-converter can transform. Gated on `convertible`,
+      // which the POST /api/session response nests inside `validation`.
+      if (data.validation && data.validation.convertible === true) {
         const cv = el('button', 'Convert to forge-compatible', null);
         cv.onclick = startConvert;
         summary.appendChild(cv);

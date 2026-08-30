@@ -1940,3 +1940,51 @@ def test_dashboard_has_convert_ui(client: TestClient) -> None:
     assert "conversion-panel" in html
     # Still XSS-safe — no innerHTML added by the conversion UI.
     assert "innerHTML" not in html
+
+
+def test_dashboard_convert_button_gated_on_validation_convertible(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """Regression: the Convert button must read ``convertible`` from the nested
+    ``validation`` object, not the top-level POST /api/session response.
+
+    POST /api/session returns ``convertible`` nested inside ``validation``:
+    ``{"validation": {"convertible": true, ...}}``. The dashboard JS previously
+    read ``data.convertible`` (always ``undefined``), so the button never
+    rendered even for convertible repos. The conditional now reads
+    ``data.validation.convertible`` so the button appears when the API reports
+    ``convertible: true`` and is hidden when ``convertible: false``.
+    """
+    # The served dashboard must gate the button on the *nested* path. The buggy
+    # ``data.convertible`` is not a substring of the fix
+    # (``data.validation.convertible`` — "validation" follows "data.", not
+    # "convertible"), so the negative assertion is meaningful.
+    html = client.get("/").text
+    assert "data.validation.convertible" in html
+    assert "data.convertible" not in html
+
+    # Convertible repo (invalid but with prompts/*.txt): the flag the corrected
+    # JS reads — data.validation.convertible — is True, and the top-level
+    # ``convertible`` the old JS read is absent. → button appears.
+    source = tmp_path / "agent-repo"
+    _seed_repo(source, with_scaffold=False)
+    (source / "prompts").mkdir()
+    (source / "prompts" / "icici.txt").write_text("rules", encoding="utf-8")
+    monkeypatch.setattr(app_module, "_clone_repo", _mock_clone_factory(source))
+    resp = client.post("/api/session", json={"repo_url": "https://github.com/user/repo"})
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["status"] == "invalid"
+    assert data["validation"]["convertible"] is True  # button shows
+    assert "convertible" not in data  # no top-level field (the old bug)
+
+    # Valid repo: data.validation.convertible is False → button hidden.
+    valid = tmp_path / "valid-repo"
+    _seed_repo(valid)
+    monkeypatch.setattr(app_module, "_clone_repo", _mock_clone_factory(valid))
+    resp = client.post("/api/session", json={"repo_url": "https://github.com/user/repo"})
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["status"] == "validated"
+    assert data["validation"]["convertible"] is False  # button hidden
+    assert "convertible" not in data
