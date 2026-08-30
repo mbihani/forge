@@ -1315,6 +1315,10 @@ def _cleanup_session(session_id: str) -> None:
 
 _CRASH_LOG_FILE = Path("/tmp/forge-crash-log.txt")
 
+# Workspace path for the crash-log mirror. Configurable via env var;
+# when unset the mirror is skipped (avoids hard-coding a user email).
+_CRASH_LOG_WORKSPACE_PATH = os.getenv("FORGE_CRASH_LOG_WORKSPACE_PATH")
+
 
 def _write_crash_log_to_databricks(entry: str) -> None:
     """Best-effort write the crash log to a Databricks workspace file.
@@ -1338,13 +1342,16 @@ def _write_crash_log_to_databricks(entry: str) -> None:
             token = omnigent_token
     if not host or not token:
         return
+    ws_path = _CRASH_LOG_WORKSPACE_PATH
+    if not ws_path:
+        return
     try:
         import httpx  # lazy import — best-effort, may not be installed
     except ImportError:
         return
     url = (
         f"{host}/api/2.0/workspace-files/write"
-        "?path=/Users/mayanck.bihani@databricks.com/forge-crash-log.txt&overwrite=true"
+        f"?path={ws_path}&overwrite=true"
     )
     try:
         resp = httpx.put(
@@ -1383,12 +1390,22 @@ def _write_crash_log(source: str, exc: BaseException | None = None) -> None:
 
 
 def _signal_handler(signum: int, frame: Any) -> None:
-    """Write signal info to the crash log on SIGTERM/SIGINT."""
+    """Write signal info to the crash log on SIGTERM/SIGINT, then chain to
+    the previous handler so Uvicorn's graceful shutdown still works."""
     try:
         sig_name = signal.Signals(signum).name
     except ValueError:
         sig_name = f"signal-{signum}"
     _write_crash_log(f"signal: {sig_name} ({signum})")
+    # Chain to the prior handler (Uvicorn's graceful-shutdown handler)
+    # so the process still terminates instead of silently swallowing the
+    # signal and requiring SIGKILL.
+    prev = _prev_sigterm if signum == signal.SIGTERM else _prev_sigint
+    if callable(prev):
+        prev(signum, frame)
+    elif prev == signal.SIG_DFL:
+        # Default disposition — re-raise as KeyboardInterrupt (SIGINT semantics).
+        signal.default_int_handler(signum, frame)
 
 
 def _async_exception_handler(loop: asyncio.AbstractEventLoop, context: dict[str, Any]) -> None:
@@ -1413,7 +1430,12 @@ def _excepthook(
 
 
 # Register the signal handlers + excepthook at import time so they are
-# active before the event loop starts.
+# active before the event loop starts. Capture the existing handlers first
+# so ``_signal_handler`` can chain to them (Uvicorn installs its own
+# SIGTERM/SIGINT handlers for graceful shutdown — replacing them without
+# chaining would leave the process requiring SIGKILL).
+_prev_sigterm = signal.getsignal(signal.SIGTERM)
+_prev_sigint = signal.getsignal(signal.SIGINT)
 signal.signal(signal.SIGTERM, _signal_handler)
 signal.signal(signal.SIGINT, _signal_handler)
 sys.excepthook = _excepthook
