@@ -437,60 +437,7 @@ async def _run_conversion_task(session_id: str, target_branch: str) -> None:
 
         _progress("agent_session", "Creating the Omnigent conversion session.")
         client = OmnigentClient(server_url, auth_token)
-        omnigent_session_id: str | None = None
-        registration_session_id: str | None = None
-        try:
-            # Step 1: Upload the bundle to register the agent (multipart).
-            # This creates a session WITHOUT a managed runner — we only
-            # need the agent_id. The registration session is tombstoned below.
-            created = await client.create_session(
-                bundle,
-                metadata=SessionCreateMetadata(title=f"forge-converter {target_branch}"),
-            )
-            agent_id = created["agent_id"]
-            registration_session_id = created["session_id"]
-            _progress("agent_session", f"Agent registered ({agent_id}).")
-
-            # Step 2: Create a managed session bound to the registered agent.
-            # host_type="managed" triggers the managed host to auto-provision
-            # a runner — without it the server returns 503 "No runner bound".
-            managed = await client.create_session_from_agent(
-                agent_id,
-                host_type="managed",
-                model_override=_CONVERTER_MODEL,
-                title=f"forge-converter {target_branch}",
-            )
-            omnigent_session_id = managed["id"]
-            _progress(
-                "agent_session",
-                f"Managed session created ({omnigent_session_id}).",
-            )
-
-            # Step 3: Wait briefly for the runner if not yet online.
-            if not managed.get("runner_online"):
-                await _wait_for_runner(client, omnigent_session_id, _progress)
-
-            # Step 4: Send the conversion prompt (retry on transient 503).
-            await _send_with_retry(client, omnigent_session_id, prompt, _progress)
-            _progress("agent_running", "Agent is converting the repository...")
-
-            transcript = await _drain_conversion_stream(
-                client, omnigent_session_id, _progress
-            )
-            _progress(
-                "agent_done",
-                "Agent finished. "
-                + (transcript[:200] + "…" if len(transcript) > 200 else transcript),
-            )
-        finally:
-            if omnigent_session_id is not None:
-                with suppress(OmnigentError):
-                    await client.delete_session(omnigent_session_id)
-            if registration_session_id is not None:
-                with suppress(OmnigentError):
-                    await client.delete_session(registration_session_id)
-            with suppress(Exception):
-                await client.aclose()
+        await _run_managed_session(client, bundle, prompt, target_branch, _progress)
 
         # ---- Re-clone the converted branch + re-validate ----
         _progress(
@@ -568,6 +515,77 @@ async def _run_conversion_task(session_id: str, target_branch: str) -> None:
             pass
         _set(status="failed", error=message)
         _progress("failed", f"Conversion failed: {message}")
+
+
+async def _run_managed_session(
+    client: OmnigentClient,
+    bundle: bytes,
+    prompt: str,
+    target_branch: str,
+    progress: Any,
+) -> str:
+    """Two-step managed-host flow: upload the bundle to register the agent,
+    create a managed session (``host_type="managed"``) that auto-provisions
+    a runner, send the prompt, drain the stream, and tombstone BOTH sessions
+    in the ``finally`` block.
+
+    Returns the agent's transcript string. Extracted from
+    :func:`_run_conversion_task` so the full flow (multipart register →
+    managed session → send → drain → cleanup) is unit-testable with a fake
+    OmnigentClient.
+    """
+    omnigent_session_id: str | None = None
+    registration_session_id: str | None = None
+    try:
+        # Step 1: Upload the bundle to register the agent (multipart).
+        # This creates a session WITHOUT a managed runner — we only need the
+        # agent_id. Capture the registration session id FIRST so that a
+        # response missing ``agent_id`` (KeyError) still lets the finally
+        # tombstone the throwaway registration session (no leak).
+        created = await client.create_session(
+            bundle,
+            metadata=SessionCreateMetadata(title=f"forge-converter {target_branch}"),
+        )
+        registration_session_id = created["session_id"]
+        agent_id = created["agent_id"]
+        progress("agent_session", f"Agent registered ({agent_id}).")
+
+        # Step 2: Create a managed session bound to the registered agent.
+        # host_type="managed" triggers the managed host to auto-provision a
+        # runner — without it the server returns 503 "No runner bound".
+        managed = await client.create_session_from_agent(
+            agent_id,
+            host_type="managed",
+            model_override=_CONVERTER_MODEL,
+            title=f"forge-converter {target_branch}",
+        )
+        omnigent_session_id = managed["id"]
+        progress("agent_session", f"Managed session created ({omnigent_session_id}).")
+
+        # Step 3: Wait briefly for the runner if not yet online.
+        if not managed.get("runner_online"):
+            await _wait_for_runner(client, omnigent_session_id, progress)
+
+        # Step 4: Send the conversion prompt (retry on transient 503).
+        await _send_with_retry(client, omnigent_session_id, prompt, progress)
+        progress("agent_running", "Agent is converting the repository...")
+
+        transcript = await _drain_conversion_stream(client, omnigent_session_id, progress)
+        progress(
+            "agent_done",
+            "Agent finished. "
+            + (transcript[:200] + "…" if len(transcript) > 200 else transcript),
+        )
+        return transcript
+    finally:
+        if omnigent_session_id is not None:
+            with suppress(OmnigentError):
+                await client.delete_session(omnigent_session_id)
+        if registration_session_id is not None:
+            with suppress(OmnigentError):
+                await client.delete_session(registration_session_id)
+        with suppress(Exception):
+            await client.aclose()
 
 
 async def _wait_for_runner(

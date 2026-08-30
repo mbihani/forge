@@ -29,6 +29,7 @@ from anvil.orchestrator.conversion import (
     DEFAULT_TARGET_BRANCH,
     ConversionResult,
     _build_pr_url,
+    _run_managed_session,
     _send_with_retry,
     _wait_for_runner,
     build_conversion_prompt,
@@ -479,3 +480,137 @@ def test_wait_for_runner_gives_up_without_raising() -> None:
 
     asyncio.run(_run())
     assert client.get_calls == 6
+
+
+# ---------------------------------------------------------------------------
+# Two-step managed-host flow: _run_managed_session (end-to-end with a fake)
+# ---------------------------------------------------------------------------
+
+
+class _FakeManagedSessionClient:
+    """Async stand-in for :class:`OmnigentClient` exercising the FULL two-step
+    managed-host flow end-to-end: ``create_session`` (multipart register) →
+    ``create_session_from_agent`` (managed) → ``send_message`` →
+    ``stream_session`` → ``delete_session`` (+ ``aclose`` / ``get_session``).
+
+    Records every call so the test can assert ordering and arguments.
+    ``stream_events`` is the ``(event_type, data)`` sequence yielded by
+    ``stream_session`` (consumed by :func:`_drain_conversion_stream`).
+    """
+
+    def __init__(self, *, stream_events: list[tuple[str, dict[str, Any]]]) -> None:
+        self.stream_events = stream_events
+        self.create_session_calls: list[dict[str, Any]] = []
+        self.create_session_from_agent_calls: list[dict[str, Any]] = []
+        self.send_message_calls: list[dict[str, Any]] = []
+        self.stream_session_calls: list[str] = []
+        self.delete_session_calls: list[str] = []
+        self.aclose_calls = 0
+
+    async def create_session(
+        self, bundle_bytes: bytes, metadata: Any = None, *, bundle_filename: str = "agent.tar.gz"
+    ) -> dict[str, Any]:
+        self.create_session_calls.append(
+            {"bundle": bundle_bytes, "metadata": metadata, "bundle_filename": bundle_filename}
+        )
+        return {"session_id": "reg-sess-id", "agent_id": "agent-xyz", "agent_name": "forge-converter"}
+
+    async def create_session_from_agent(
+        self,
+        agent_id: str,
+        *,
+        title: str | None = None,
+        initial_items: list[dict[str, Any]] | None = None,
+        host_id: str | None = None,
+        host_type: str | None = None,
+        workspace: str | None = None,
+        model_override: str | None = None,
+    ) -> dict[str, Any]:
+        self.create_session_from_agent_calls.append(
+            {
+                "agent_id": agent_id,
+                "title": title,
+                "host_type": host_type,
+                "model_override": model_override,
+            }
+        )
+        return {"id": "managed-sess-id", "runner_online": True}
+
+    async def send_message(self, session_id: str, text: str) -> dict[str, Any]:
+        self.send_message_calls.append({"session_id": session_id, "text": text})
+        return {"queued": True, "item_id": "item-1"}
+
+    async def stream_session(self, session_id: str):
+        self.stream_session_calls.append(session_id)
+        for event in self.stream_events:
+            yield event
+
+    async def get_session(self, session_id: str) -> dict[str, Any]:
+        # Present for _wait_for_runner; not reached when create_session_from_agent
+        # already reports runner_online=True.
+        return {"runner_online": True}
+
+    async def delete_session(self, session_id: str) -> dict[str, Any]:
+        self.delete_session_calls.append(session_id)
+        return {"deleted": True}
+
+    async def aclose(self) -> None:
+        self.aclose_calls += 1
+
+
+def test_run_managed_session_two_step_flow() -> None:
+    """_run_managed_session runs the full two-step managed-host flow:
+    multipart register (→ agent_id) → managed session (host_type="managed" +
+    model_override=_CONVERTER_MODEL, reading ``id`` NOT ``session_id``) →
+    send_message on the managed id → drain → BOTH sessions tombstoned."""
+    transcript_text = "Conversion complete. Created scaffold/harness.yaml."
+    events = [
+        # An assistant item_done so the drained transcript is non-empty …
+        (
+            "response.output_item.done",
+            {
+                "item": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": transcript_text}],
+                }
+            },
+        ),
+        # … then response.completed so _drain_conversion_stream breaks.
+        ("response.completed", {}),
+    ]
+    client = _FakeManagedSessionClient(stream_events=events)
+    bundle = b"fake-bundle-bytes"
+
+    async def _run() -> str:
+        return await _run_managed_session(
+            client, bundle, "convert the repo", "forge-compat", _noop_progress
+        )
+
+    transcript = asyncio.run(_run())
+
+    # Step 1: multipart create_session called first, carrying the bundle bytes.
+    assert len(client.create_session_calls) == 1
+    assert client.create_session_calls[0]["bundle"] == bundle
+
+    # Step 2: create_session_from_agent gets the agent_id from step 1,
+    # host_type="managed", and model_override=_CONVERTER_MODEL.
+    assert len(client.create_session_from_agent_calls) == 1
+    agent_call = client.create_session_from_agent_calls[0]
+    assert agent_call["agent_id"] == "agent-xyz"
+    assert agent_call["host_type"] == "managed"
+    assert agent_call["model_override"] == _CONVERTER_MODEL
+
+    # The managed session's `id` (NOT `session_id`) drives send + stream.
+    assert len(client.send_message_calls) == 1
+    assert client.send_message_calls[0]["session_id"] == "managed-sess-id"
+    assert client.send_message_calls[0]["text"] == "convert the repo"
+    assert client.stream_session_calls == ["managed-sess-id"]
+
+    # The returned transcript is the agent's response text.
+    assert transcript == transcript_text
+
+    # Finally: both the managed and the registration sessions are tombstoned
+    # (order-agnostic — the finally deletes managed first, then registration).
+    assert sorted(client.delete_session_calls) == ["managed-sess-id", "reg-sess-id"]
+    assert client.aclose_calls == 1
