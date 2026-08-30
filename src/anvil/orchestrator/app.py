@@ -56,6 +56,7 @@ import asyncio
 import dataclasses
 import json
 import logging
+import os
 import shutil
 import subprocess
 import threading
@@ -78,8 +79,20 @@ from anvil.eval import evaluate_branch
 from anvil.eval.cache import report_to_baseline, save_baseline
 from anvil.loop.frontier import load_frontier
 from anvil.loop.round import run_round
+from anvil.orchestrator.conversion import (
+    DEFAULT_TARGET_BRANCH,
+    ConversionResult,
+    _run_conversion_task,
+)
 
 logger = logging.getLogger("anvil.orchestrator")
+
+# Omnigent server connection for the auto-conversion feature. Read at import
+# time so the convert endpoint can return 503 early when the agent server is
+# not configured. ``OMNIGENT_AUTH_TOKEN`` is optional (some deployments run the
+# server without auth); ``OMNIGENT_SERVER_URL`` is required to run a conversion.
+OMNIGENT_SERVER_URL = os.getenv("OMNIGENT_SERVER_URL")
+OMNIGENT_AUTH_TOKEN = os.getenv("OMNIGENT_AUTH_TOKEN")
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -117,6 +130,12 @@ class OptimizeRequest(BaseModel):
     mlflow_experiment_id: str | None = None
 
 
+class ConvertRequest(BaseModel):
+    # Target branch the converter agent creates + pushes. Defaults to
+    # "forge-compat" when omitted.
+    target_branch: str | None = None
+
+
 class CheckResult(BaseModel):
     name: str
     status: str  # pass/fail/warn
@@ -127,6 +146,22 @@ class CheckResult(BaseModel):
 class ValidationReport(BaseModel):
     status: str  # valid/invalid
     checks: list[CheckResult]
+    # True when the repo failed validation but has a recognizable savesage-style
+    # alternative structure (prompts/ + schema/ + harness/ + skills/) that the
+    # auto-converter can transform into the forge-compatible layout. Gates the
+    # "Convert to forge-compatible" button in the UI.
+    convertible: bool = False
+
+
+class ConversionStatus(BaseModel):
+    """Pollable conversion state (GET /api/session/{id}/convert)."""
+
+    status: str  # pending, running, completed, failed
+    progress: list[dict[str, Any]]
+    pr_url: str | None = None
+    branch_name: str | None = None
+    revalidation: dict[str, Any] | None = None
+    error: str | None = None
 
 
 class RoundSummary(BaseModel):
@@ -173,6 +208,15 @@ class SessionData:
     agent_subpath: str | None = None  # subdirectory within the cloned repo
     _clone_root: Path | None = field(default=None, repr=False)  # full clone path for cleanup
     _optimize_task: Any = field(default=None, repr=False)  # asyncio.Task | None
+    # Auto-conversion state. ``conversion`` is the pollable result; ``_findings``
+    # is the alternative-structure scan from validation (fed to the converter
+    # prompt); ``_github_token`` is the user's token from Step 1, kept in memory
+    # only so the converter agent can clone+push a private repo (never returned
+    # in any API response — ``_session_to_response`` does not serialize it).
+    conversion: ConversionResult | None = None
+    _findings: dict[str, list[str]] | None = field(default=None, repr=False)
+    _github_token: str | None = field(default=None, repr=False)
+    _convert_task: Any = field(default=None, repr=False)
 
 
 # ---------------------------------------------------------------------------
@@ -391,6 +435,15 @@ def _load_yaml(path: Path) -> Any:
 # expectations so the user gets actionable guidance instead of a generic
 # "create scaffold/harness.yaml" message.
 # ---------------------------------------------------------------------------
+
+# Finding categories that represent a recognizable savesage-style structure
+# the forge-converter agent can transform additively (prompts/, schema/,
+# skills/*.py, judge/, harness/*.py, config.py). ``tests`` and ``data_dir``
+# are excluded — they are benign remediation hints and a *valid* forge repo
+# has them too, so they must NOT light up the "Convert" button on their own.
+_CONVERTIBLE_FINDINGS = frozenset(
+    {"prompts", "schemas", "python_skills", "judge", "harness_py", "config_py"}
+)
 
 
 def _scan_agent_root(repo_path: Path) -> dict[str, list[str]]:
@@ -822,11 +875,18 @@ def _check_parent_branch(repo_path: Path) -> dict:
     }
 
 
-def _run_validation(repo_path: Path) -> tuple[dict, dict | None]:
-    """Run all validation checks. Return (ValidationReport_dict, config_or_None).
+def _run_validation(repo_path: Path) -> tuple[dict, dict | None, dict[str, list[str]]]:
+    """Run all validation checks.
 
-    The config is returned (unredacted) so the session can store a redacted
-    copy; ``None`` when the config check failed.
+    Return ``(ValidationReport_dict, config_or_None, findings)``. The config
+    is returned (unredacted) so the session can store a redacted copy; ``None``
+    when the config check failed. ``findings`` is the alternative-structure
+    scan from :func:`_scan_agent_root` — the caller stores it on the session
+    so the auto-converter can feed it to :func:`build_conversion_prompt`.
+
+    The report dict carries a ``convertible`` flag (True when the repo failed
+    but has a recognizable savesage-style structure the converter can handle)
+    that gates the "Convert to forge-compatible" button in the UI.
     """
     # Scan for alternative structures once — used by smart remediation.
     findings = _scan_agent_root(repo_path)
@@ -867,10 +927,18 @@ def _run_validation(repo_path: Path) -> tuple[dict, dict | None]:
     checks.append(_check_parent_branch(repo_path))
 
     any_fail = any(c["status"] == "fail" for c in checks)
-    return (
-        {"status": "invalid" if any_fail else "valid", "checks": checks},
-        config,
-    )
+    # A repo is "convertible" when it failed validation but has at least one
+    # recognizable alternative structure (prompts/, schema/, harness/*.py,
+    # skills/*.py, …) the forge-converter agent can transform additively.
+    # Only the transformable categories count — ``tests``/``data_dir`` are
+    # benign (a valid repo has them) and would false-trigger the button.
+    convertible = any(findings.get(c) for c in _CONVERTIBLE_FINDINGS)
+    report = {
+        "status": "invalid" if any_fail else "valid",
+        "checks": checks,
+        "convertible": convertible,
+    }
+    return (report, config, findings)
 
 
 # ---------------------------------------------------------------------------
@@ -1232,6 +1300,8 @@ async def _lifespan(app: FastAPI):
             session_ids.append(sid)
             if sess._optimize_task is not None:
                 tasks_to_cancel.append(sess._optimize_task)
+            if sess._convert_task is not None:
+                tasks_to_cancel.append(sess._convert_task)
     for t in tasks_to_cancel:
         t.cancel()
     if tasks_to_cancel:
@@ -1284,6 +1354,10 @@ async def create_session(req: CreateSessionRequest) -> dict[str, Any]:
         error=None,
         agent_subpath=subpath,
         _clone_root=dest_path,
+        # Keep the user's GitHub token in memory only — the auto-converter
+        # needs it to clone+push a private repo. Never serialized in any API
+        # response (see ``_session_to_response`` / ``_redact_secrets``).
+        _github_token=req.github_token,
     )
     with _session_lock:
         _sessions[session_id] = sess
@@ -1323,10 +1397,11 @@ async def create_session(req: CreateSessionRequest) -> dict[str, Any]:
         sess.status = "validating"
 
     # Validate (file I/O + git) in a thread pool.
-    report, config = await anyio.to_thread.run_sync(partial(_run_validation, agent_root))
+    report, config, findings = await anyio.to_thread.run_sync(partial(_run_validation, agent_root))
     with _session_lock:
         sess.validation = report
         sess.status = "validated" if report["status"] == "valid" else "invalid"
+        sess._findings = findings
         if config is not None:
             sess.config = _redact_secrets(config)
 
@@ -1523,6 +1598,65 @@ async def get_finalize(session_id: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Conversion endpoints — auto-convert a custom (savesage-style) repo into the
+# forge-compatible structure via a managed Omnigent agent. See
+# :mod:`anvil.orchestrator.conversion` for the agent flow + PII safety.
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/session/{session_id}/convert", status_code=202)
+async def start_convert(session_id: str, req: ConvertRequest) -> dict[str, Any]:
+    """Start a background conversion task. Returns 202 + the initial
+    (pending) :class:`ConversionStatus`; poll ``GET /convert`` for progress.
+
+    Guards:
+
+    * 503 when ``OMNIGENT_SERVER_URL`` is not configured (the agent cannot run).
+    * 409 when the repo is not convertible (no alternative structures were
+      detected by validation) — the UI hides the button in this case, so a 409
+      here means the caller bypassed the UI.
+    * 409 when a conversion is already running/pending on this session.
+    """
+    sess = _require_session(session_id)
+    if not OMNIGENT_SERVER_URL:
+        raise HTTPException(
+            status_code=503,
+            detail="OMNIGENT_SERVER_URL is not configured; the conversion agent cannot run.",
+        )
+    target_branch = req.target_branch or DEFAULT_TARGET_BRANCH
+    with _session_lock:
+        if not sess.validation.get("convertible"):
+            raise HTTPException(
+                status_code=409,
+                detail="repo is not convertible — no savesage-style alternative structures detected",
+            )
+        if sess.conversion is not None and sess.conversion.status in ("running", "pending"):
+            raise HTTPException(status_code=409, detail="conversion is already running")
+        # Initialize the pollable result before the task starts so the first
+        # GET /convert (and the 202 body) sees a pending state.
+        sess.conversion = ConversionResult(status="pending", branch_name=target_branch)
+    task = asyncio.create_task(_run_conversion_task(session_id, target_branch))
+    with _session_lock:
+        sess._convert_task = task
+        return sess.conversion.to_dict()
+
+
+@app.get("/api/session/{session_id}/convert")
+async def get_convert(session_id: str) -> dict[str, Any]:
+    """Return the current :class:`ConversionStatus` for polling.
+
+    404 when no conversion has been started for this session.
+    """
+    sess = _require_session(session_id)
+    with _session_lock:
+        if sess.conversion is None:
+            raise HTTPException(
+                status_code=404, detail="no conversion has been started for this session"
+            )
+        return sess.conversion.to_dict()
+
+
+# ---------------------------------------------------------------------------
 # Dashboard
 # ---------------------------------------------------------------------------
 
@@ -1603,6 +1737,16 @@ _DASHBOARD_HTML = """<!doctype html>
   @keyframes spin { to { transform: rotate(360deg); } }
   .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .hidden { display: none !important; }
+  .conv-panel { margin-top: 16px; border: 1px solid var(--border);
+          border-radius: 8px; padding: 14px; background: var(--bg); }
+  .conv-panel h3 { font-size: 0.95rem; margin: 0 0 8px; }
+  .conv-step { display: flex; gap: 8px; align-items: flex-start; padding: 4px 0;
+          font-size: 0.82rem; border-bottom: 1px solid var(--border); }
+  .conv-step:last-child { border-bottom: none; }
+  .conv-step .ts { color: var(--muted); font-size: 0.72rem; white-space: nowrap; }
+  .conv-step .body { flex: 1; }
+  .conv-step .tag { font-weight: 600; color: var(--accent); }
+  .link { color: var(--accent); text-decoration: underline; word-break: break-all; }
 </style>
 </head>
 <body>
@@ -1625,6 +1769,7 @@ _DASHBOARD_HTML = """<!doctype html>
     <div id="validation-list"></div>
     <div id="validation-config" class="config-box hidden"></div>
     <div id="validation-summary" class="row" style="margin-top:12px"></div>
+    <div id="conversion-panel" class="conv-panel hidden"></div>
   </div>
 
   <div class="card step" id="step3">
@@ -1674,6 +1819,11 @@ async function validateRepo() {
   const repoUrl = document.getElementById('repo-url').value.trim();
   const token = document.getElementById('gh-token').value.trim() || null;
   if (!repoUrl) { alert('Enter a repo URL'); return; }
+  // Reset any prior conversion panel + stop its poll before a fresh validation.
+  if (convertTimer) { clearInterval(convertTimer); convertTimer = null; }
+  const convPanel = document.getElementById('conversion-panel');
+  convPanel.classList.add('hidden');
+  convPanel.textContent = '';
   setBtn('btn-validate', 'Validating...', true);
   try {
     const resp = await fetch('/api/session', {
@@ -1698,6 +1848,14 @@ async function validateRepo() {
       summary.appendChild(proceed);
     } else {
       summary.appendChild(el('span', 'Fix the issues above, then re-validate.', null));
+      // The "Convert to forge-compatible" button appears only when the repo
+      // failed validation BUT has a recognizable savesage-style alternative
+      // structure the auto-converter can transform. Gated on `convertible`.
+      if (data.convertible === true) {
+        const cv = el('button', 'Convert to forge-compatible', null);
+        cv.onclick = startConvert;
+        summary.appendChild(cv);
+      }
       const re = el('button', 'Re-validate', 'secondary');
       re.onclick = () => { show('step1'); setBtn('btn-validate','Validate Repository',false); };
       summary.appendChild(re);
@@ -1904,6 +2062,152 @@ async function doFinalize() {
   } catch (e) {
     document.getElementById('opt-error').textContent = 'Request failed: ' + e.message;
     document.getElementById('opt-error').classList.remove('hidden');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Auto-conversion (Convert to forge-compatible) — spins up an Omnigent agent
+// that additively creates the forge files on a new branch, pushes it, then the
+// orchestrator re-validates. Polls GET /convert every 3s (same cadence as the
+// optimization poll). All XSS-safe: textContent/createElement, no raw HTML.
+// ---------------------------------------------------------------------------
+async function startConvert() {
+  if (!sessionId) { alert('No active session'); return; }
+  const panel = document.getElementById('conversion-panel');
+  panel.classList.remove('hidden');
+  panel.textContent = '';
+  panel.appendChild(el('h3', 'Convert to forge-compatible', null));
+  panel.appendChild(el('div', 'Starting conversion agent…', 'badge status'));
+  try {
+    const resp = await fetch('/api/session/' + sessionId + '/convert', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({})
+    });
+    const data = await resp.json();
+    if (resp.status !== 202) {
+      panel.textContent = '';
+      panel.appendChild(el('h3', 'Convert to forge-compatible', null));
+      panel.appendChild(el('div', data.detail || 'Failed to start conversion', 'error-box'));
+      return;
+    }
+    pollConvert();
+  } catch (e) {
+    panel.textContent = '';
+    panel.appendChild(el('h3', 'Convert to forge-compatible', null));
+    panel.appendChild(el('div', 'Request failed: ' + e.message, 'error-box'));
+  }
+}
+
+let convertTimer = null;
+function pollConvert() {
+  if (convertTimer) clearInterval(convertTimer);
+  convertTimer = setInterval(fetchConvert, 3000);
+  fetchConvert();
+}
+
+async function fetchConvert() {
+  if (!sessionId) return;
+  try {
+    const resp = await fetch('/api/session/' + sessionId + '/convert');
+    const data = await resp.json();
+    if (resp.status === 404) return;  // no conversion started / cleared
+    renderConvert(data);
+  } catch (e) {
+    // transient fetch error; keep polling
+  }
+}
+
+function renderConvert(data) {
+  const panel = document.getElementById('conversion-panel');
+  panel.classList.remove('hidden');
+  panel.textContent = '';
+  panel.appendChild(el('h3', 'Convert to forge-compatible', null));
+
+  const statusRow = el('div', null, 'row');
+  statusRow.appendChild(el('span', 'Status: ' + (data.status || '—'), 'badge status'));
+  if (data.status === 'running' || data.status === 'pending') {
+    statusRow.appendChild(el('span', null, 'spinner'));
+    statusRow.appendChild(el('span', data.status === 'running' ? 'Converting…' : 'Queued…', null));
+  }
+  panel.appendChild(statusRow);
+
+  if (data.error) {
+    panel.appendChild(el('div', data.error, 'error-box'));
+  }
+
+  if (data.branch_name) {
+    const row = el('div', null, 'row');
+    row.appendChild(el('span', 'Branch: ' + data.branch_name, null));
+    if (data.pr_url) {
+      const a = el('a', 'Open PR / compare', 'link');
+      a.href = data.pr_url;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      row.appendChild(a);
+    }
+    panel.appendChild(row);
+  }
+
+  if (data.progress && data.progress.length) {
+    const list = el('div', null, null);
+    data.progress.forEach(step => {
+      const row = el('div', null, 'conv-step');
+      row.appendChild(el('span', step.timestamp || '', 'ts'));
+      const body = el('div', null, 'body');
+      body.appendChild(el('span', step.step || '', 'tag'));
+      body.appendChild(el('span', ' ' + (step.message || ''), null));
+      row.appendChild(body);
+      list.appendChild(row);
+    });
+    panel.appendChild(list);
+  }
+
+  if (data.revalidation) {
+    const sub = el('div', null, 'config-box');
+    sub.style.marginTop = '12px';
+    sub.appendChild(el('div', 'Re-validation on converted branch:', null));
+    sub.appendChild(el('div', 'Status: ' + (data.revalidation.status || '—'), null));
+    const pii = data.revalidation.pii_findings;
+    if (pii && pii.length) {
+      sub.appendChild(el('div', 'PII findings: ' + pii.join('; '), 'remediation'));
+    } else if (pii) {
+      sub.appendChild(el('div', 'No PII patterns detected in the branch diff.', null));
+    }
+    if (data.revalidation.checks) {
+      data.revalidation.checks.forEach(c => {
+        const row = el('div', null, 'check');
+        row.appendChild(el('span', c.status.toUpperCase(), 'badge ' + c.status));
+        const msg = el('div', null, 'msg');
+        msg.appendChild(el('div', c.name + ' — ' + c.message, null));
+        if (c.remediation) {
+          msg.appendChild(el('div', c.remediation, 'remediation'));
+        }
+        row.appendChild(msg);
+        sub.appendChild(row);
+      });
+    }
+    panel.appendChild(sub);
+  }
+
+  // Terminal state: stop polling + offer Re-validate (re-runs the 8 checks on
+  // the now-forge-compatible branch the user re-submits) and an Open PR link.
+  if (data.status === 'completed' || data.status === 'failed') {
+    if (convertTimer) { clearInterval(convertTimer); convertTimer = null; }
+    const actions = el('div', null, 'row');
+    actions.style.marginTop = '8px';
+    const re = el('button', 'Re-validate', null);
+    re.onclick = () => {
+      panel.classList.add('hidden');
+      panel.textContent = '';
+      show('step1'); setBtn('btn-validate', 'Validate Repository', false);
+    };
+    actions.appendChild(re);
+    if (data.status === 'completed' && data.pr_url) {
+      const open = el('button', 'Open PR / compare', 'secondary');
+      open.onclick = () => { window.open(data.pr_url, '_blank', 'noopener'); };
+      actions.appendChild(open);
+    }
+    panel.appendChild(actions);
   }
 }
 </script>

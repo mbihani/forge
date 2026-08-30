@@ -291,10 +291,7 @@ def build_mlflow_baseline(
 
     all_runs = _collect_run_metrics(eid, cli=cli, profile=profile)
 
-    if candidate_ids is not None:
-        candidate_run_ids = candidate_ids
-    else:
-        candidate_run_ids = set(all_runs.keys())
+    candidate_run_ids = candidate_ids if candidate_ids is not None else set(all_runs.keys())
 
     scored: list[dict[str, float]] = []
     for run_id in candidate_run_ids:

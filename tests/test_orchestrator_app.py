@@ -1693,3 +1693,250 @@ def test_session_response_includes_agent_subpath(
     data = resp.json()
     assert "agent_subpath" in data
     assert data["agent_subpath"] is None  # plain URL → no subpath
+
+
+# ---------------------------------------------------------------------------
+# Auto-conversion (POST/GET /api/session/{id}/convert)
+#
+# The real conversion drives an Omnigent agent over HTTP; tests mock
+# ``_run_conversion_task`` so no live server is contacted. The convert endpoint
+# is only reachable for sessions whose validation found savesage-style
+# alternative structures (``convertible: true``).
+# ---------------------------------------------------------------------------
+
+
+def _create_convertible_session(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> str:
+    """Seed an INVALID but convertible repo (no scaffold, but prompts/*.txt
+    present) and POST /api/session. Returns the session_id."""
+    source = tmp_path / "agent-repo"
+    _seed_repo(source, with_scaffold=False)
+    prompts_dir = source / "prompts"
+    prompts_dir.mkdir()
+    (prompts_dir / "icici.txt").write_text("rules", encoding="utf-8")
+    monkeypatch.setattr(app_module, "_clone_repo", _mock_clone_factory(source))
+    resp = client.post("/api/session", json={"repo_url": "https://github.com/user/repo"})
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["status"] == "invalid", data
+    assert data["validation"]["convertible"] is True
+    return data["session_id"]
+
+
+async def _fake_conversion_task(session_id: str, target_branch: str) -> None:
+    """Test double for ``_run_conversion_task``: marks the conversion completed
+    with a synthetic re-validation report. No Omnigent/git contact."""
+    with app_module._session_lock:
+        sess = app_module._sessions.get(session_id)
+        if sess is not None and sess.conversion is not None:
+            sess.conversion.status = "completed"
+            sess.conversion.branch_name = target_branch
+            sess.conversion.pr_url = (
+                f"https://github.com/user/repo/compare/main...{target_branch}"
+            )
+            sess.conversion.revalidation = {
+                "status": "valid",
+                "checks": [
+                    {"name": "scaffold_harness_yaml", "status": "pass", "message": "valid"},
+                ],
+                "convertible": False,
+                "pii_findings": [],
+            }
+
+
+async def _blocking_conversion_task(session_id: str, target_branch: str) -> None:
+    """Test double that stays "running" forever (cancelled on shutdown) so a
+    second POST /convert sees an in-progress conversion."""
+    with app_module._session_lock:
+        sess = app_module._sessions.get(session_id)
+        if sess is not None and sess.conversion is not None:
+            sess.conversion.status = "running"
+    await asyncio.Event().wait()  # block until cancelled
+
+
+def _wait_for_convert(
+    client: TestClient, session_id: str, statuses: set[str], timeout: float = 10.0
+) -> dict[str, Any]:
+    """Poll GET /api/session/{id}/convert until status is in ``statuses``."""
+    deadline = time.time() + timeout
+    last: dict[str, Any] = {}
+    while time.time() < deadline:
+        resp = client.get(f"/api/session/{session_id}/convert")
+        if resp.status_code == 200:
+            last = resp.json()
+            if last.get("status") in statuses:
+                return last
+        time.sleep(0.02)
+    raise AssertionError(
+        f"timed out waiting for convert status in {statuses}; last={last}"
+    )
+
+
+def test_validation_convertible_true_when_alternative_structures_found(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """A repo that fails validation but has prompts/*.txt reports
+    ``convertible: true`` in the validation response."""
+    sid = _create_convertible_session(client, tmp_path, monkeypatch)
+    # Re-fetch the validation to confirm the flag round-trips through GET.
+    resp = client.get(f"/api/session/{sid}/validation")
+    assert resp.json()["convertible"] is True
+
+
+def test_validation_convertible_false_for_valid_repo(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """A valid repo has no alternative-structure findings → convertible: false."""
+    sid = _create_valid_session(client, tmp_path, monkeypatch)
+    resp = client.get(f"/api/session/{sid}/validation")
+    assert resp.json()["convertible"] is False
+
+
+def test_validation_convertible_false_when_no_alternative_structures(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """An invalid repo with NO recognizable alternative structure (just a broken
+    scaffold) is not convertible — the user gets static remediation only."""
+    source = tmp_path / "agent-repo"
+    _seed_repo(source, with_scaffold=False)  # no scaffold AND no prompts/
+    monkeypatch.setattr(app_module, "_clone_repo", _mock_clone_factory(source))
+    resp = client.post("/api/session", json={"repo_url": "https://github.com/user/repo"})
+    data = resp.json()
+    assert data["status"] == "invalid"
+    assert data["validation"]["convertible"] is False
+
+
+def test_convert_returns_503_when_omnigent_not_configured(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    sid = _create_convertible_session(client, tmp_path, monkeypatch)
+    monkeypatch.setattr(app_module, "OMNIGENT_SERVER_URL", None)
+    resp = client.post(f"/api/session/{sid}/convert", json={})
+    assert resp.status_code == 503
+    assert "OMNIGENT_SERVER_URL" in resp.json()["detail"]
+
+
+def test_convert_starts_task_and_polls_to_completed(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    sid = _create_convertible_session(client, tmp_path, monkeypatch)
+    monkeypatch.setattr(app_module, "OMNIGENT_SERVER_URL", "http://localhost:6767")
+    monkeypatch.setattr(app_module, "_run_conversion_task", _fake_conversion_task)
+    resp = client.post(f"/api/session/{sid}/convert", json={})
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["status"] == "pending"
+    assert body["branch_name"] == "forge-compat"
+    data = _wait_for_convert(client, sid, {"completed"})
+    assert data["status"] == "completed"
+    assert data["branch_name"] == "forge-compat"
+    assert data["pr_url"] == "https://github.com/user/repo/compare/main...forge-compat"
+    assert data["revalidation"]["status"] == "valid"
+    assert data["revalidation"]["pii_findings"] == []
+
+
+def test_convert_custom_target_branch(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    sid = _create_convertible_session(client, tmp_path, monkeypatch)
+    monkeypatch.setattr(app_module, "OMNIGENT_SERVER_URL", "http://localhost:6767")
+    monkeypatch.setattr(app_module, "_run_conversion_task", _fake_conversion_task)
+    resp = client.post(f"/api/session/{sid}/convert", json={"target_branch": "my-branch"})
+    assert resp.status_code == 202
+    data = _wait_for_convert(client, sid, {"completed"})
+    assert data["branch_name"] == "my-branch"
+    assert "my-branch" in data["pr_url"]
+
+
+def test_convert_not_convertible_returns_409(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """A valid repo (convertible: false) cannot be converted → 409."""
+    sid = _create_valid_session(client, tmp_path, monkeypatch)
+    monkeypatch.setattr(app_module, "OMNIGENT_SERVER_URL", "http://localhost:6767")
+    resp = client.post(f"/api/session/{sid}/convert", json={})
+    assert resp.status_code == 409
+    assert "not convertible" in resp.json()["detail"]
+
+
+def test_convert_already_running_returns_409(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    sid = _create_convertible_session(client, tmp_path, monkeypatch)
+    monkeypatch.setattr(app_module, "OMNIGENT_SERVER_URL", "http://localhost:6767")
+    monkeypatch.setattr(app_module, "_run_conversion_task", _blocking_conversion_task)
+    resp1 = client.post(f"/api/session/{sid}/convert", json={})
+    assert resp1.status_code == 202
+    # A second POST while the first is still running → 409.
+    resp2 = client.post(f"/api/session/{sid}/convert", json={})
+    assert resp2.status_code == 409
+    assert "already running" in resp2.json()["detail"]
+
+
+def test_get_convert_404_when_not_started(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    sid = _create_convertible_session(client, tmp_path, monkeypatch)
+    resp = client.get(f"/api/session/{sid}/convert")
+    assert resp.status_code == 404
+
+
+def test_get_convert_returns_progress(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """GET /convert surfaces the progress entries the task appended."""
+    sid = _create_convertible_session(client, tmp_path, monkeypatch)
+    monkeypatch.setattr(app_module, "OMNIGENT_SERVER_URL", "http://localhost:6767")
+
+    async def _task_with_progress(session_id: str, target_branch: str) -> None:
+        with app_module._session_lock:
+            sess = app_module._sessions.get(session_id)
+            if sess is not None and sess.conversion is not None:
+                sess.conversion.status = "running"
+                sess.conversion.progress.append(
+                    {"step": "agent_running", "message": "Converting…", "timestamp": "t"}
+                )
+
+    monkeypatch.setattr(app_module, "_run_conversion_task", _task_with_progress)
+    client.post(f"/api/session/{sid}/convert", json={})
+    data = _wait_for_convert(client, sid, {"running"})
+    assert data["status"] == "running"
+    assert len(data["progress"]) >= 1
+    assert data["progress"][0]["step"] == "agent_running"
+
+
+def test_convert_preserves_github_token_for_agent(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """The user's GitHub token from Step 1 is kept on the session (in memory
+    only) so the converter agent can clone+push a private repo — it is NEVER
+    returned in any API response."""
+    source = tmp_path / "agent-repo"
+    _seed_repo(source, with_scaffold=False)
+    (source / "prompts").mkdir()
+    (source / "prompts" / "icici.txt").write_text("rules", encoding="utf-8")
+    monkeypatch.setattr(app_module, "_clone_repo", _mock_clone_factory(source))
+    resp = client.post(
+        "/api/session",
+        json={"repo_url": "https://github.com/user/repo", "github_token": "ghp_secret"},
+    )
+    sid = resp.json()["session_id"]
+    # The token is stored on the session for the converter.
+    assert app_module._sessions[sid]._github_token == "ghp_secret"
+    # But no API response leaks it.
+    for path in (f"/api/session/{sid}", f"/api/session/{sid}/config"):
+        body = client.get(path).json()
+        assert "ghp_secret" not in json.dumps(body)
+
+
+def test_dashboard_has_convert_ui(client: TestClient) -> None:
+    """The dashboard ships the Convert button + polling functions (XSS-safe)."""
+    html = client.get("/").text
+    assert "Convert to forge-compatible" in html
+    assert "startConvert" in html
+    assert "pollConvert" in html
+    assert "renderConvert" in html
+    assert "conversion-panel" in html
+    # Still XSS-safe — no innerHTML added by the conversion UI.
+    assert "innerHTML" not in html
