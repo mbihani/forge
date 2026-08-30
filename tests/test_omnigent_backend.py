@@ -158,6 +158,62 @@ def test_build_agent_bundle_preserves_other_config(tmp_path: Path) -> None:
     assert config["executor"]["config"]["harness"] == "z"
 
 
+def test_build_agent_bundle_strips_guardrails(tmp_path: Path) -> None:
+    """Guardrails with custom handlers are stripped for the managed server.
+
+    The managed Omnigent server's policy registry has no custom handlers like
+    ``omnigent.inner.nessie.policies.cel_policy`` — a bundle carrying
+    ``guardrails.policies`` is rejected with HTTP 400. The builder strips the
+    whole ``guardrails`` key before packaging; the prompt is the authoritative
+    contract, so removing the defense-in-depth policy layer is safe.
+    """
+    path = tmp_path / "agent.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "spec_version": 1,
+                "name": "forge_optimizer",
+                "executor": {
+                    "type": "omnigent",
+                    "model": "original-model",
+                    "config": {"harness": "claude-sdk", "max_turns": 10},
+                },
+                "prompt": "be the optimizer",
+                # Mirrors agents/forge_optimizer.yaml + forge_converter.yaml:
+                # a CEL policy backed by a custom handler the managed server's
+                # policy registry does not include.
+                "guardrails": {
+                    "policies": {
+                        "filesystem_only": {
+                            "type": "function",
+                            "on": ["tool_call"],
+                            "function": {
+                                "path": "omnigent.inner.nessie.policies.cel_policy",
+                                "arguments": {"expression": "ALLOW"},
+                            },
+                        }
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    bundle = _build_agent_bundle(path, model="custom-model", max_turns=42)
+
+    with tarfile.open(fileobj=io.BytesIO(bundle), mode="r:gz") as tar:
+        assert tar.getnames() == ["config.yaml"]
+        config = yaml.safe_load(tar.extractfile("config.yaml").read())  # type: ignore[union-attr]
+
+    # The guardrails section is gone — the managed server would reject it.
+    assert "guardrails" not in config
+    # Everything else survives, including the substituted executor fields.
+    assert config["spec_version"] == 1
+    assert config["name"] == "forge_optimizer"
+    assert config["executor"]["model"] == "custom-model"
+    assert config["executor"]["config"]["max_turns"] == 42
+    assert config["prompt"] == "be the optimizer"
+
+
 # ---------------------------------------------------------------------------
 # Scaffold path filter
 # ---------------------------------------------------------------------------

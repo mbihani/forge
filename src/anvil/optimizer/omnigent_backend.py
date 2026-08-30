@@ -274,12 +274,20 @@ def _build_agent_bundle(agent_yaml_path: Path, *, model: str, max_turns: int) ->
     """Package ``agent_yaml_path`` as a tar.gz whose root is ``config.yaml``.
 
     Substitutes ``executor.model`` and ``executor.config.max_turns`` so the
-    round can pin them per-session without mutating the file on disk. The
-    bundle format matches the Omnigent agent spec (a tar.gz with
-    ``config.yaml`` at the root — the same shape as the bundled ``polly``
-    agent downloaded from ``GET /v1/sessions/{id}/agent/contents``).
+    round can pin them per-session without mutating the file on disk, and
+    strips ``guardrails`` (the managed server's policy registry has no custom
+    handlers; the prompt is the authoritative contract). The bundle format
+    matches the Omnigent agent spec (a tar.gz with ``config.yaml`` at the
+    root — the same shape as the bundled ``polly`` agent downloaded from
+    ``GET /v1/sessions/{id}/agent/contents``).
     """
     raw = yaml.safe_load(Path(agent_yaml_path).read_text(encoding="utf-8")) or {}
+    # Strip guardrails before upload: the managed Omnigent server's policy
+    # registry does not include custom handlers like
+    # ``omnigent.inner.nessie.policies.cel_policy``, so bundles carrying
+    # ``guardrails.policies`` are rejected with HTTP 400. The prompt is the
+    # authoritative contract; guardrails are defense-in-depth on top of it.
+    raw.pop("guardrails", None)
     executor = raw.setdefault("executor", {})
     executor["model"] = model
     config = executor.setdefault("config", {})
