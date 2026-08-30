@@ -482,7 +482,7 @@ async def _run_conversion_task(session_id: str, target_branch: str) -> None:
 
         # ---- Re-run the 8 validation checks on the converted branch ----
         _progress("revalidating", "Re-running the 8 validation checks on the converted branch.")
-        report, _config = await anyio.to_thread.run_sync(
+        report, _config, _findings = await anyio.to_thread.run_sync(
             partial(app_module._run_validation, converted_path)
         )
 
