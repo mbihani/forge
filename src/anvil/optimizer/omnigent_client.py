@@ -35,6 +35,27 @@ from typing import Any
 import httpx
 
 
+def build_session_url(server_url: str, session_id: str, workspace_id: str | None = None) -> str:
+    """Build a navigable Databricks UI URL for an Omnigent session.
+
+    ``OMNIGENT_SERVER_URL`` points at the API surface
+    (``…/api/2.0/omnigent``); the navigable UI path is
+    ``<workspace_host>/omnigent/c/<session_id>``. The ``/api/2.0/omnigent``
+    suffix is stripped to recover the workspace host (same derivation as
+    :func:`anvil.orchestrator.app._write_crash_log_to_databricks`). A
+    ``?o=<workspace_id>`` query param is appended when a workspace id is
+    supplied, and omitted otherwise — the link still resolves without it.
+    """
+    host = server_url.rstrip("/")
+    suffix = "/api/2.0/omnigent"
+    if host.endswith(suffix):
+        host = host[: -len(suffix)]
+    url = f"{host}/omnigent/c/{session_id}"
+    if workspace_id:
+        url = f"{url}?o={workspace_id}"
+    return url
+
+
 class OmnigentError(RuntimeError):
     """A non-2xx response from the Omnigent server."""
 

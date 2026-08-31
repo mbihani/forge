@@ -1800,7 +1800,7 @@ async def _fake_conversion_task(session_id: str, target_branch: str) -> None:
             )
             sess.conversion.session_id = "omnigent-sess-fake"
             sess.conversion.session_url = (
-                "http://localhost:6767/sessions/omnigent-sess-fake"
+                "http://localhost:6767/omnigent/c/omnigent-sess-fake"
             )
             sess.conversion.revalidation = {
                 "status": "valid",
@@ -1903,7 +1903,7 @@ def test_convert_starts_task_and_polls_to_completed(
     assert data["revalidation"]["pii_findings"] == []
     # The polling response surfaces the persisted managed-session link.
     assert data["session_id"] == "omnigent-sess-fake"
-    assert data["session_url"] == "http://localhost:6767/sessions/omnigent-sess-fake"
+    assert data["session_url"] == "http://localhost:6767/omnigent/c/omnigent-sess-fake"
 
 
 def test_convert_custom_target_branch(

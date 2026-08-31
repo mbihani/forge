@@ -22,3 +22,6 @@ truth. Keep this catalog and those markers in sync.
 
 - `CONFIGURE(git_token)` — credential for a private Git remote; omit for public
   repositories or when workload identity supplies access.
+- `CONFIGURE(databricks_workspace_id)` — numeric Databricks workspace/org ID used
+  for the `?o=` param on Omnigent session UI links; omit to drop the param (the
+  link resolves without it).
