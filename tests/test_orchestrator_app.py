@@ -1784,7 +1784,12 @@ def _create_convertible_session(
 
 async def _fake_conversion_task(session_id: str, target_branch: str) -> None:
     """Test double for ``_run_conversion_task``: marks the conversion completed
-    with a synthetic re-validation report. No Omnigent/git contact."""
+    with a synthetic re-validation report. No Omnigent/git contact.
+
+    Sets ``session_id`` / ``session_url`` on the conversion result to mirror
+    the real task's ``on_session_created`` callback so the polling response
+    surfaces the persisted managed-session link.
+    """
     with app_module._session_lock:
         sess = app_module._sessions.get(session_id)
         if sess is not None and sess.conversion is not None:
@@ -1792,6 +1797,10 @@ async def _fake_conversion_task(session_id: str, target_branch: str) -> None:
             sess.conversion.branch_name = target_branch
             sess.conversion.pr_url = (
                 f"https://github.com/user/repo/compare/main...{target_branch}"
+            )
+            sess.conversion.session_id = "omnigent-sess-fake"
+            sess.conversion.session_url = (
+                "http://localhost:6767/sessions/omnigent-sess-fake"
             )
             sess.conversion.revalidation = {
                 "status": "valid",
@@ -1892,6 +1901,9 @@ def test_convert_starts_task_and_polls_to_completed(
     assert data["pr_url"] == "https://github.com/user/repo/compare/main...forge-compat"
     assert data["revalidation"]["status"] == "valid"
     assert data["revalidation"]["pii_findings"] == []
+    # The polling response surfaces the persisted managed-session link.
+    assert data["session_id"] == "omnigent-sess-fake"
+    assert data["session_url"] == "http://localhost:6767/sessions/omnigent-sess-fake"
 
 
 def test_convert_custom_target_branch(
@@ -2046,3 +2058,149 @@ def test_dashboard_convert_button_gated_on_validation_convertible(
     assert data["status"] == "validated"
     assert data["validation"]["convertible"] is False  # button hidden
     assert "convertible" not in data
+
+
+# ---------------------------------------------------------------------------
+# Omnigent managed-session cleanup — _cleanup_omnigent_session + lifespan
+# ---------------------------------------------------------------------------
+
+
+def _seed_session_with_conversion(
+    session_id: str, tmp_path: Path, *, omnigent_sid: str | None = "omnigent-sess-X"
+) -> None:
+    """Seed a forge session with a conversion result carrying a managed
+    Omnigent session id (or None when ``omnigent_sid`` is None)."""
+    from anvil.orchestrator.app import SessionData
+    from anvil.orchestrator.conversion import ConversionResult
+
+    sess = SessionData(
+        session_id=session_id,
+        repo_url="https://github.com/user/repo",
+        repo_path=tmp_path / session_id / "clone",
+        status="completed",
+        validation={"status": "valid", "checks": [], "convertible": False},
+        config=None,
+        baseline=None,
+        rounds=[],
+        frontier=None,
+        finalized=None,
+        error=None,
+        conversion=ConversionResult(session_id=omnigent_sid),
+    )
+    app_module._sessions[session_id] = sess
+
+
+class _FakeOmnigentCleanupClient:
+    """Fake OmnigentClient for cleanup tests — records delete_session calls."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self.deleted: list[str] = []
+
+    async def delete_session(self, session_id: str) -> dict[str, Any]:
+        self.deleted.append(session_id)
+        return {"deleted": True}
+
+    async def aclose(self) -> None:
+        pass
+
+
+def test_cleanup_omnigent_session_deletes_remote(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """``_cleanup_omnigent_session`` deletes the persisted Omnigent managed
+    conversation session when the conversion result carries a ``session_id``."""
+    monkeypatch.setenv("OMNIGENT_SERVER_URL", "http://localhost:6767")
+    _seed_session_with_conversion("s1", tmp_path)
+
+    fake = _FakeOmnigentCleanupClient()
+    monkeypatch.setattr(
+        "anvil.optimizer.omnigent_client.OmnigentClient",
+        lambda *a, **kw: fake,
+    )
+
+    asyncio.run(app_module._cleanup_omnigent_session("s1"))
+    assert fake.deleted == ["omnigent-sess-X"]
+
+
+def test_cleanup_omnigent_session_skips_when_no_session_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """When the conversion result has no ``session_id`` (no managed session was
+    created — e.g. the conversion failed early), cleanup is a no-op."""
+    monkeypatch.setenv("OMNIGENT_SERVER_URL", "http://localhost:6767")
+    _seed_session_with_conversion("s2", tmp_path, omnigent_sid=None)
+
+    fake = _FakeOmnigentCleanupClient()
+    monkeypatch.setattr(
+        "anvil.optimizer.omnigent_client.OmnigentClient",
+        lambda *a, **kw: fake,
+    )
+
+    asyncio.run(app_module._cleanup_omnigent_session("s2"))
+    assert fake.deleted == []
+
+
+def test_cleanup_omnigent_session_skips_when_server_not_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """When OMNIGENT_SERVER_URL is not set, cleanup is a no-op (no server to
+    call). The remote session is simply abandoned."""
+    monkeypatch.delenv("OMNIGENT_SERVER_URL", raising=False)
+    _seed_session_with_conversion("s3", tmp_path)
+
+    fake = _FakeOmnigentCleanupClient()
+    monkeypatch.setattr(
+        "anvil.optimizer.omnigent_client.OmnigentClient",
+        lambda *a, **kw: fake,
+    )
+
+    asyncio.run(app_module._cleanup_omnigent_session("s3"))
+    assert fake.deleted == []
+
+
+def test_cleanup_omnigent_session_swallows_delete_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """A failed delete_session (server already gone) is swallowed — cleanup
+    is best-effort and must not raise."""
+
+    class _ExplodingClient(_FakeOmnigentCleanupClient):
+        async def delete_session(self, session_id: str) -> dict[str, Any]:
+            from anvil.optimizer.omnigent_client import OmnigentError
+
+            raise OmnigentError("already gone", status_code=404, body="not found")
+
+    monkeypatch.setenv("OMNIGENT_SERVER_URL", "http://localhost:6767")
+    _seed_session_with_conversion("s4", tmp_path)
+    monkeypatch.setattr(
+        "anvil.optimizer.omnigent_client.OmnigentClient",
+        lambda *a, **kw: _ExplodingClient(),
+    )
+
+    # Must not raise — the OmnigentError is suppressed inside cleanup.
+    asyncio.run(app_module._cleanup_omnigent_session("s4"))
+
+
+def test_shutdown_deletes_persisted_managed_sessions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """When the app shuts down (lifespan teardown), persisted Omnigent managed
+    sessions are deleted so they don't leak indefinitely.
+
+    Uses a standalone ``TestClient(app)`` context so the lifespan teardown
+    runs inside the test body (the ``with`` block exit) and the assertion can
+    follow it.
+    """
+    monkeypatch.setenv("OMNIGENT_SERVER_URL", "http://localhost:6767")
+    _seed_session_with_conversion("s5", tmp_path)
+
+    fake = _FakeOmnigentCleanupClient()
+    monkeypatch.setattr(
+        "anvil.optimizer.omnigent_client.OmnigentClient",
+        lambda *a, **kw: fake,
+    )
+
+    with TestClient(app):
+        pass  # startup + immediate exit triggers the lifespan teardown
+
+    assert fake.deleted == ["omnigent-sess-X"]

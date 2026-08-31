@@ -334,8 +334,10 @@ class OmnigentClient:
 
         Yields parsed ``(event_type, data_dict)`` tuples. Frames are
         ``event: <type>\\ndata: <json>\\n\\n``. The generator stops on the
-        ``[DONE]`` sentinel, on a ``response.completed`` event, or when the
-        source closes. ``data`` that is not valid JSON is yielded as a dict
+        ``[DONE]`` sentinel or when the source closes; ``response.completed``
+        is yielded like any other event (it marks a per-turn boundary, not
+        stream completion — callers decide when to stop draining). ``data``
+        that is not valid JSON is yielded as a dict
         ``{"_raw": <text>}`` so callers never crash on a malformed frame.
         """
         url = f"/v1/sessions/{session_id}/stream"

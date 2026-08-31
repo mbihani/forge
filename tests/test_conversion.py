@@ -16,6 +16,7 @@ import io
 import os
 import subprocess
 import tarfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,7 @@ from anvil.orchestrator.conversion import (
     DEFAULT_TARGET_BRANCH,
     ConversionResult,
     _build_pr_url,
+    _drain_conversion_stream,
     _run_conversion_task,
     _run_managed_session,
     _send_with_retry,
@@ -250,6 +252,8 @@ def test_conversion_result_dataclass() -> None:
     assert r.branch_name is None
     assert r.revalidation is None
     assert r.error is None
+    assert r.session_id is None
+    assert r.session_url is None
 
 
 def test_conversion_result_to_dict_round_trips_progress() -> None:
@@ -265,6 +269,21 @@ def test_conversion_result_to_dict_round_trips_progress() -> None:
     assert d["pr_url"] is None
     assert d["revalidation"] is None
     assert d["error"] is None
+    assert d["session_id"] is None
+    assert d["session_url"] is None
+
+
+def test_conversion_result_carries_session_fields() -> None:
+    """session_id + session_url round-trip through to_dict so the API can
+    surface a link to the persisted Omnigent conversation."""
+    r = ConversionResult(
+        status="completed",
+        session_id="omnigent-sess-123",
+        session_url="http://localhost:6767/sessions/omnigent-sess-123",
+    )
+    d = r.to_dict()
+    assert d["session_id"] == "omnigent-sess-123"
+    assert d["session_url"] == "http://localhost:6767/sessions/omnigent-sess-123"
 
 
 def test_default_target_branch_constant() -> None:
@@ -499,8 +518,16 @@ class _FakeManagedSessionClient:
     ``stream_session`` (consumed by :func:`_drain_conversion_stream`).
     """
 
-    def __init__(self, *, stream_events: list[tuple[str, dict[str, Any]]]) -> None:
+    def __init__(
+        self,
+        *,
+        stream_events: list[tuple[str, dict[str, Any]]],
+        hang_after: bool = False,
+    ) -> None:
         self.stream_events = stream_events
+        # When True, stream_session hangs forever after yielding all events,
+        # simulating an open-but-silent SSE connection (no [DONE], no EOF).
+        self.hang_after = hang_after
         self.create_session_calls: list[dict[str, Any]] = []
         self.create_session_from_agent_calls: list[dict[str, Any]] = []
         self.send_message_calls: list[dict[str, Any]] = []
@@ -545,6 +572,10 @@ class _FakeManagedSessionClient:
         self.stream_session_calls.append(session_id)
         for event in self.stream_events:
             yield event
+        if self.hang_after:
+            # Simulate an open connection that never sends [DONE] — the drain's
+            # inactivity timeout must break out of this.
+            await asyncio.Event().wait()
 
     async def get_session(self, session_id: str) -> dict[str, Any]:
         # Present for _wait_for_runner; not reached when create_session_from_agent
@@ -563,7 +594,8 @@ def test_run_managed_session_two_step_flow() -> None:
     """_run_managed_session runs the full two-step managed-host flow:
     multipart register (→ agent_id) → managed session (host_type="managed" +
     model_override=_CONVERTER_MODEL, reading ``id`` NOT ``session_id``) →
-    send_message on the managed id → drain → BOTH sessions tombstoned."""
+    send_message on the managed id → drain → ONLY the registration session
+    tombstoned (the managed conversation session is KEPT alive)."""
     transcript_text = "Conversion complete. Created scaffold/harness.yaml."
     events = [
         # An assistant item_done so the drained transcript is non-empty …
@@ -577,15 +609,18 @@ def test_run_managed_session_two_step_flow() -> None:
                 }
             },
         ),
-        # … then response.completed so _drain_conversion_stream breaks.
+        # … then response.completed (a per-turn boundary — the drain no
+        # longer breaks here; the stream simply ends after this event).
         ("response.completed", {}),
     ]
+    captured_session_ids: list[str] = []
     client = _FakeManagedSessionClient(stream_events=events)
     bundle = b"fake-bundle-bytes"
 
     async def _run() -> str:
         return await _run_managed_session(
-            client, bundle, "convert the repo", "forge-compat", _noop_progress
+            client, bundle, "convert the repo", "forge-compat", _noop_progress,
+            on_session_created=captured_session_ids.append,
         )
 
     transcript = asyncio.run(_run())
@@ -608,13 +643,253 @@ def test_run_managed_session_two_step_flow() -> None:
     assert client.send_message_calls[0]["text"] == "convert the repo"
     assert client.stream_session_calls == ["managed-sess-id"]
 
+    # The on_session_created callback was invoked with the managed session id
+    # right after creation (before the drain).
+    assert captured_session_ids == ["managed-sess-id"]
+
     # The returned transcript is the agent's response text.
     assert transcript == transcript_text
 
-    # Finally: both the managed and the registration sessions are tombstoned
-    # (order-agnostic — the finally deletes managed first, then registration).
-    assert sorted(client.delete_session_calls) == ["managed-sess-id", "reg-sess-id"]
+    # Finally: ONLY the throwaway registration session is tombstoned — the
+    # managed conversation session is KEPT alive so the transcript persists.
+    assert client.delete_session_calls == ["reg-sess-id"]
     assert client.aclose_calls == 1
+
+
+def test_drain_conversion_stream_consumes_multiple_turns() -> None:
+    """The drain must NOT break on the first ``response.completed`` — that
+    event marks a per-TURN boundary, not whole-conversation completion. A
+    multi-turn stream (two turns of deltas + item_done + response.completed,
+    then an idle status) must be consumed in full and the transcript must
+    concatenate text from BOTH turns.
+
+    The trailing ``idle`` status is logged but does NOT break the drain —
+    the stream simply ends (EOF) after it, which is the normal end.
+
+    Regression for the mid-run drop bug: the old drain broke on the first
+    ``response.completed`` and labeled the conversation "Agent finished"
+    after one turn.
+    """
+    events = [
+        # Turn 1 — deltas + a completed assistant message.
+        ("response.output_text.delta", {"delta": "Hello "}),
+        ("response.output_text.delta", {"delta": "from turn 1. "}),
+        (
+            "response.output_item.done",
+            {
+                "item": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Turn 1 done."}],
+                }
+            },
+        ),
+        ("response.completed", {}),
+        # Turn 2 — the old code never reached here.
+        ("response.output_text.delta", {"delta": "Now "}),
+        ("response.output_text.delta", {"delta": "turn 2. "}),
+        (
+            "response.output_item.done",
+            {
+                "item": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Turn 2 done."}],
+                }
+            },
+        ),
+        ("response.completed", {}),
+        # The agent goes idle — logged but NOT terminal (the drain continues;
+        # the stream ends on EOF after this event).
+        ("session.status", {"status": "idle"}),
+    ]
+    client = _FakeManagedSessionClient(stream_events=events)
+    progress_calls: list[tuple[str, str]] = []
+
+    def _progress(kind: str, msg: str) -> None:
+        progress_calls.append((kind, msg))
+
+    async def _run() -> str:
+        return await _drain_conversion_stream(client, "managed-sess-id", _progress)
+
+    transcript = asyncio.run(_run())
+
+    # The stream was consumed across BOTH turns (not just the first).
+    assert "Turn 1 done." in transcript
+    assert "Turn 2 done." in transcript
+    assert "from turn 1." in transcript
+    assert "turn 2." in transcript
+
+    # A turn-progress entry was emitted for each response.completed (two).
+    turn_entries = [e for e in progress_calls if e[0] == "agent_turn"]
+    assert [e[1] for e in turn_entries] == ["Turn 1 complete.", "Turn 2 complete."]
+
+    # An idle-status progress entry was emitted (logged, NOT terminal).
+    idle_entries = [e for e in progress_calls if e[0] == "agent_idle"]
+    assert idle_entries and "idle" in idle_entries[0][1].lower()
+
+    # The idle did NOT trigger an "agent_done" — the drain ended on EOF.
+    done_entries = [e for e in progress_calls if e[0] == "agent_done"]
+    assert done_entries == []
+
+
+def test_drain_conversion_stream_respects_turn_cap() -> None:
+    """When the turn cap is reached the drain stops even if the stream has
+    more turns — confirming ``response.completed`` is counted and capped
+    rather than treated as terminal on the first occurrence."""
+    events = [
+        ("response.output_text.delta", {"delta": "t1. "}),
+        ("response.completed", {}),
+        ("response.output_text.delta", {"delta": "t2. "}),
+        ("response.completed", {}),
+        ("response.output_text.delta", {"delta": "t3. "}),
+        ("response.completed", {}),
+    ]
+    client = _FakeManagedSessionClient(stream_events=events)
+
+    async def _run() -> str:
+        return await _drain_conversion_stream(
+            client, "managed-sess-id", _noop_progress, max_turns=2
+        )
+
+    transcript = asyncio.run(_run())
+
+    # Only the first two turns were drained; the third delta never appears.
+    assert "t1." in transcript
+    assert "t2." in transcript
+    assert "t3." not in transcript
+
+
+def test_drain_conversion_stream_inactivity_timeout() -> None:
+    """When the SSE stream stays open but emits no events for
+    ``inactivity_timeout`` seconds, the drain must break (not loop forever).
+    This handles the "agent went idle and never came back" / "silently open
+    connection with only heartbeats" case.
+    """
+    events = [
+        # One event, then the stream hangs (hang_after=True).
+        ("response.output_text.delta", {"delta": "partial "}),
+    ]
+    client = _FakeManagedSessionClient(stream_events=events, hang_after=True)
+    progress_calls: list[tuple[str, str]] = []
+
+    def _progress(kind: str, msg: str) -> None:
+        progress_calls.append((kind, msg))
+
+    async def _run() -> str:
+        return await _drain_conversion_stream(
+            client, "managed-sess-id", _progress, inactivity_timeout=0.05
+        )
+
+    transcript = asyncio.run(_run())
+
+    # The one event that arrived before the hang was captured.
+    assert "partial" in transcript
+
+    # The inactivity timeout fired and produced an agent_done progress entry.
+    done_entries = [e for e in progress_calls if e[0] == "agent_done"]
+    assert done_entries and "inactive" in done_entries[0][1].lower()
+
+
+def test_drain_conversion_stream_idle_does_not_break() -> None:
+    """An inter-turn ``idle`` status must NOT cause a premature break — the
+    drain keeps consuming past it. The terminal signal is the inactivity
+    timeout, which fires when no events arrive after the LAST idle.
+
+    Mock: turn 1 (delta + completed), idle, turn 2 (delta + completed), idle,
+    then the stream hangs. With a short inactivity timeout, both turns are
+    consumed and the break happens on the timeout after the second idle, NOT
+    on the first idle.
+    """
+    events = [
+        # Turn 1.
+        ("response.output_text.delta", {"delta": "turn1 "}),
+        ("response.completed", {}),
+        # Inter-turn idle — must NOT break.
+        ("session.status", {"status": "idle"}),
+        # Turn 2 — the old code (idle+parts break) never reached here.
+        ("response.output_text.delta", {"delta": "turn2 "}),
+        ("response.completed", {}),
+        # Final idle, then the stream hangs.
+        ("session.status", {"status": "idle"}),
+    ]
+    client = _FakeManagedSessionClient(stream_events=events, hang_after=True)
+    progress_calls: list[tuple[str, str]] = []
+
+    def _progress(kind: str, msg: str) -> None:
+        progress_calls.append((kind, msg))
+
+    async def _run() -> str:
+        return await _drain_conversion_stream(
+            client, "managed-sess-id", _progress, inactivity_timeout=0.05
+        )
+
+    transcript = asyncio.run(_run())
+
+    # BOTH turns were consumed — the first idle did NOT break the drain.
+    assert "turn1" in transcript
+    assert "turn2" in transcript
+
+    # Two turn-progress entries (both response.completed events counted).
+    turn_entries = [e for e in progress_calls if e[0] == "agent_turn"]
+    assert len(turn_entries) == 2
+
+    # Two idle entries (both were logged, neither broke the drain).
+    idle_entries = [e for e in progress_calls if e[0] == "agent_idle"]
+    assert len(idle_entries) == 2
+
+    # The terminal signal was the inactivity timeout, not the idle.
+    done_entries = [e for e in progress_calls if e[0] == "agent_done"]
+    assert done_entries and "inactive" in done_entries[0][1].lower()
+
+
+def test_drain_conversion_stream_max_duration_breaks_during_read() -> None:
+    """The ``max_duration`` deadline is a true hard ceiling: even when a read
+    is mid-``__anext__`` (the stream is hanging), the drain must break at the
+    ``max_duration`` deadline, NOT wait for the larger inactivity timeout.
+
+    Regression for the unbounded-read bug: ``asyncio.timeout(remaining)``
+    used only the inactivity remaining, so an event near the 1800s mark could
+    let the read block until ~1920s. With ``min(inactivity, max_duration)``
+    the read is bounded by whichever deadline comes first.
+
+    Setup: one event, then the stream hangs. ``inactivity_timeout=10``
+    (large — would wait 10s), ``max_duration=0.05`` (small — must fire first).
+    The drain must return within ~1s (the 0.05s max_duration fires, not the
+    10s inactivity timeout).
+    """
+    events = [
+        ("response.output_text.delta", {"delta": "before-hang "}),
+    ]
+    client = _FakeManagedSessionClient(stream_events=events, hang_after=True)
+    progress_calls: list[tuple[str, str]] = []
+
+    def _progress(kind: str, msg: str) -> None:
+        progress_calls.append((kind, msg))
+
+    async def _run() -> str:
+        return await _drain_conversion_stream(
+            client,
+            "managed-sess-id",
+            _progress,
+            inactivity_timeout=10,  # large — would wait 10s
+            max_duration=0.05,  # small — must fire first
+        )
+
+    start = time.monotonic()
+    transcript = asyncio.run(_run())
+    elapsed = time.monotonic() - start
+
+    # The drain broke at the max_duration deadline, not the 10s inactivity
+    # timeout — well under 2s.
+    assert elapsed < 2.0
+
+    # The one event before the hang was captured.
+    assert "before-hang" in transcript
+
+    # A max-duration progress entry was emitted (NOT an inactivity entry).
+    done_entries = [e for e in progress_calls if e[0] == "agent_done"]
+    assert done_entries and "max drain duration" in done_entries[0][1].lower()
 
 
 # ---------------------------------------------------------------------------

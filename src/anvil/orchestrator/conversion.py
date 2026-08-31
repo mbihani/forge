@@ -34,9 +34,11 @@ pool (same pattern as the optimization task in :mod:`anvil.orchestrator.app`).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import subprocess
+import time
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -71,6 +73,12 @@ _CONVERTER_AGENT_YAML = _REPO_ROOT / "agents" / "forge_converter.yaml"
 # Model for the converter agent on the managed Omnigent host.
 _CONVERTER_MODEL = "databricks-claude-opus-4-8"
 
+# Turn cap for the conversion agent's stream drain. Mirrors the max_turns
+# baked into the converter agent bundle (agents/forge_converter.yaml) — the
+# drain stops at this many response.completed events as a safety bound; the
+# agent's own max_turns is the primary limit.
+_CONVERSION_MAX_TURNS = 50
+
 # Default conversion branch name (overridable via ConvertRequest.target_branch).
 DEFAULT_TARGET_BRANCH = "forge-compat"
 
@@ -79,6 +87,15 @@ _DELTA_TYPE = "response.output_text.delta"
 _ITEM_DONE_TYPE = "response.output_item.done"
 _COMPLETED_TYPE = "response.completed"
 _STATUS_TYPE = "session.status"
+
+# Bounded-drain safety timeouts (mirrors omnigent_backend.py). The SSE stream
+# can stay open with only heartbeats and no ``response.completed`` / ``idle`` /
+# EOF; without a bound the drain loops forever. ``_STREAM_INACTIVITY_TIMEOUT``
+# fires when no event arrives for this many seconds (the agent went idle and
+# never came back, or the connection is silently open). ``_STREAM_MAX_DURATION``
+# is a hard ceiling on total drain time.
+_STREAM_INACTIVITY_TIMEOUT = 120  # seconds
+_STREAM_MAX_DURATION = 1800  # 30 minutes
 
 # ---------------------------------------------------------------------------
 # PII patterns scanned on the converted branch diff.
@@ -116,6 +133,11 @@ class ConversionResult:
     branch_name: str | None = None
     revalidation: dict[str, Any] | None = None
     error: str | None = None
+    # Managed Omnigent conversation session — KEPT alive after conversion so
+    # the transcript is inspectable. Populated when the managed session is
+    # created (before the drain runs); surfaced to the UI as a link.
+    session_id: str | None = None
+    session_url: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -125,6 +147,8 @@ class ConversionResult:
             "branch_name": self.branch_name,
             "revalidation": self.revalidation,
             "error": self.error,
+            "session_id": self.session_id,
+            "session_url": self.session_url,
         }
 
 
@@ -457,7 +481,7 @@ async def _run_conversion_task(session_id: str, target_branch: str) -> None:
                 _build_agent_bundle,
                 _CONVERTER_AGENT_YAML,
                 model=_CONVERTER_MODEL,
-                max_turns=50,
+                max_turns=_CONVERSION_MAX_TURNS,
             )
         )
 
@@ -478,7 +502,19 @@ async def _run_conversion_task(session_id: str, target_branch: str) -> None:
 
         _progress("agent_session", "Creating the Omnigent conversion session.")
         client = OmnigentClient(server_url, auth_token)
-        await _run_managed_session(client, bundle, prompt, target_branch, _progress)
+
+        # Surface the managed session id + URL on the ConversionResult the
+        # moment the session is created (before the potentially long drain),
+        # so the UI can show a transcript link while the agent is still working.
+        def _on_session_created(sid: str) -> None:
+            url = f"{server_url.rstrip('/')}/sessions/{sid}"  # type: ignore[union-attr]
+            _set(session_id=sid, session_url=url)
+            _progress("agent_session", f"Session link: {url}")
+
+        await _run_managed_session(
+            client, bundle, prompt, target_branch, _progress,
+            on_session_created=_on_session_created,
+        )
 
         # ---- Re-clone the converted branch + re-validate ----
         _progress(
@@ -564,11 +600,20 @@ async def _run_managed_session(
     prompt: str,
     target_branch: str,
     progress: Any,
+    *,
+    on_session_created: Any = None,
 ) -> str:
     """Two-step managed-host flow: upload the bundle to register the agent,
     create a managed session (``host_type="managed"``) that auto-provisions
-    a runner, send the prompt, drain the stream, and tombstone BOTH sessions
-    in the ``finally`` block.
+    a runner, send the prompt, and drain the stream across turns.
+
+    The managed conversation session is KEPT alive (not tombstoned) so the
+    user can inspect the transcript; only the throwaway registration session
+    is deleted in the ``finally`` block.
+
+    ``on_session_created`` is an optional callback invoked with the managed
+    session id the moment it is created, so the caller can surface a session
+    link to the UI before the (potentially long) drain runs.
 
     Returns the agent's transcript string. Extracted from
     :func:`_run_conversion_task` so the full flow (multipart register →
@@ -602,6 +647,12 @@ async def _run_managed_session(
         )
         omnigent_session_id = managed["id"]
         progress("agent_session", f"Managed session created ({omnigent_session_id}).")
+        # Surface the managed session id immediately so the caller can
+        # build + store the session link before the drain runs — the drain
+        # may take many turns and the link should be visible while the
+        # agent is still working.
+        if on_session_created is not None:
+            on_session_created(omnigent_session_id)
 
         # Step 3: Wait briefly for the runner if not yet online.
         if not managed.get("runner_online"):
@@ -619,9 +670,8 @@ async def _run_managed_session(
         )
         return transcript
     finally:
-        if omnigent_session_id is not None:
-            with suppress(OmnigentError):
-                await client.delete_session(omnigent_session_id)
+        # Keep the managed conversation session alive so the transcript is
+        # inspectable; only the throwaway registration session is tombstoned.
         if registration_session_id is not None:
             with suppress(OmnigentError):
                 await client.delete_session(registration_session_id)
@@ -673,30 +723,110 @@ async def _send_with_retry(
 
 
 async def _drain_conversion_stream(
-    client: OmnigentClient, session_id: str, progress: Any
+    client: OmnigentClient, session_id: str, progress: Any,
+    *,
+    max_turns: int = _CONVERSION_MAX_TURNS,
+    inactivity_timeout: float = _STREAM_INACTIVITY_TIMEOUT,
+    max_duration: float = _STREAM_MAX_DURATION,
 ) -> str:
-    """Drain the omnigent SSE stream into a transcript.
+    """Drain the omnigent SSE stream into a transcript across turns.
 
     Mirrors :meth:`OmnigentBackend._drain_stream` but appends a progress entry
-    for each completed assistant message so the UI shows live steps. Stops on
-    ``response.completed`` / ``[DONE]`` / an idle status after output.
+    for each completed assistant message so the UI shows live steps.
+    ``response.completed`` marks a per-TURN boundary (counted, not terminal) —
+    the converter agent runs autonomously across turns on a single stream, so
+    the drain keeps consuming past each turn.
+
+    The drain is bounded by two safety timeouts:
+
+    * ``inactivity_timeout`` — if no stream event arrives for this many
+      seconds the drain breaks (the agent went idle and never came back, or
+      the connection is silently open with only heartbeats).
+    * ``max_duration`` — a hard ceiling on total drain time.
+
+    An ``idle`` session status is logged but does NOT break the drain — an
+    inter-turn idle may be followed by another autonomous turn, and the
+    inactivity timeout is the reliable terminal signal for "idle and never
+    came back." The drain stops on: ``[DONE]`` / EOF, the inactivity timeout,
+    the max-duration deadline, or the turn cap.
     """
     parts: list[str] = []
-    async for event_type, data in client.stream_session(session_id):
-        if event_type == _DELTA_TYPE:
-            delta = data.get("delta")
-            if isinstance(delta, str):
-                parts.append(delta)
-        elif event_type == _ITEM_DONE_TYPE:
-            text = _text_from_item(data.get("item"))
-            if text:
-                parts.append(text)
-                progress("agent_message", text[:200])
-        elif event_type == _STATUS_TYPE:
-            if data.get("status") == "idle" and parts:
+    turns = 0
+    start = time.monotonic()
+    last_event = start
+    stream = client.stream_session(session_id)
+    try:
+        while True:
+            now = time.monotonic()
+            if now - start >= max_duration:
+                progress("agent_done", f"Max drain duration ({max_duration}s) reached.")
                 break
-        elif event_type == _COMPLETED_TYPE:
-            break
+            # Bound the read by BOTH deadlines — whichever comes first. Using
+            # only the inactivity remaining lets a late read block past the
+            # max_duration ceiling; ``min()`` ensures the read can never run
+            # past either deadline.
+            inactivity_remaining = inactivity_timeout - (now - last_event)
+            max_duration_remaining = max_duration - (now - start)
+            remaining = min(inactivity_remaining, max_duration_remaining)
+            if remaining <= 0:
+                # Distinguish which deadline was hit so the progress entry is
+                # accurate (the ``min()`` makes either one the binding one).
+                if max_duration_remaining <= inactivity_remaining:
+                    progress("agent_done", f"Max drain duration ({max_duration}s) reached.")
+                else:
+                    progress(
+                        "agent_done",
+                        f"Agent inactive for {inactivity_timeout}s; ending drain.",
+                    )
+                break
+            try:
+                async with asyncio.timeout(remaining):
+                    event_type, data = await stream.__anext__()
+            except TimeoutError:
+                # The read timed out — distinguish which deadline fired.
+                if time.monotonic() - start >= max_duration:
+                    progress("agent_done", f"Max drain duration ({max_duration}s) reached.")
+                else:
+                    progress(
+                        "agent_done",
+                        f"Agent inactive for {inactivity_timeout}s; ending drain.",
+                    )
+                break
+            except StopAsyncIteration:
+                # Stream closed ([DONE] / EOF) — the normal end of the
+                # conversation; no progress entry needed.
+                break
+            last_event = time.monotonic()
+            if event_type == _DELTA_TYPE:
+                delta = data.get("delta")
+                if isinstance(delta, str):
+                    parts.append(delta)
+            elif event_type == _ITEM_DONE_TYPE:
+                text = _text_from_item(data.get("item"))
+                if text:
+                    parts.append(text)
+                    progress("agent_message", text[:200])
+            elif event_type == _STATUS_TYPE:
+                # An idle status is NOT terminal — the agent may start
+                # another autonomous turn. Log it and keep draining; the
+                # inactivity timeout handles the "idle and never came back"
+                # case. Breaking here was the mid-run drop bug in disguise:
+                # an inter-turn idle would end the conversation prematurely.
+                if data.get("status") == "idle":
+                    progress("agent_idle", "Agent went idle; waiting for more activity.")
+            elif event_type == _COMPLETED_TYPE:
+                # Per-turn boundary, not whole-conversation completion. Count
+                # it and keep draining so the agent can work across turns.
+                turns += 1
+                progress("agent_turn", f"Turn {turns} complete.")
+                if turns >= max_turns:
+                    progress("agent_done", f"Turn cap ({max_turns}) reached.")
+                    break
+    finally:
+        # Best-effort close of the async generator so any underlying HTTP
+        # stream is released even on timeout/cancellation.
+        with suppress(Exception):
+            await stream.aclose()
     return "".join(parts).strip()
 
 

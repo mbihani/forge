@@ -182,6 +182,10 @@ class ConversionStatus(BaseModel):
     branch_name: str | None = None
     revalidation: dict[str, Any] | None = None
     error: str | None = None
+    # Managed Omnigent conversation session — kept alive after conversion so
+    # the transcript is inspectable. Surfaced as a link in the UI.
+    session_id: str | None = None
+    session_url: str | None = None
 
 
 class RoundSummary(BaseModel):
@@ -1324,6 +1328,41 @@ def _cleanup_session(session_id: str) -> None:
     shutil.rmtree(root, ignore_errors=True)
 
 
+async def _cleanup_omnigent_session(session_id: str) -> None:
+    """Best-effort delete the persisted Omnigent managed conversation session
+    for a forge session, if a conversion run created one.
+
+    The conversion keeps the managed session alive so the transcript is
+    inspectable (see :func:`_run_managed_session`); on shutdown we release
+    it so remote sessions don't leak indefinitely. All failures are swallowed
+    — the remote server may already be gone or unreachable.
+    """
+    with _session_lock:
+        sess = _sessions.get(session_id)
+        if sess is None or sess.conversion is None:
+            return
+        omnigent_sid = sess.conversion.session_id
+    if not omnigent_sid:
+        return
+    server_url = os.getenv("OMNIGENT_SERVER_URL")
+    if not server_url:
+        return
+    auth_token = os.getenv("OMNIGENT_AUTH_TOKEN")
+    try:
+        from anvil.optimizer.omnigent_client import OmnigentClient, OmnigentError
+
+        client = OmnigentClient(server_url, auth_token)
+        try:
+            with suppress(OmnigentError):
+                await client.delete_session(omnigent_sid)
+        finally:
+            await client.aclose()
+    except Exception:  # noqa: BLE001 — best-effort, swallow all failures
+        logger.debug(
+            "omnigent session cleanup failed for %s", omnigent_sid, exc_info=True
+        )
+
+
 # ---------------------------------------------------------------------------
 # Crash diagnostics — signal handlers + excepthook write to
 # /tmp/forge-crash-log.txt and stderr (captured by the platform) so we can
@@ -1492,6 +1531,12 @@ async def _lifespan(app: FastAPI):
         t.cancel()
     if tasks_to_cancel:
         await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
+    # Delete any persisted Omnigent managed sessions (best-effort) before the
+    # local file cleanup. The conversion keeps the managed session alive so
+    # the transcript is inspectable; on shutdown we release it so remote
+    # sessions don't leak indefinitely.
+    for sid in session_ids:
+        await _cleanup_omnigent_session(sid)
     for sid in session_ids:
         await anyio.to_thread.run_sync(partial(_cleanup_session, sid))
     with _session_lock:
@@ -2347,6 +2392,19 @@ function renderConvert(data) {
 
   if (data.error) {
     panel.appendChild(el('div', data.error, 'error-box'));
+  }
+
+  // Agent session link — visible as soon as the managed session is created
+  // (while the agent is still working), so the user can open the transcript.
+  if (data.session_url) {
+    const srow = el('div', null, 'row');
+    srow.appendChild(el('span', 'Agent session:', null));
+    const slink = el('a', data.session_id || 'view transcript', 'link');
+    slink.href = data.session_url;
+    slink.target = '_blank';
+    slink.rel = 'noopener noreferrer';
+    srow.appendChild(slink);
+    panel.appendChild(srow);
   }
 
   if (data.branch_name) {
