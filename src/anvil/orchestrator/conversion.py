@@ -71,6 +71,12 @@ _CONVERTER_AGENT_YAML = _REPO_ROOT / "agents" / "forge_converter.yaml"
 # Model for the converter agent on the managed Omnigent host.
 _CONVERTER_MODEL = "databricks-claude-opus-4-8"
 
+# Turn cap for the conversion agent's stream drain. Mirrors the max_turns
+# baked into the converter agent bundle (agents/forge_converter.yaml) — the
+# drain stops at this many response.completed events as a safety bound; the
+# agent's own max_turns is the primary limit.
+_CONVERSION_MAX_TURNS = 50
+
 # Default conversion branch name (overridable via ConvertRequest.target_branch).
 DEFAULT_TARGET_BRANCH = "forge-compat"
 
@@ -116,6 +122,11 @@ class ConversionResult:
     branch_name: str | None = None
     revalidation: dict[str, Any] | None = None
     error: str | None = None
+    # Managed Omnigent conversation session — KEPT alive after conversion so
+    # the transcript is inspectable. Populated when the managed session is
+    # created (before the drain runs); surfaced to the UI as a link.
+    session_id: str | None = None
+    session_url: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -125,6 +136,8 @@ class ConversionResult:
             "branch_name": self.branch_name,
             "revalidation": self.revalidation,
             "error": self.error,
+            "session_id": self.session_id,
+            "session_url": self.session_url,
         }
 
 
@@ -457,7 +470,7 @@ async def _run_conversion_task(session_id: str, target_branch: str) -> None:
                 _build_agent_bundle,
                 _CONVERTER_AGENT_YAML,
                 model=_CONVERTER_MODEL,
-                max_turns=50,
+                max_turns=_CONVERSION_MAX_TURNS,
             )
         )
 
@@ -478,7 +491,19 @@ async def _run_conversion_task(session_id: str, target_branch: str) -> None:
 
         _progress("agent_session", "Creating the Omnigent conversion session.")
         client = OmnigentClient(server_url, auth_token)
-        await _run_managed_session(client, bundle, prompt, target_branch, _progress)
+
+        # Surface the managed session id + URL on the ConversionResult the
+        # moment the session is created (before the potentially long drain),
+        # so the UI can show a transcript link while the agent is still working.
+        def _on_session_created(sid: str) -> None:
+            url = f"{server_url.rstrip('/')}/sessions/{sid}"  # type: ignore[union-attr]
+            _set(session_id=sid, session_url=url)
+            _progress("agent_session", f"Session link: {url}")
+
+        await _run_managed_session(
+            client, bundle, prompt, target_branch, _progress,
+            on_session_created=_on_session_created,
+        )
 
         # ---- Re-clone the converted branch + re-validate ----
         _progress(
@@ -564,11 +589,20 @@ async def _run_managed_session(
     prompt: str,
     target_branch: str,
     progress: Any,
+    *,
+    on_session_created: Any = None,
 ) -> str:
     """Two-step managed-host flow: upload the bundle to register the agent,
     create a managed session (``host_type="managed"``) that auto-provisions
-    a runner, send the prompt, drain the stream, and tombstone BOTH sessions
-    in the ``finally`` block.
+    a runner, send the prompt, and drain the stream across turns.
+
+    The managed conversation session is KEPT alive (not tombstoned) so the
+    user can inspect the transcript; only the throwaway registration session
+    is deleted in the ``finally`` block.
+
+    ``on_session_created`` is an optional callback invoked with the managed
+    session id the moment it is created, so the caller can surface a session
+    link to the UI before the (potentially long) drain runs.
 
     Returns the agent's transcript string. Extracted from
     :func:`_run_conversion_task` so the full flow (multipart register →
@@ -602,6 +636,12 @@ async def _run_managed_session(
         )
         omnigent_session_id = managed["id"]
         progress("agent_session", f"Managed session created ({omnigent_session_id}).")
+        # Surface the managed session id immediately so the caller can
+        # build + store the session link before the drain runs — the drain
+        # may take many turns and the link should be visible while the
+        # agent is still working.
+        if on_session_created is not None:
+            on_session_created(omnigent_session_id)
 
         # Step 3: Wait briefly for the runner if not yet online.
         if not managed.get("runner_online"):
@@ -619,9 +659,8 @@ async def _run_managed_session(
         )
         return transcript
     finally:
-        if omnigent_session_id is not None:
-            with suppress(OmnigentError):
-                await client.delete_session(omnigent_session_id)
+        # Keep the managed conversation session alive so the transcript is
+        # inspectable; only the throwaway registration session is tombstoned.
         if registration_session_id is not None:
             with suppress(OmnigentError):
                 await client.delete_session(registration_session_id)
@@ -673,15 +712,21 @@ async def _send_with_retry(
 
 
 async def _drain_conversion_stream(
-    client: OmnigentClient, session_id: str, progress: Any
+    client: OmnigentClient, session_id: str, progress: Any,
+    *, max_turns: int = _CONVERSION_MAX_TURNS,
 ) -> str:
-    """Drain the omnigent SSE stream into a transcript.
+    """Drain the omnigent SSE stream into a transcript across turns.
 
     Mirrors :meth:`OmnigentBackend._drain_stream` but appends a progress entry
-    for each completed assistant message so the UI shows live steps. Stops on
-    ``response.completed`` / ``[DONE]`` / an idle status after output.
+    for each completed assistant message so the UI shows live steps.
+    ``response.completed`` marks a per-TURN boundary (counted, not terminal) —
+    the converter agent runs autonomously across turns on a single stream, so
+    the drain keeps consuming past each turn. Stops when the source closes
+    (``[DONE]`` / EOF), the session goes ``idle`` (the agent has no more
+    autonomous steps), or the turn cap is reached.
     """
     parts: list[str] = []
+    turns = 0
     async for event_type, data in client.stream_session(session_id):
         if event_type == _DELTA_TYPE:
             delta = data.get("delta")
@@ -693,10 +738,19 @@ async def _drain_conversion_stream(
                 parts.append(text)
                 progress("agent_message", text[:200])
         elif event_type == _STATUS_TYPE:
+            # An idle status after output means the agent has no more
+            # autonomous steps — the conversation is truly done.
             if data.get("status") == "idle" and parts:
+                progress("agent_done", "Agent is idle; conversation complete.")
                 break
         elif event_type == _COMPLETED_TYPE:
-            break
+            # Per-turn boundary, not whole-conversation completion. Count
+            # it and keep draining so the agent can work across turns.
+            turns += 1
+            progress("agent_turn", f"Turn {turns} complete.")
+            if turns >= max_turns:
+                progress("agent_done", f"Turn cap ({max_turns}) reached.")
+                break
     return "".join(parts).strip()
 
 

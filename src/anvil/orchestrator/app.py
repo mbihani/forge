@@ -182,6 +182,10 @@ class ConversionStatus(BaseModel):
     branch_name: str | None = None
     revalidation: dict[str, Any] | None = None
     error: str | None = None
+    # Managed Omnigent conversation session — kept alive after conversion so
+    # the transcript is inspectable. Surfaced as a link in the UI.
+    session_id: str | None = None
+    session_url: str | None = None
 
 
 class RoundSummary(BaseModel):
@@ -2347,6 +2351,19 @@ function renderConvert(data) {
 
   if (data.error) {
     panel.appendChild(el('div', data.error, 'error-box'));
+  }
+
+  // Agent session link — visible as soon as the managed session is created
+  // (while the agent is still working), so the user can open the transcript.
+  if (data.session_url) {
+    const srow = el('div', null, 'row');
+    srow.appendChild(el('span', 'Agent session:', null));
+    const slink = el('a', data.session_id || 'view transcript', 'link');
+    slink.href = data.session_url;
+    slink.target = '_blank';
+    slink.rel = 'noopener noreferrer';
+    srow.appendChild(slink);
+    panel.appendChild(srow);
   }
 
   if (data.branch_name) {

@@ -18,8 +18,9 @@ one ephemeral Omnigent session:
    starts the agent's turn.
 5. **Drain the stream** — the SSE event stream is drained into a
    transcript (assistant text deltas + completed message items). The
-   stream also gates completion: the drain stops on
-   ``response.completed`` / ``[DONE]``.
+   drain runs across turns: ``response.completed`` marks a per-turn
+   boundary (counted, not terminal); the drain stops on ``[DONE]`` /
+   EOF, an ``idle`` session status (the agent is done), or the turn cap.
 6. **Download modified files** — the environment's ``changes`` endpoint
    lists files the agent wrote/deleted; each is read back into
    ``OptimizerResult.modified_files`` (``None`` for deletions).
@@ -97,10 +98,11 @@ class OmnigentBackend:
         model: str | None = None,
     ) -> OptimizerResult:
         start = time.monotonic()
+        effective_max_turns = max_turns or self.default_max_turns
         bundle = _build_agent_bundle(
             self.agent_bundle_path,
             model=model or self.default_model,
-            max_turns=max_turns or self.default_max_turns,
+            max_turns=effective_max_turns,
         )
         session_id: str | None = None
         session_url: str | None = None
@@ -113,7 +115,9 @@ class OmnigentBackend:
             env_id = await self._resolve_environment(session_id)
             await self._upload_scaffold(session_id, env_id, scaffold_files)
             await self.client.send_message(session_id, prompt)
-            stream_text, turns_used = await self._drain_stream(session_id)
+            stream_text, turns_used = await self._drain_stream(
+                session_id, max_turns=effective_max_turns
+            )
 
             # The stream is the primary transcript source; fall back to the
             # persisted conversation items only if the stream text did NOT
@@ -183,13 +187,19 @@ class OmnigentBackend:
                 continue  # deletions are not uploaded
             await self.client.upload_file(session_id, env_id, relative_path, content)
 
-    async def _drain_stream(self, session_id: str) -> tuple[str, int | None]:
+    async def _drain_stream(
+        self, session_id: str, *, max_turns: int = 70
+    ) -> tuple[str, int | None]:
         """Drain the SSE stream into a transcript; return (text, turns_used).
 
         Collects ``response.output_text.delta`` fragments and the text of
-        completed assistant messages (``response.output_item.done``). Stops
-        on ``response.completed`` (each such event counts as one turn) — the
-        underlying generator also returns on the ``[DONE]`` sentinel.
+        completed assistant messages (``response.output_item.done``).
+        ``response.completed`` marks a per-TURN boundary (counted, not
+        terminal) — the agent runs autonomously across turns on a single
+        stream, so the drain must keep consuming past each turn. The drain
+        stops when the source closes (``[DONE]`` / EOF), the session goes
+        ``idle`` (the agent has no more autonomous steps), or the turn cap
+        is reached.
         """
         parts: list[str] = []
         turns = 0
@@ -201,13 +211,19 @@ class OmnigentBackend:
             elif event_type == _ITEM_DONE_TYPE:
                 parts.append(_text_from_item(data.get("item")))
             elif event_type == _STATUS_TYPE:
-                # An idle status after a running turn means the agent is
-                # done; stop draining so we don't block on the live stream.
+                # An idle status after output means the agent has no more
+                # autonomous steps — the conversation is truly done. Stop
+                # draining so we don't block on the live stream.
                 if data.get("status") == "idle" and parts:
                     break
             elif event_type == _COMPLETED_TYPE:
+                # response.completed is a per-TURN boundary, not whole-
+                # conversation completion. Count it and keep draining so
+                # the agent can work across turns. The drain stops on
+                # [DONE]/EOF, an idle status, or the turn cap below.
                 turns += 1
-                break
+                if turns >= max_turns:
+                    break
         transcript = "".join(parts).strip()
         return transcript, (turns or None)
 

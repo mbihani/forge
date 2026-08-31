@@ -1784,7 +1784,12 @@ def _create_convertible_session(
 
 async def _fake_conversion_task(session_id: str, target_branch: str) -> None:
     """Test double for ``_run_conversion_task``: marks the conversion completed
-    with a synthetic re-validation report. No Omnigent/git contact."""
+    with a synthetic re-validation report. No Omnigent/git contact.
+
+    Sets ``session_id`` / ``session_url`` on the conversion result to mirror
+    the real task's ``on_session_created`` callback so the polling response
+    surfaces the persisted managed-session link.
+    """
     with app_module._session_lock:
         sess = app_module._sessions.get(session_id)
         if sess is not None and sess.conversion is not None:
@@ -1792,6 +1797,10 @@ async def _fake_conversion_task(session_id: str, target_branch: str) -> None:
             sess.conversion.branch_name = target_branch
             sess.conversion.pr_url = (
                 f"https://github.com/user/repo/compare/main...{target_branch}"
+            )
+            sess.conversion.session_id = "omnigent-sess-fake"
+            sess.conversion.session_url = (
+                "http://localhost:6767/sessions/omnigent-sess-fake"
             )
             sess.conversion.revalidation = {
                 "status": "valid",
@@ -1892,6 +1901,9 @@ def test_convert_starts_task_and_polls_to_completed(
     assert data["pr_url"] == "https://github.com/user/repo/compare/main...forge-compat"
     assert data["revalidation"]["status"] == "valid"
     assert data["revalidation"]["pii_findings"] == []
+    # The polling response surfaces the persisted managed-session link.
+    assert data["session_id"] == "omnigent-sess-fake"
+    assert data["session_url"] == "http://localhost:6767/sessions/omnigent-sess-fake"
 
 
 def test_convert_custom_target_branch(
