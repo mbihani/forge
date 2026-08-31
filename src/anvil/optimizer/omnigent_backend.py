@@ -239,7 +239,13 @@ class OmnigentBackend:
                 now = time.monotonic()
                 if now - start >= max_duration:
                     break
-                remaining = inactivity_timeout - (now - last_event)
+                # Bound the read by BOTH deadlines — whichever comes first.
+                # Using only the inactivity remaining lets a late read block
+                # past the max_duration ceiling; ``min()`` ensures the read
+                # can never run past either deadline.
+                inactivity_remaining = inactivity_timeout - (now - last_event)
+                max_duration_remaining = max_duration - (now - start)
+                remaining = min(inactivity_remaining, max_duration_remaining)
                 if remaining <= 0:
                     break
                 try:

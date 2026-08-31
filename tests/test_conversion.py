@@ -16,6 +16,7 @@ import io
 import os
 import subprocess
 import tarfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -840,6 +841,55 @@ def test_drain_conversion_stream_idle_does_not_break() -> None:
     # The terminal signal was the inactivity timeout, not the idle.
     done_entries = [e for e in progress_calls if e[0] == "agent_done"]
     assert done_entries and "inactive" in done_entries[0][1].lower()
+
+
+def test_drain_conversion_stream_max_duration_breaks_during_read() -> None:
+    """The ``max_duration`` deadline is a true hard ceiling: even when a read
+    is mid-``__anext__`` (the stream is hanging), the drain must break at the
+    ``max_duration`` deadline, NOT wait for the larger inactivity timeout.
+
+    Regression for the unbounded-read bug: ``asyncio.timeout(remaining)``
+    used only the inactivity remaining, so an event near the 1800s mark could
+    let the read block until ~1920s. With ``min(inactivity, max_duration)``
+    the read is bounded by whichever deadline comes first.
+
+    Setup: one event, then the stream hangs. ``inactivity_timeout=10``
+    (large — would wait 10s), ``max_duration=0.05`` (small — must fire first).
+    The drain must return within ~1s (the 0.05s max_duration fires, not the
+    10s inactivity timeout).
+    """
+    events = [
+        ("response.output_text.delta", {"delta": "before-hang "}),
+    ]
+    client = _FakeManagedSessionClient(stream_events=events, hang_after=True)
+    progress_calls: list[tuple[str, str]] = []
+
+    def _progress(kind: str, msg: str) -> None:
+        progress_calls.append((kind, msg))
+
+    async def _run() -> str:
+        return await _drain_conversion_stream(
+            client,
+            "managed-sess-id",
+            _progress,
+            inactivity_timeout=10,  # large — would wait 10s
+            max_duration=0.05,  # small — must fire first
+        )
+
+    start = time.monotonic()
+    transcript = asyncio.run(_run())
+    elapsed = time.monotonic() - start
+
+    # The drain broke at the max_duration deadline, not the 10s inactivity
+    # timeout — well under 2s.
+    assert elapsed < 2.0
+
+    # The one event before the hang was captured.
+    assert "before-hang" in transcript
+
+    # A max-duration progress entry was emitted (NOT an inactivity entry).
+    done_entries = [e for e in progress_calls if e[0] == "agent_done"]
+    assert done_entries and "max drain duration" in done_entries[0][1].lower()
 
 
 # ---------------------------------------------------------------------------

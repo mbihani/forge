@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import io
 import tarfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +48,7 @@ class FakeOmnigentClient:
         environments: list[dict] | None = None,
         items: dict | None = None,
         file_contents: dict[str, str] | None = None,
+        hang_after: bool = False,
     ) -> None:
         self.calls: list[tuple[str, ...]] = []
         self._stream_events = stream_events or []
@@ -54,6 +56,7 @@ class FakeOmnigentClient:
         self._environments = environments or [{"id": "default"}]
         self._items = items
         self._file_contents = file_contents or {}
+        self._hang_after = hang_after
 
     async def create_session(
         self, bundle_bytes: bytes, metadata: SessionCreateMetadata | None = None, **kw: Any
@@ -79,6 +82,8 @@ class FakeOmnigentClient:
         self.calls.append(("stream_session", session_id))
         for event_type, data in self._stream_events:
             yield event_type, data
+        if self._hang_after:
+            await asyncio.Event().wait()
 
     async def list_items(
         self, session_id: str, *, limit: int = 100, after: str | None = None
@@ -295,6 +300,33 @@ def test_run_full_flow_creates_uploads_sends_drains_parses(tmp_path: Path) -> No
     # 7. Session URL is populated.
     assert result.session_url == "http://localhost:6767/sessions/sess-1"
     assert result.turns_used == 1  # one response.completed event
+
+
+def test_drain_stream_max_duration_breaks_during_read(tmp_path: Path) -> None:
+    """The total-duration deadline interrupts a hanging stream read."""
+    fake = FakeOmnigentClient(
+        stream_events=[("response.output_text.delta", {"delta": "before-hang "})],
+        hang_after=True,
+    )
+    backend = OmnigentBackend(
+        client=fake,  # type: ignore[arg-type]
+        agent_bundle_path=_write_agent_yaml(tmp_path),
+        server_url="http://localhost:6767",
+    )
+
+    start = time.monotonic()
+    transcript, turns_used = asyncio.run(
+        backend._drain_stream(
+            "sess-1",
+            inactivity_timeout=10,
+            max_duration=0.05,
+        )
+    )
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 2.0
+    assert "before-hang" in transcript
+    assert turns_used is None
 
 
 def test_run_falls_back_to_items_when_stream_has_no_fenced_block(tmp_path: Path) -> None:

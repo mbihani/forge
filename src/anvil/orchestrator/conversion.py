@@ -761,21 +761,36 @@ async def _drain_conversion_stream(
             if now - start >= max_duration:
                 progress("agent_done", f"Max drain duration ({max_duration}s) reached.")
                 break
-            remaining = inactivity_timeout - (now - last_event)
+            # Bound the read by BOTH deadlines — whichever comes first. Using
+            # only the inactivity remaining lets a late read block past the
+            # max_duration ceiling; ``min()`` ensures the read can never run
+            # past either deadline.
+            inactivity_remaining = inactivity_timeout - (now - last_event)
+            max_duration_remaining = max_duration - (now - start)
+            remaining = min(inactivity_remaining, max_duration_remaining)
             if remaining <= 0:
-                progress(
-                    "agent_done",
-                    f"Agent inactive for {inactivity_timeout}s; ending drain.",
-                )
+                # Distinguish which deadline was hit so the progress entry is
+                # accurate (the ``min()`` makes either one the binding one).
+                if max_duration_remaining <= inactivity_remaining:
+                    progress("agent_done", f"Max drain duration ({max_duration}s) reached.")
+                else:
+                    progress(
+                        "agent_done",
+                        f"Agent inactive for {inactivity_timeout}s; ending drain.",
+                    )
                 break
             try:
                 async with asyncio.timeout(remaining):
                     event_type, data = await stream.__anext__()
             except TimeoutError:
-                progress(
-                    "agent_done",
-                    f"Agent inactive for {inactivity_timeout}s; ending drain.",
-                )
+                # The read timed out — distinguish which deadline fired.
+                if time.monotonic() - start >= max_duration:
+                    progress("agent_done", f"Max drain duration ({max_duration}s) reached.")
+                else:
+                    progress(
+                        "agent_done",
+                        f"Agent inactive for {inactivity_timeout}s; ending drain.",
+                    )
                 break
             except StopAsyncIteration:
                 # Stream closed ([DONE] / EOF) — the normal end of the
