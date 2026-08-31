@@ -517,8 +517,16 @@ class _FakeManagedSessionClient:
     ``stream_session`` (consumed by :func:`_drain_conversion_stream`).
     """
 
-    def __init__(self, *, stream_events: list[tuple[str, dict[str, Any]]]) -> None:
+    def __init__(
+        self,
+        *,
+        stream_events: list[tuple[str, dict[str, Any]]],
+        hang_after: bool = False,
+    ) -> None:
         self.stream_events = stream_events
+        # When True, stream_session hangs forever after yielding all events,
+        # simulating an open-but-silent SSE connection (no [DONE], no EOF).
+        self.hang_after = hang_after
         self.create_session_calls: list[dict[str, Any]] = []
         self.create_session_from_agent_calls: list[dict[str, Any]] = []
         self.send_message_calls: list[dict[str, Any]] = []
@@ -563,6 +571,10 @@ class _FakeManagedSessionClient:
         self.stream_session_calls.append(session_id)
         for event in self.stream_events:
             yield event
+        if self.hang_after:
+            # Simulate an open connection that never sends [DONE] — the drain's
+            # inactivity timeout must break out of this.
+            await asyncio.Event().wait()
 
     async def get_session(self, session_id: str) -> dict[str, Any]:
         # Present for _wait_for_runner; not reached when create_session_from_agent
@@ -650,6 +662,9 @@ def test_drain_conversion_stream_consumes_multiple_turns() -> None:
     then an idle status) must be consumed in full and the transcript must
     concatenate text from BOTH turns.
 
+    The trailing ``idle`` status is logged but does NOT break the drain —
+    the stream simply ends (EOF) after it, which is the normal end.
+
     Regression for the mid-run drop bug: the old drain broke on the first
     ``response.completed`` and labeled the conversation "Agent finished"
     after one turn.
@@ -683,7 +698,8 @@ def test_drain_conversion_stream_consumes_multiple_turns() -> None:
             },
         ),
         ("response.completed", {}),
-        # The agent goes idle — the true terminal signal.
+        # The agent goes idle — logged but NOT terminal (the drain continues;
+        # the stream ends on EOF after this event).
         ("session.status", {"status": "idle"}),
     ]
     client = _FakeManagedSessionClient(stream_events=events)
@@ -707,9 +723,13 @@ def test_drain_conversion_stream_consumes_multiple_turns() -> None:
     turn_entries = [e for e in progress_calls if e[0] == "agent_turn"]
     assert [e[1] for e in turn_entries] == ["Turn 1 complete.", "Turn 2 complete."]
 
-    # An idle-status progress entry was emitted (the real terminal signal).
+    # An idle-status progress entry was emitted (logged, NOT terminal).
+    idle_entries = [e for e in progress_calls if e[0] == "agent_idle"]
+    assert idle_entries and "idle" in idle_entries[0][1].lower()
+
+    # The idle did NOT trigger an "agent_done" — the drain ended on EOF.
     done_entries = [e for e in progress_calls if e[0] == "agent_done"]
-    assert done_entries and "idle" in done_entries[0][1].lower()
+    assert done_entries == []
 
 
 def test_drain_conversion_stream_respects_turn_cap() -> None:
@@ -737,6 +757,89 @@ def test_drain_conversion_stream_respects_turn_cap() -> None:
     assert "t1." in transcript
     assert "t2." in transcript
     assert "t3." not in transcript
+
+
+def test_drain_conversion_stream_inactivity_timeout() -> None:
+    """When the SSE stream stays open but emits no events for
+    ``inactivity_timeout`` seconds, the drain must break (not loop forever).
+    This handles the "agent went idle and never came back" / "silently open
+    connection with only heartbeats" case.
+    """
+    events = [
+        # One event, then the stream hangs (hang_after=True).
+        ("response.output_text.delta", {"delta": "partial "}),
+    ]
+    client = _FakeManagedSessionClient(stream_events=events, hang_after=True)
+    progress_calls: list[tuple[str, str]] = []
+
+    def _progress(kind: str, msg: str) -> None:
+        progress_calls.append((kind, msg))
+
+    async def _run() -> str:
+        return await _drain_conversion_stream(
+            client, "managed-sess-id", _progress, inactivity_timeout=0.05
+        )
+
+    transcript = asyncio.run(_run())
+
+    # The one event that arrived before the hang was captured.
+    assert "partial" in transcript
+
+    # The inactivity timeout fired and produced an agent_done progress entry.
+    done_entries = [e for e in progress_calls if e[0] == "agent_done"]
+    assert done_entries and "inactive" in done_entries[0][1].lower()
+
+
+def test_drain_conversion_stream_idle_does_not_break() -> None:
+    """An inter-turn ``idle`` status must NOT cause a premature break — the
+    drain keeps consuming past it. The terminal signal is the inactivity
+    timeout, which fires when no events arrive after the LAST idle.
+
+    Mock: turn 1 (delta + completed), idle, turn 2 (delta + completed), idle,
+    then the stream hangs. With a short inactivity timeout, both turns are
+    consumed and the break happens on the timeout after the second idle, NOT
+    on the first idle.
+    """
+    events = [
+        # Turn 1.
+        ("response.output_text.delta", {"delta": "turn1 "}),
+        ("response.completed", {}),
+        # Inter-turn idle — must NOT break.
+        ("session.status", {"status": "idle"}),
+        # Turn 2 — the old code (idle+parts break) never reached here.
+        ("response.output_text.delta", {"delta": "turn2 "}),
+        ("response.completed", {}),
+        # Final idle, then the stream hangs.
+        ("session.status", {"status": "idle"}),
+    ]
+    client = _FakeManagedSessionClient(stream_events=events, hang_after=True)
+    progress_calls: list[tuple[str, str]] = []
+
+    def _progress(kind: str, msg: str) -> None:
+        progress_calls.append((kind, msg))
+
+    async def _run() -> str:
+        return await _drain_conversion_stream(
+            client, "managed-sess-id", _progress, inactivity_timeout=0.05
+        )
+
+    transcript = asyncio.run(_run())
+
+    # BOTH turns were consumed — the first idle did NOT break the drain.
+    assert "turn1" in transcript
+    assert "turn2" in transcript
+
+    # Two turn-progress entries (both response.completed events counted).
+    turn_entries = [e for e in progress_calls if e[0] == "agent_turn"]
+    assert len(turn_entries) == 2
+
+    # Two idle entries (both were logged, neither broke the drain).
+    idle_entries = [e for e in progress_calls if e[0] == "agent_idle"]
+    assert len(idle_entries) == 2
+
+    # The terminal signal was the inactivity timeout, not the idle.
+    done_entries = [e for e in progress_calls if e[0] == "agent_done"]
+    assert done_entries and "inactive" in done_entries[0][1].lower()
 
 
 # ---------------------------------------------------------------------------

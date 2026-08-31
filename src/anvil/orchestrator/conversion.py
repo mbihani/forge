@@ -34,9 +34,11 @@ pool (same pattern as the optimization task in :mod:`anvil.orchestrator.app`).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import subprocess
+import time
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -85,6 +87,15 @@ _DELTA_TYPE = "response.output_text.delta"
 _ITEM_DONE_TYPE = "response.output_item.done"
 _COMPLETED_TYPE = "response.completed"
 _STATUS_TYPE = "session.status"
+
+# Bounded-drain safety timeouts (mirrors omnigent_backend.py). The SSE stream
+# can stay open with only heartbeats and no ``response.completed`` / ``idle`` /
+# EOF; without a bound the drain loops forever. ``_STREAM_INACTIVITY_TIMEOUT``
+# fires when no event arrives for this many seconds (the agent went idle and
+# never came back, or the connection is silently open). ``_STREAM_MAX_DURATION``
+# is a hard ceiling on total drain time.
+_STREAM_INACTIVITY_TIMEOUT = 120  # seconds
+_STREAM_MAX_DURATION = 1800  # 30 minutes
 
 # ---------------------------------------------------------------------------
 # PII patterns scanned on the converted branch diff.
@@ -713,7 +724,10 @@ async def _send_with_retry(
 
 async def _drain_conversion_stream(
     client: OmnigentClient, session_id: str, progress: Any,
-    *, max_turns: int = _CONVERSION_MAX_TURNS,
+    *,
+    max_turns: int = _CONVERSION_MAX_TURNS,
+    inactivity_timeout: float = _STREAM_INACTIVITY_TIMEOUT,
+    max_duration: float = _STREAM_MAX_DURATION,
 ) -> str:
     """Drain the omnigent SSE stream into a transcript across turns.
 
@@ -721,36 +735,83 @@ async def _drain_conversion_stream(
     for each completed assistant message so the UI shows live steps.
     ``response.completed`` marks a per-TURN boundary (counted, not terminal) —
     the converter agent runs autonomously across turns on a single stream, so
-    the drain keeps consuming past each turn. Stops when the source closes
-    (``[DONE]`` / EOF), the session goes ``idle`` (the agent has no more
-    autonomous steps), or the turn cap is reached.
+    the drain keeps consuming past each turn.
+
+    The drain is bounded by two safety timeouts:
+
+    * ``inactivity_timeout`` — if no stream event arrives for this many
+      seconds the drain breaks (the agent went idle and never came back, or
+      the connection is silently open with only heartbeats).
+    * ``max_duration`` — a hard ceiling on total drain time.
+
+    An ``idle`` session status is logged but does NOT break the drain — an
+    inter-turn idle may be followed by another autonomous turn, and the
+    inactivity timeout is the reliable terminal signal for "idle and never
+    came back." The drain stops on: ``[DONE]`` / EOF, the inactivity timeout,
+    the max-duration deadline, or the turn cap.
     """
     parts: list[str] = []
     turns = 0
-    async for event_type, data in client.stream_session(session_id):
-        if event_type == _DELTA_TYPE:
-            delta = data.get("delta")
-            if isinstance(delta, str):
-                parts.append(delta)
-        elif event_type == _ITEM_DONE_TYPE:
-            text = _text_from_item(data.get("item"))
-            if text:
-                parts.append(text)
-                progress("agent_message", text[:200])
-        elif event_type == _STATUS_TYPE:
-            # An idle status after output means the agent has no more
-            # autonomous steps — the conversation is truly done.
-            if data.get("status") == "idle" and parts:
-                progress("agent_done", "Agent is idle; conversation complete.")
+    start = time.monotonic()
+    last_event = start
+    stream = client.stream_session(session_id)
+    try:
+        while True:
+            now = time.monotonic()
+            if now - start >= max_duration:
+                progress("agent_done", f"Max drain duration ({max_duration}s) reached.")
                 break
-        elif event_type == _COMPLETED_TYPE:
-            # Per-turn boundary, not whole-conversation completion. Count
-            # it and keep draining so the agent can work across turns.
-            turns += 1
-            progress("agent_turn", f"Turn {turns} complete.")
-            if turns >= max_turns:
-                progress("agent_done", f"Turn cap ({max_turns}) reached.")
+            remaining = inactivity_timeout - (now - last_event)
+            if remaining <= 0:
+                progress(
+                    "agent_done",
+                    f"Agent inactive for {inactivity_timeout}s; ending drain.",
+                )
                 break
+            try:
+                async with asyncio.timeout(remaining):
+                    event_type, data = await stream.__anext__()
+            except TimeoutError:
+                progress(
+                    "agent_done",
+                    f"Agent inactive for {inactivity_timeout}s; ending drain.",
+                )
+                break
+            except StopAsyncIteration:
+                # Stream closed ([DONE] / EOF) — the normal end of the
+                # conversation; no progress entry needed.
+                break
+            last_event = time.monotonic()
+            if event_type == _DELTA_TYPE:
+                delta = data.get("delta")
+                if isinstance(delta, str):
+                    parts.append(delta)
+            elif event_type == _ITEM_DONE_TYPE:
+                text = _text_from_item(data.get("item"))
+                if text:
+                    parts.append(text)
+                    progress("agent_message", text[:200])
+            elif event_type == _STATUS_TYPE:
+                # An idle status is NOT terminal — the agent may start
+                # another autonomous turn. Log it and keep draining; the
+                # inactivity timeout handles the "idle and never came back"
+                # case. Breaking here was the mid-run drop bug in disguise:
+                # an inter-turn idle would end the conversation prematurely.
+                if data.get("status") == "idle":
+                    progress("agent_idle", "Agent went idle; waiting for more activity.")
+            elif event_type == _COMPLETED_TYPE:
+                # Per-turn boundary, not whole-conversation completion. Count
+                # it and keep draining so the agent can work across turns.
+                turns += 1
+                progress("agent_turn", f"Turn {turns} complete.")
+                if turns >= max_turns:
+                    progress("agent_done", f"Turn cap ({max_turns}) reached.")
+                    break
+    finally:
+        # Best-effort close of the async generator so any underlying HTTP
+        # stream is released even on timeout/cancellation.
+        with suppress(Exception):
+            await stream.aclose()
     return "".join(parts).strip()
 
 
