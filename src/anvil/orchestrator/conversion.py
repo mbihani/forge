@@ -37,6 +37,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import shutil
 import subprocess
 import time
 from contextlib import suppress
@@ -583,6 +584,28 @@ async def _run_conversion_task(session_id: str, target_branch: str) -> None:
             + (f" PR link: {pr_url}" if pr_url else "")
             + (" PII flagged — review before merging." if pii_findings else ""),
         )
+
+        # ---- Auto-promote the session to the converted branch ----
+        # When re-validation passed, switch the session to the converted
+        # checkout so the user can proceed to optimization WITHOUT creating a
+        # new session. The session's repo_path, config, validation, and status
+        # all move to the converted branch; the original clone is removed to
+        # save disk. On failure the session is left untouched (the
+        # revalidation report is already visible via GET /convert).
+        if report.get("status") == "valid":
+            await anyio.to_thread.run_sync(
+                partial(
+                    _promote_session_to_converted,
+                    session_id,
+                    converted_path,
+                    _config,
+                    report,
+                )
+            )
+            _progress(
+                "promoted",
+                "Session switched to the converted branch — ready for optimization.",
+            )
     except Exception as exc:  # noqa: BLE001 — surface any failure
         logger.exception("conversion task for session %s failed", session_id)
         # Redact the token from the error string before storing it.
@@ -595,6 +618,67 @@ async def _run_conversion_task(session_id: str, target_branch: str) -> None:
             pass
         _set(status="failed", error=message)
         _progress("failed", f"Conversion failed: {message}")
+
+
+def _promote_session_to_converted(
+    session_id: str,
+    converted_path: Path,
+    config: dict | None,
+    report: dict | None = None,
+) -> None:
+    """Switch a session from its original clone to the converted checkout.
+
+    Called after a successful re-validation (``report.status == "valid"``)
+    so the user can proceed to optimization on the converted branch without
+    creating a new session. Runs in a thread pool (caller holds nothing).
+
+    Updates under :data:`app_module._session_lock` for thread safety:
+
+    * ``repo_path`` → the converted checkout (``converted_path``).
+    * ``config`` → a redacted copy re-read from the converted repo (when the
+      re-validation returned one), so the dashboard reflects the converted
+      harness/config.yaml.
+    * ``validation`` → the re-validation report (the converted branch's 8
+      checks).
+    * ``status`` → ``"validated"`` (ready to optimize).
+    * ``_clone_root`` → the converted clone root so the shutdown cleanup
+      removes the converted clone (not the now-deleted original).
+
+    Then removes the original clone from disk to save space — the converted
+    clone is the active session repo from here on. The original and converted
+    clones are sibling directories under ``_SESSIONS_ROOT`` (``<id>`` vs
+    ``<id>-converted``), so removing one never touches the other.
+    """
+    from anvil.orchestrator import app as app_module
+
+    with app_module._session_lock:
+        sess = app_module._sessions.get(session_id)
+        if sess is None:
+            return
+        original_clone = sess._clone_root or sess.repo_path
+        sess.repo_path = converted_path
+        # The converted clone root is the ``<id>-converted`` directory —
+        # ``converted_path`` may be a subpath of it (agent_subpath). Derive
+        # the root so shutdown cleanup removes the right tree.
+        converted_root = app_module._SESSIONS_ROOT / f"{session_id}-converted"
+        sess._clone_root = converted_root
+        if report is not None:
+            sess.validation = report
+        sess.status = "validated"
+        sess.error = None
+        if config is not None:
+            sess.config = app_module._redact_secrets(config)
+
+    # Remove the original clone (sibling of the converted clone) to save
+    # disk. Best-effort: a failure here must not unwind the promotion.
+    if original_clone is not None and original_clone != converted_path:
+        # Guard against the original being an ancestor of the converted
+        # clone (should never happen — they are siblings — but be safe).
+        try:
+            if original_clone.resolve() != converted_root.resolve():
+                shutil.rmtree(original_clone, ignore_errors=True)
+        except OSError:
+            logger.debug("failed to remove original clone %s", original_clone)
 
 
 async def _run_managed_session(
