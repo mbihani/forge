@@ -30,6 +30,7 @@ from anvil.loop.decision import Decision
 from anvil.loop.frontier import (
     AGGREGATE_KEY,
     Frontier,
+    _scores_for_objectives,
     gate_decision,
     load_frontier,
     load_gate_config,
@@ -647,3 +648,79 @@ def test_gate_config_parses_structured_pareto_objectives() -> None:
     )
     assert cfg.pareto.enabled is True
     assert [o.name for o in cfg.pareto.objectives] == ["quality", "cost"]
+
+
+# ---------------------------------------------------------------------------
+# Latency objective + per-objective epsilon
+# ---------------------------------------------------------------------------
+
+
+def test_latency_source_is_valid_pareto_objective() -> None:
+    """``source="latency"`` is a valid ParetoObjective (reads latency_ms_median)."""
+    obj = ParetoObjective(name="latency", source="latency", direction="minimize")
+    assert obj.source == "latency"
+    assert obj.direction == "minimize"
+    assert obj.epsilon is None  # defaults to None (fall back to global gate.epsilon)
+
+
+def test_pareto_objective_accepts_per_objective_epsilon() -> None:
+    """An objective can carry its own epsilon override."""
+    obj = ParetoObjective(name="latency", source="latency", direction="minimize", epsilon=500.0)
+    assert obj.epsilon == 500.0
+
+
+def test_scores_for_objectives_maps_latency_to_latency_ms_median() -> None:
+    """_scores_for_objectives reads ``latency_ms_median`` from cost_metrics
+    for a ``source="latency"`` objective."""
+    report = SimpleNamespace(
+        aggregate=0.9,
+        cost_metrics={"latency_ms_median": 1234.5, "total_tokens": 100},
+    )
+    objectives = [ParetoObjective(name="latency", source="latency", direction="minimize")]
+    scores = _scores_for_objectives(report, objectives)
+    assert scores == {"latency": 1234.5}
+
+
+def test_should_keep_uses_per_objective_epsilon() -> None:
+    """Per-objective epsilon allows a latency regression that the global
+    epsilon (sized for accuracy) would reject.
+
+    accuracy improves by 0.002 (above its epsilon 0.001 → improves_any);
+    latency regresses by 100ms (within its epsilon 500ms → not dominated).
+    With only the global epsilon 0.001 the 100ms latency regression would
+    be dominated and the mutation reverted.
+    """
+    mutated = {"accuracy": 0.902, "latency": 1100.0}
+    frontier = {"accuracy": 0.900, "latency": 1000.0}
+    assert Frontier.should_keep(
+        mutated,
+        frontier,
+        epsilon=0.001,
+        epsilons={"accuracy": 0.001, "latency": 500.0},
+        objectives=["accuracy", "latency"],
+        directions={"accuracy": "maximize", "latency": "minimize"},
+    )
+    # Same mutation with only the global epsilon → reverted (100ms >> 0.001ms).
+    assert not Frontier.should_keep(
+        mutated,
+        frontier,
+        epsilon=0.001,
+        objectives=["accuracy", "latency"],
+        directions={"accuracy": "maximize", "latency": "minimize"},
+    )
+
+
+def test_should_keep_per_objective_epsilon_rejects_beyond_threshold() -> None:
+    """A latency regression beyond the per-objective epsilon is rejected
+    even when accuracy improves."""
+    mutated = {"accuracy": 0.902, "latency": 1600.0}
+    frontier = {"accuracy": 0.900, "latency": 1000.0}
+    # latency regressed by 600ms, per-objective epsilon is 500ms → dominated
+    assert not Frontier.should_keep(
+        mutated,
+        frontier,
+        epsilon=0.001,
+        epsilons={"accuracy": 0.001, "latency": 500.0},
+        objectives=["accuracy", "latency"],
+        directions={"accuracy": "maximize", "latency": "minimize"},
+    )

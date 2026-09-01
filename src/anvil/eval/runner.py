@@ -59,6 +59,7 @@ except ImportError:
 from anvil.agents.memory_system import MemorySystem
 from anvil.data import load_golden_set, select_subset
 from anvil.eval.cache import compute_scorer_fingerprint
+from anvil.eval.engines import GENAI_ENGINE, load_engine
 from anvil.eval.scorers import build_scorers
 from anvil.observability import SOURCE_EVAL, enable_runtime_tracing
 from anvil.runtime.agent import AnvilAgent
@@ -689,6 +690,25 @@ def evaluate_branch(
     )
 
     snapshot = load_harness(scaffold_path, runtime_path)
+
+    # Engine dispatch (domain-agnostic). ``genai`` is the built-in default
+    # implemented by the rest of this function; any other engine is a
+    # pluggable domain resolved through the registry, which lazily imports
+    # its ``anvil.domains.<name>`` package (so no domain is named here and
+    # no domain tree — e.g. savesage's statement-agent — is touched on the
+    # genai path). A pluggable engine returns the same ``EvalReport`` the
+    # loop consumes and bypasses the mlflow.genai.evaluate path below.
+    engine_name = snapshot.config.eval.engine
+    if engine_name != GENAI_ENGINE:
+        engine_fn = load_engine(engine_name)
+        return engine_fn(
+            scaffold_root=scaffold_path,
+            runtime_config_path=runtime_path,
+            golden_set_path=golden_set_path,
+            profile=profile,
+            mode=mode,
+        )
+
     cfg: EvalConfig = snapshot.config.eval
     selected_mode = mode or cfg.default_mode
     if selected_mode == "test" and not allow_test:
