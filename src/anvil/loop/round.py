@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -444,13 +445,26 @@ def _read_optimizer_config(scaffold_root: Path | str) -> dict[str, Any]:
     compatible: no ``optimizer`` block means the local backend (the
     existing ``run_optimizer_session`` path). Only the ``optimizer`` key
     is read here; full-file validation is enforced by the runtime loader.
+
+    The ``backend`` key can be overridden via the
+    ``ANVIL_OPTIMIZER_BACKEND`` env var, so a deployment (e.g. a
+    Databricks App) can force the omnigent backend without the cloned
+    target repo needing an ``optimizer:`` section in its config.yaml.
     """
     path = default_runtime_config_path(Path(scaffold_root))
     if not path.is_file():
-        return {}
-    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    optimizer = raw.get("optimizer")
-    return optimizer if isinstance(optimizer, dict) else {}
+        optimizer_cfg: dict[str, Any] = {}
+    else:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        optimizer = raw.get("optimizer")
+        optimizer_cfg = optimizer if isinstance(optimizer, dict) else {}
+    # Env-var override lets a deployment select the backend without the
+    # cloned repo needing an ``optimizer:`` section.
+    if not optimizer_cfg.get("backend"):
+        env_backend = os.getenv("ANVIL_OPTIMIZER_BACKEND", "")
+        if env_backend:
+            optimizer_cfg["backend"] = env_backend
+    return optimizer_cfg
 
 
 async def _run_omnigent_session(
@@ -475,10 +489,20 @@ async def _run_omnigent_session(
     bundle_path = Path(bundle_rel)
     if not bundle_path.is_absolute():
         bundle_path = (repo_root / bundle_rel).resolve()
+    # Fallback: if the bundle doesn't exist in the cloned repo, use the
+    # forge package's own copy so a target repo without an agents/
+    # directory still works.
+    if not bundle_path.exists():
+        forge_agents = Path(__file__).resolve().parent.parent.parent.parent / "agents"
+        forge_bundle = forge_agents / "forge_optimizer.yaml"
+        if forge_bundle.exists():
+            bundle_path = forge_bundle
     cfg = BackendConfig(
         backend="omnigent",
-        server_url=optimizer_cfg.get("server_url", "http://localhost:6767"),
-        auth_token=optimizer_cfg.get("auth_token") or None,
+        server_url=optimizer_cfg.get("server_url")
+        or os.getenv("OMNIGENT_SERVER_URL")
+        or "http://localhost:6767",
+        auth_token=optimizer_cfg.get("auth_token") or os.getenv("OMNIGENT_AUTH_TOKEN") or None,
         agent_bundle_path=str(bundle_path),
         model=optimizer_endpoint,
         max_turns=max_turns,
