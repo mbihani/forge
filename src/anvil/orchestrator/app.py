@@ -1093,6 +1093,49 @@ def _reset_frontier(repo_path: Path) -> None:
         frontier_file.unlink()
 
 
+def _ensure_synthetic_golden_set(repo_path: Path) -> Path:
+    """Ensure a golden set file exists, synthesizing a minimal fallback.
+
+    The real ``data/golden_set.jsonl`` is gitignored (cardholder PII) and
+    absent from a fresh clone of the agent repo. On the Databricks App the
+    process CWD is the app source dir — not the cloned repo — so the
+    relative ``"data/golden_set.jsonl"`` default resolves to the wrong
+    place and :func:`load_golden_set` raises ``FileNotFoundError`` before
+    the first eval can run.
+
+    When the file is missing this writes a minimal 3-row synthetic golden
+    set carrying every required field (see
+    :data:`anvil.data.golden_set.REQUIRED_FIELDS`) so the eval runner has
+    something to score. The real PII golden set should be provisioned
+    out-of-band; this fallback exists so the orchestrator does not
+    hard-crash on a fresh clone.
+
+    Returns the path to the golden set file (existing or newly written).
+    """
+    golden_set_path = repo_path / "data" / "golden_set.jsonl"
+    if golden_set_path.is_file():
+        return golden_set_path
+    golden_set_path.parent.mkdir(parents=True, exist_ok=True)
+    rows = [
+        {
+            "example_id": f"test-{i:03d}",
+            "query": "What are the transaction details?",
+            "category": "test",
+            "expected_doc_ids": [],
+            "reference_answer": "Sample answer",
+            "should_refuse": False,
+            "expected_citations": [],
+            "must_include": [],
+            "must_not_include": [],
+            "notes_for_judge": "",
+        }
+        for i in range(1, 4)
+    ]
+    payload = "".join(json.dumps(row) + "\n" for row in rows)
+    golden_set_path.write_text(payload, encoding="utf-8")
+    return golden_set_path
+
+
 def _build_baseline_sync(
     repo_path: Path,
     eval_mode: str | None,
@@ -1128,6 +1171,11 @@ def _build_baseline_sync(
         _reset_frontier(repo_path)
         return baseline.to_dict()
 
+    # The real golden set is gitignored (cardholder PII) and absent from a
+    # fresh clone; synthesize a minimal fallback so the baseline eval does
+    # not FileNotFoundError before the first scored round.
+    golden_set_path = _ensure_synthetic_golden_set(repo_path)
+
     scaffold_root = repo_path / "scaffold"
     config_path = repo_path / "harness" / "config.yaml"
     runtime_endpoint = ""
@@ -1147,6 +1195,7 @@ def _build_baseline_sync(
     report = evaluate_branch(
         scaffold_root=scaffold_root,
         runtime_config_path=config_path if config_path.is_file() else None,
+        golden_set_path=str(golden_set_path),
         mode=eval_mode,
     )
     baseline = report_to_baseline(

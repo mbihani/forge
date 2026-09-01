@@ -44,3 +44,4 @@ eval/scratch/
 
 # Local MLflow SQLite store (test runs)
 mlflow.db
+databricks.yml

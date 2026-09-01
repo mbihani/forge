@@ -193,6 +193,7 @@ def run_round(
             eval_report = evaluate_branch(
                 scaffold_root=scaffold_root,
                 profile=profile,
+                golden_set_path=str(Path(repo_root) / "data" / "golden_set.jsonl"),
                 mode=eval_mode,
             )
             mutated_score = eval_report.aggregate
