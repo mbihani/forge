@@ -701,12 +701,13 @@ def evaluate_branch(
     engine_name = snapshot.config.eval.engine
     if engine_name != GENAI_ENGINE:
         engine_fn = load_engine(engine_name)
+        resolved_mode = mode or snapshot.config.eval.default_mode
         return engine_fn(
             scaffold_root=scaffold_path,
             runtime_config_path=runtime_path,
             golden_set_path=golden_set_path,
             profile=profile,
-            mode=mode,
+            mode=resolved_mode,
         )
 
     cfg: EvalConfig = snapshot.config.eval

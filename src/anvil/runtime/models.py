@@ -16,11 +16,12 @@ with a domain-specific message.
 from __future__ import annotations
 
 import math
-import re
 from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from anvil.eval.engines import is_valid_engine_name
 
 
 class SamplingConfig(BaseModel):
@@ -313,11 +314,12 @@ class EvalConfig(BaseModel):
         The name is dispatched by :mod:`anvil.eval.engines` and, for a
         pluggable engine, becomes the trailing segment of the import path
         ``anvil.domains.<name>`` — so an unsafe value (dots, slashes,
-        ``..``) could redirect the import. Kept in sync with
-        ``anvil.eval.engines._ENGINE_NAME_RE``; whether the engine
-        actually exists is checked at dispatch time by the registry.
+        ``..``) could redirect the import. Delegates to the shared
+        :func:`anvil.eval.engines.is_valid_engine_name` so the rule stays
+        in sync with the registry; whether the engine actually exists is
+        checked at dispatch time by the registry.
         """
-        if not re.match(r"^[a-z][a-z0-9_]*$", v):
+        if not is_valid_engine_name(v):
             raise ValueError(
                 f"eval.engine {v!r} must be a lowercase identifier "
                 r"matching ^[a-z][a-z0-9_]*$"

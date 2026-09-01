@@ -36,7 +36,7 @@ GENAI_ENGINE = "genai"
 # Engine name shape. Also the trailing segment of the convention import
 # path ``anvil.domains.<name>``, so validating it here doubles as a guard
 # against import-path injection through a crafted config value.
-_ENGINE_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+_ENGINE_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*\Z")
 
 _ENGINES: dict[str, Callable[..., Any]] = {}
 
@@ -83,10 +83,17 @@ def load_engine(name: str) -> Callable[..., Any]:
     try:
         importlib.import_module(f"anvil.domains.{name}")
     except ModuleNotFoundError as exc:
-        raise ValueError(
-            f"unknown eval engine {name!r}: not registered and no "
-            f"anvil.domains.{name} package to import"
-        ) from exc
+        # The missing module is the engine package itself or a parent
+        # path component (e.g. ``anvil.domains`` not yet created) → the
+        # engine is unknown. A missing dependency *inside* the engine
+        # package has a different ``exc.name`` and should surface as-is.
+        target = f"anvil.domains.{name}"
+        if exc.name == target or (exc.name is not None and target.startswith(f"{exc.name}.")):
+            raise ValueError(
+                f"unknown eval engine {name!r}: not registered and no "
+                f"anvil.domains.{name} package to import"
+            ) from exc
+        raise  # missing dependency inside the engine package — re-raise
     fn = _ENGINES.get(name)
     if fn is None:
         raise ValueError(

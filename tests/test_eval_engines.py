@@ -30,6 +30,12 @@ def test_invalid_engine_names(name):
     assert not is_valid_engine_name(name)
 
 
+def test_engine_name_rejects_trailing_newline():
+    # ``re.match`` with ``$`` matches before a final newline, so "evil\n"
+    # would slip past a naive ``^...$`` check. The validator must reject it.
+    assert not is_valid_engine_name("evil\n")
+
+
 # ---------------------------------------------------------------------------
 # register / load.
 # ---------------------------------------------------------------------------
@@ -64,6 +70,18 @@ def test_load_rejects_unsafe_name_before_import():
         load_engine("../evil")
 
 
+def test_load_engine_reraises_missing_dependency_inside_package():
+    # A ModuleNotFoundError for a dependency *inside* the engine package
+    # (exc.name is not the target or a parent path) must surface as-is,
+    # not be masked as "unknown eval engine".
+    from unittest.mock import patch
+
+    exc = ModuleNotFoundError("No module named 'some_missing_dep'", name="some_missing_dep")
+    with patch("anvil.eval.engines.importlib.import_module", side_effect=exc):
+        with pytest.raises(ModuleNotFoundError, match="some_missing_dep"):
+            load_engine("test_scoping_xyz")
+
+
 # ---------------------------------------------------------------------------
 # Config: engine is a validated free identifier, not a hardcoded enum.
 # ---------------------------------------------------------------------------
@@ -83,3 +101,10 @@ def test_config_accepts_any_identifier_engine():
 def test_config_rejects_non_identifier_engine():
     with pytest.raises(ValueError, match="lowercase identifier"):
         EvalConfig(engine="Bad-Name")
+
+
+def test_config_rejects_trailing_newline_engine():
+    # The shared is_valid_engine_name (\\Z anchor) must reject "evil\n" —
+    # a naive ^...$ regex would match before the trailing newline.
+    with pytest.raises(ValueError, match="lowercase identifier"):
+        EvalConfig(engine="evil\n")
