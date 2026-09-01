@@ -279,11 +279,11 @@ def test_conversion_result_carries_session_fields() -> None:
     r = ConversionResult(
         status="completed",
         session_id="omnigent-sess-123",
-        session_url="http://localhost:6767/sessions/omnigent-sess-123",
+        session_url="http://localhost:6767/omnigent/c/omnigent-sess-123",
     )
     d = r.to_dict()
     assert d["session_id"] == "omnigent-sess-123"
-    assert d["session_url"] == "http://localhost:6767/sessions/omnigent-sess-123"
+    assert d["session_url"] == "http://localhost:6767/omnigent/c/omnigent-sess-123"
 
 
 def test_default_target_branch_constant() -> None:

@@ -12,6 +12,7 @@ CONFIGURE_RE = re.compile(r"CONFIGURE\(([a-z][a-z0-9_]*)\)")
 
 EXPECTED_SLUGS = {
     "ai_gateway_url",
+    "databricks_workspace_id",
     "domain_config",
     "eval_engine",
     "git_remote_url",

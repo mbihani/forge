@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import pytest
 import yaml
 
 from anvil.optimizer.omnigent_backend import (
@@ -245,8 +246,13 @@ def test_is_scaffold_path_rejects_outside_tree() -> None:
 _ACTION_BLOCK = '```json-action\n{"action": "noop", "rationale": "no actionable failure"}\n```'
 
 
-def test_run_full_flow_creates_uploads_sends_drains_parses(tmp_path: Path) -> None:
+def test_run_full_flow_creates_uploads_sends_drains_parses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The happy path: every step is called in order and the action parses."""
+    # The session URL is built without a workspace id; ensure a host env
+    # leak never appends ``?o=`` to the asserted URL.
+    monkeypatch.delenv("DATABRICKS_WORKSPACE_ID", raising=False)
     stream_events = [
         ("response.output_text.delta", {"delta": "Analyzing the scaffold...\n\n"}),
         ("response.output_text.delta", {"delta": _ACTION_BLOCK}),
@@ -298,7 +304,7 @@ def test_run_full_flow_creates_uploads_sends_drains_parses(tmp_path: Path) -> No
     assert "json-action" in result.transcript
 
     # 7. Session URL is populated.
-    assert result.session_url == "http://localhost:6767/sessions/sess-1"
+    assert result.session_url == "http://localhost:6767/omnigent/c/sess-1"
     assert result.turns_used == 1  # one response.completed event
 
 

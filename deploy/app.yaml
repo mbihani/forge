@@ -16,6 +16,8 @@ env:
     value: ${var.omnigent_server_url}
   - name: OMNIGENT_AUTH_TOKEN
     value: ${var.omnigent_auth_token}
+  - name: DATABRICKS_WORKSPACE_ID
+    value: ${var.databricks_workspace_id}
   - name: GIT_REMOTE_URL
     value: ${var.git_remote_url}
   - name: GIT_TOKEN

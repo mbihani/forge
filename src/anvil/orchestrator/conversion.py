@@ -53,6 +53,7 @@ from anvil.optimizer.omnigent_client import (
     OmnigentClient,
     OmnigentError,
     SessionCreateMetadata,
+    build_session_url,
 )
 
 logger = logging.getLogger("anvil.orchestrator.conversion")
@@ -507,7 +508,9 @@ async def _run_conversion_task(session_id: str, target_branch: str) -> None:
         # moment the session is created (before the potentially long drain),
         # so the UI can show a transcript link while the agent is still working.
         def _on_session_created(sid: str) -> None:
-            url = f"{server_url.rstrip('/')}/sessions/{sid}"  # type: ignore[union-attr]
+            url = build_session_url(
+                server_url, sid, os.getenv("DATABRICKS_WORKSPACE_ID")
+            )
             _set(session_id=sid, session_url=url)
             _progress("agent_session", f"Session link: {url}")
 

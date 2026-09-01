@@ -8,6 +8,12 @@ variables:
   # CONFIGURE(omnigent_auth_token): Authentication token for the Omnigent server.
   omnigent_auth_token:
     description: Omnigent authentication token
+  # CONFIGURE(databricks_workspace_id): Numeric Databricks workspace/org ID used
+  # for the Omnigent session UI link's ``?o=`` param. Optional; the link
+  # resolves without it, so leave blank when the numeric ID is not handy.
+  databricks_workspace_id:
+    description: Databricks workspace ID (numeric org ID) for Omnigent session UI links
+    default: ""
   # CONFIGURE(git_remote_url): Git remote containing the scaffold repository.
   git_remote_url:
     description: Scaffold Git remote URL
@@ -54,6 +60,8 @@ resources:
             value: ${var.omnigent_server_url}
           - name: OMNIGENT_AUTH_TOKEN
             value: ${var.omnigent_auth_token}
+          - name: DATABRICKS_WORKSPACE_ID
+            value: ${var.databricks_workspace_id}
           - name: GIT_REMOTE_URL
             value: ${var.git_remote_url}
           - name: GIT_TOKEN
