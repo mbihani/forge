@@ -367,6 +367,36 @@ def _ensure_parent_branch(repo_root: Path) -> None:
         )
 
 
+def _extend_anvil_path(repo_path: Path) -> None:
+    """Extend ``anvil.__path__`` with the cloned repo's ``src/anvil/`` so
+    domain packages in the agent repo (e.g. ``anvil.domains.savesage``)
+    become importable. Forge itself stays domain-agnostic — domain code
+    lives in the cloned agent repo, not in the forge repo.
+
+    The deployed app runs with ``PYTHONPATH=src`` (forge's ``src``), so
+    ``anvil.domains.<name>`` does not resolve from the forge package.
+    The eval-engine registry (:func:`anvil.eval.engines.load_engine`)
+    imports ``anvil.domains.<name>`` by convention; extending
+    ``anvil.__path__`` makes that import find the agent repo's copy
+    without copying any domain code into forge.
+
+    Idempotent: safe to call multiple times (deduplicates by resolved
+    path). Silently returns when the agent repo has no ``src/anvil/``
+    directory — plain repos that don't ship a domain package are
+    unaffected.
+    """
+    import anvil
+
+    candidate = (repo_path / "src" / "anvil").resolve()
+    if not candidate.is_dir():
+        return
+    candidate_str = str(candidate)
+    # ``anvil.__path__`` is a _NamespacePath (list-like); extend it so
+    # ``import anvil.domains.<name>`` finds the agent repo's subpackage.
+    if candidate_str not in list(anvil.__path__):
+        anvil.__path__.append(candidate_str)
+
+
 def _parse_github_url(url: str) -> tuple[str, str | None, str | None]:
     """Extract ``(clone_url, branch, subpath)`` from a GitHub URL.
 
@@ -1324,6 +1354,11 @@ async def _run_optimization_task(
         sess = _get_session(session_id)
         if sess is None:
             return
+        # Belt-and-suspenders: extend anvil.__path__ again in case the
+        # session was created before this fix was deployed (or the path
+        # entry was lost on a process restart that reloaded sessions
+        # from disk). Idempotent — no-op if already extended.
+        _extend_anvil_path(sess.repo_path)
         # B7: Ensure the parent branch exists — inside the task so a
         # failure transitions to 'error' instead of a stuck session.
         await anyio.to_thread.run_sync(partial(_ensure_parent_branch, sess.repo_path))
@@ -1721,6 +1756,11 @@ async def create_session(req: CreateSessionRequest) -> dict[str, Any]:
     with _session_lock:
         sess.repo_path = agent_root
         sess.status = "validating"
+
+    # Extend anvil.__path__ so domain packages shipped in the cloned
+    # agent repo (src/anvil/domains/<name>/) become importable. Fast
+    # path check + list append — no thread pool needed.
+    _extend_anvil_path(agent_root)
 
     # Validate (file I/O + git) in a thread pool.
     report, config, findings = await anyio.to_thread.run_sync(partial(_run_validation, agent_root))
