@@ -69,7 +69,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import anyio
 import yaml
@@ -148,6 +148,10 @@ class OptimizeRequest(BaseModel):
     max_rounds: int = Field(default=10, ge=1)
     max_turns: int = Field(default=30, ge=1)
     mlflow_experiment_id: str | None = None
+    # Optimization mode: "prompt" (mutate scaffold skills/rules/sampling in
+    # markdown + YAML) or "code" (mutate agent Python code). When omitted the
+    # session's harness/config.yaml ``mode`` is used (defaulting to "prompt").
+    mode: Literal["prompt", "code"] | None = None
 
 
 class ConvertRequest(BaseModel):
@@ -1090,7 +1094,10 @@ def _reset_frontier(repo_path: Path) -> None:
 
 
 def _build_baseline_sync(
-    repo_path: Path, eval_mode: str | None, mlflow_experiment_id: str | None = None
+    repo_path: Path,
+    eval_mode: str | None,
+    mlflow_experiment_id: str | None = None,
+    mode: str | None = None,
 ) -> dict:
     """Run eval on the current scaffold and write eval/runs/baseline.json.
 
@@ -1104,6 +1111,12 @@ def _build_baseline_sync(
     instead of a local golden-set eval. The MLflow baseline carries an empty
     ``scorer_fingerprint`` so the round loop's compatibility check is a
     no-op, and it becomes the actual round gate once saved.
+
+    When ``mode`` (the optimization mode: "prompt" or "code") is provided it
+    overrides the ``mode`` key in ``harness/config.yaml`` for the baseline
+    eval so :func:`evaluate_branch` runs in the requested mode — the same
+    override :func:`run_round` applies per round. The config file is rewritten
+    in place so the eval's ``load_harness`` picks it up.
 
     In both paths the frontier is reset (:func:`_reset_frontier`) after the
     baseline is saved so the gate re-seeds from it on the next scored round
@@ -1123,6 +1136,14 @@ def _build_baseline_sync(
         raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
         runtime_endpoint = raw.get("runtime_endpoint", "")
         judge_endpoint = raw.get("judge_endpoint", "")
+        # Override the optimization mode on disk when an explicit mode is
+        # requested, so the baseline eval (which reads mode via load_harness)
+        # runs in the same mode the optimizer will use for the rounds.
+        if mode is not None and raw.get("mode") != mode:
+            raw["mode"] = mode
+            config_path.write_text(
+                yaml.safe_dump(raw, sort_keys=False), encoding="utf-8"
+            )
     report = evaluate_branch(
         scaffold_root=scaffold_root,
         runtime_config_path=config_path if config_path.is_file() else None,
@@ -1236,6 +1257,7 @@ async def _run_optimization_task(
     max_rounds: int,
     max_turns: int,
     mlflow_experiment_id: str | None = None,
+    mode: str | None = None,
 ) -> None:
     """Background asyncio task that runs baseline + rounds.
 
@@ -1263,6 +1285,7 @@ async def _run_optimization_task(
                 sess.repo_path,
                 eval_mode,
                 mlflow_experiment_id,
+                mode,
             )
         )
         with _session_lock:
@@ -1278,6 +1301,7 @@ async def _run_optimization_task(
                     repo_root=sess.repo_path,
                     eval_mode=eval_mode,
                     max_turns=max_turns,
+                    mode=mode,
                 )
             )
             # B4: Read round JSON in a thread pool (not under the lock).
@@ -1719,6 +1743,12 @@ async def start_optimize(session_id: str, req: OptimizeRequest) -> dict[str, str
     eval_mode = req.eval_mode
     if eval_mode is None and sess.config:
         eval_mode = (sess.config.get("eval") or {}).get("default_mode")
+    # Resolve mode: explicit request > session config > "prompt" default.
+    # The mode selects what the optimizer mutates (prompt scaffolds vs agent
+    # Python code) and overrides the value on disk for the duration of the run.
+    mode = req.mode
+    if mode is None and sess.config:
+        mode = sess.config.get("mode") or "prompt"
     # B7: _ensure_parent_branch now runs INSIDE the optimization task
     # so a git failure sets status to 'error' instead of leaving the
     # session stuck in 'building_baseline'.
@@ -1729,6 +1759,7 @@ async def start_optimize(session_id: str, req: OptimizeRequest) -> dict[str, str
             req.max_rounds,
             req.max_turns,
             req.mlflow_experiment_id,
+            mode,
         )
     )
     with _session_lock:
@@ -1958,6 +1989,7 @@ _DASHBOARD_HTML = """<!doctype html>
   .card.step { display: none; }
   .card.active { display: block; }
   label { display: block; font-size: 0.85rem; margin-bottom: 4px; font-weight: 600; }
+  .hint { display: block; color: var(--muted); font-size: 0.78rem; margin: -6px 0 12px; }
   input, select { width: 100%; padding: 8px 10px; border: 1px solid var(--border);
           border-radius: 6px; background: var(--bg); color: var(--text);
           font-size: 0.9rem; margin-bottom: 12px; }
@@ -2032,6 +2064,12 @@ _DASHBOARD_HTML = """<!doctype html>
 
   <div class="card step" id="step3">
     <h2>Step 3 · Configure Optimization</h2>
+    <label for="opt-mode">Optimization mode</label>
+    <select id="opt-mode">
+      <option value="prompt">Prompt</option>
+      <option value="code">Code</option>
+    </select>
+    <small class="hint">prompt = optimize prompt scaffolds; code = optimize agent Python code</small>
     <label for="eval-mode">Eval mode</label>
     <select id="eval-mode"></select>
     <label for="mlflow-experiment-id">MLflow Experiment ID (optional)</label>
@@ -2171,6 +2209,10 @@ function renderConfigSummary(config) {
   if (config.eval && config.eval.default_mode) {
     sel.value = config.eval.default_mode;
   }
+  // Pre-populate the optimization-mode selector from the config's mode.
+  if (config.mode) {
+    document.getElementById('opt-mode').value = config.mode;
+  }
   if (config.loop && config.loop.max_optimizer_turns) {
     document.getElementById('max-turns').value = config.loop.max_optimizer_turns;
   }
@@ -2179,6 +2221,7 @@ function renderConfigSummary(config) {
 async function startOptimize() {
   if (!sessionId) { alert('No active session'); return; }
   const evalMode = document.getElementById('eval-mode').value || null;
+  const mode = document.getElementById('opt-mode').value || null;
   const mlflowExperimentId = document.getElementById('mlflow-experiment-id').value.trim() || null;
   const maxRounds = parseInt(document.getElementById('max-rounds').value, 10) || 10;
   const maxTurns = parseInt(document.getElementById('max-turns').value, 10) || 30;
@@ -2189,7 +2232,7 @@ async function startOptimize() {
   try {
     const resp = await fetch('/api/session/' + sessionId + '/optimize', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ eval_mode: evalMode, mlflow_experiment_id: mlflowExperimentId, max_rounds: maxRounds, max_turns: maxTurns })
+      body: JSON.stringify({ eval_mode: evalMode, mlflow_experiment_id: mlflowExperimentId, max_rounds: maxRounds, max_turns: maxTurns, mode: mode })
     });
     const data = await resp.json();
     if (resp.status !== 202) {

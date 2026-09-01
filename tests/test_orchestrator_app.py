@@ -2204,3 +2204,264 @@ def test_shutdown_deletes_persisted_managed_sessions(
         pass  # startup + immediate exit triggers the lifespan teardown
 
     assert fake.deleted == ["omnigent-sess-X"]
+
+
+# ---------------------------------------------------------------------------
+# Optimization mode (prompt/code) override — Feature 2
+# ---------------------------------------------------------------------------
+
+
+def _mode_capturing_run_round(calls: list[dict]) -> Any:
+    """Return a mock ``run_round`` that records the ``mode`` kwarg it receives
+    and writes a minimal round JSON + frontier (mirrors _make_mock_run_round).
+    """
+
+    def _mock(
+        *,
+        round_id: int,
+        repo_root: Path | str,
+        eval_mode: str | None = None,
+        max_turns: int = 30,
+        mode: str | None = None,
+        **_kw: Any,
+    ) -> RoundReport:
+        calls.append({"round_id": round_id, "mode": mode, "eval_mode": eval_mode})
+        root = Path(repo_root)
+        runs = root / "eval" / "runs"
+        runs.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "round_id": round_id,
+            "branch": f"anvil/exp-round-{round_id}",
+            "decision": "keep",
+            "action_kind": "edit_skill",
+            "parse_status": "ok",
+            "baseline_score": 0.80,
+            "score_delta_vs_parent": 0.05,
+            "aggregate": 0.85,
+        }
+        (runs / f"round_{round_id:03d}.json").write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+        frontier = {
+            "best": {"aggregate": 0.85, "correctness": 0.9},
+            "objectives": ["aggregate", "correctness"],
+            "pareto": False,
+            "directions": {},
+            "sources": {},
+            "epsilon": 0.0,
+        }
+        (runs / "frontier.json").write_text(json.dumps(frontier), encoding="utf-8")
+        return RoundReport(
+            round_id=round_id,
+            branch=f"anvil/exp-round-{round_id}",
+            decision=Decision.KEEP,
+            action_kind="edit_skill",
+            parse_status="ok",
+            diff_summary="edited skill X",
+        )
+
+    return _mock
+
+
+def test_optimize_explicit_mode_passed_to_run_round(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """POST /optimize with ``mode="code"`` forwards the mode to every
+    ``run_round`` call (overriding whatever harness/config.yaml says)."""
+    sid = _create_valid_session(client, tmp_path, monkeypatch)  # config mode=prompt
+    monkeypatch.setattr(app_module, "evaluate_branch", lambda **kw: _fake_eval_report())
+    round_calls: list[dict] = []
+    monkeypatch.setattr(app_module, "run_round", _mode_capturing_run_round(round_calls))
+    resp = client.post(
+        f"/api/session/{sid}/optimize",
+        json={"max_rounds": 2, "max_turns": 5, "mode": "code"},
+    )
+    assert resp.status_code == 202
+    _wait_for_status(client, sid, {"optimized"})
+    assert len(round_calls) == 2
+    assert all(c["mode"] == "code" for c in round_calls)
+
+
+def test_optimize_no_mode_defaults_to_config_mode(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """POST /optimize without ``mode`` falls back to the session config's mode
+    (here "code") rather than the hard-coded "prompt" default."""
+    sid = _create_valid_session(client, tmp_path, monkeypatch, mode="code", with_agents=True)
+    monkeypatch.setattr(app_module, "evaluate_branch", lambda **kw: _fake_eval_report())
+    round_calls: list[dict] = []
+    monkeypatch.setattr(app_module, "run_round", _mode_capturing_run_round(round_calls))
+    resp = client.post(f"/api/session/{sid}/optimize", json={"max_rounds": 1, "max_turns": 5})
+    assert resp.status_code == 202
+    _wait_for_status(client, sid, {"optimized"})
+    assert len(round_calls) == 1
+    assert round_calls[0]["mode"] == "code"
+
+
+def test_optimize_no_mode_no_config_defaults_to_prompt(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """When neither the request nor the config specifies a mode, "prompt" is
+    used (backward compatible with repos that predate the mode field)."""
+    sid = _create_valid_session(client, tmp_path, monkeypatch)  # config has mode=prompt
+    monkeypatch.setattr(app_module, "evaluate_branch", lambda **kw: _fake_eval_report())
+    round_calls: list[dict] = []
+    monkeypatch.setattr(app_module, "run_round", _mode_capturing_run_round(round_calls))
+    client.post(f"/api/session/{sid}/optimize", json={"max_rounds": 1, "max_turns": 5})
+    _wait_for_status(client, sid, {"optimized"})
+    assert round_calls[0]["mode"] == "prompt"
+
+
+def test_dashboard_has_opt_mode_selector(client: TestClient) -> None:
+    """The dashboard ships the Optimization mode selector in Step 3."""
+    html = client.get("/").text
+    assert 'id="opt-mode"' in html
+    assert '<option value="prompt">Prompt</option>' in html
+    assert '<option value="code">Code</option>' in html
+    assert "Optimization mode" in html
+    # Still XSS-safe.
+    assert "innerHTML" not in html
+
+
+# ---------------------------------------------------------------------------
+# Auto-revalidation promotes the session to the converted branch — Feature 1
+# ---------------------------------------------------------------------------
+
+
+def _run_conversion_with_revalidation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    reval_status: str,
+    reval_config: dict | None = None,
+) -> tuple[Any, Path, Path]:
+    """Drive ``_run_conversion_task`` end-to-end with mocked Omnigent + git,
+    returning ``(sess, original_clone, converted_clone)`` so the caller can
+    assert which checkout the session points at."""
+    from anvil.orchestrator import conversion as conversion_module
+    from anvil.orchestrator.app import SessionData
+    from anvil.orchestrator.conversion import ConversionResult, _run_conversion_task
+
+    session_id = "sess-autopromote"
+    target_branch = "forge-compat"
+    sessions_root = tmp_path / "sessions"
+    sessions_root.mkdir()
+    monkeypatch.setattr(app_module, "_SESSIONS_ROOT", sessions_root)
+
+    # Seed a converted checkout on disk (the re-clone target) with a valid
+    # forge structure so the re-validation config read works.
+    converted_root = sessions_root / f"{session_id}-converted"
+    _seed_repo(converted_root)
+    original_clone = tmp_path / "original-clone"
+    _seed_repo(original_clone)
+
+    sess = SessionData(
+        session_id=session_id,
+        repo_url="https://github.com/owner/repo",
+        repo_path=original_clone,
+        status="invalid",
+        validation={"status": "invalid", "checks": [], "convertible": True},
+        config=None,
+        baseline=None,
+        rounds=[],
+        frontier=None,
+        finalized=None,
+        error=None,
+        conversion=ConversionResult(),
+        _clone_root=original_clone,
+        _findings={},
+        _github_token=None,
+    )
+    app_module._sessions[session_id] = sess
+
+    # Mock the external dependencies the task touches before re-validation.
+    monkeypatch.setattr(app_module, "_current_branch", lambda _root: "main")
+    monkeypatch.setattr(
+        app_module,
+        "_parse_github_url",
+        lambda _url: ("https://github.com/owner/repo", "owner", "repo"),
+    )
+    monkeypatch.setattr(
+        conversion_module, "_build_agent_bundle", lambda *a, **kw: b"bundle-bytes"
+    )
+    monkeypatch.setattr(conversion_module, "OmnigentClient", lambda *a, **kw: object())
+    monkeypatch.setattr(conversion_module, "_run_managed_session", _fake_managed_session)
+    monkeypatch.setenv("OMNIGENT_SERVER_URL", "http://test")
+
+    def _fake_clone(_url: str, dest: Path, _token: str | None, _branch: str) -> str | None:
+        # Materialize the converted checkout from the seeded repo.
+        if not dest.exists():
+            shutil.copytree(str(converted_root), str(dest))
+        return None
+
+    monkeypatch.setattr(app_module, "_clone_repo", _fake_clone)
+    monkeypatch.setattr(conversion_module, "check_pii_in_commit", lambda *_a, **_kw: [])
+
+    reval_report = {"status": reval_status, "checks": [], "convertible": False}
+    reval_findings: dict[str, list[str]] = {}
+
+    def _fake_run_validation(_repo_path: Path):
+        return (reval_report, reval_config, reval_findings)
+
+    monkeypatch.setattr(app_module, "_run_validation", _fake_run_validation)
+
+    asyncio.run(_run_conversion_task(session_id, target_branch))
+    return sess, original_clone, converted_root
+
+
+async def _fake_managed_session(*_args: Any, **_kwargs: Any) -> str:
+    return ""
+
+
+def test_conversion_revalidation_pass_promotes_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A successful re-validation (status="valid") switches the session to the
+    converted checkout: repo_path moves, status becomes "validated", and the
+    config is re-read from the converted repo."""
+    reval_config = {
+        "mode": "code",
+        "runtime_endpoint": "databricks-claude-sonnet-4-6",
+        "optimizer_endpoint": "databricks-claude-opus-4-7",
+        "judge_endpoint": "databricks-claude-sonnet-4-6",
+        "eval": {"default_mode": "quick"},
+    }
+    sess, original_clone, converted_root = _run_conversion_with_revalidation(
+        tmp_path, monkeypatch, reval_status="valid", reval_config=reval_config
+    )
+    # The session now points at the converted checkout.
+    assert sess.repo_path == converted_root
+    assert sess.status == "validated"
+    assert sess.error is None
+    # Config re-read from the converted repo (redacted copy stored).
+    assert sess.config is not None
+    assert sess.config["mode"] == "code"
+    # The validation report is the re-validation report.
+    assert sess.validation["status"] == "valid"
+    # The original clone was removed to save disk.
+    assert not original_clone.exists()
+    # _clone_root now tracks the converted clone for shutdown cleanup.
+    assert sess._clone_root == converted_root
+
+
+def test_conversion_revalidation_fail_keeps_original_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed re-validation (status != "valid") leaves the session pointing
+    at the original clone; the revalidation report is still surfaced via
+    conversion.revalidation (visible in the GET /convert panel)."""
+    sess, original_clone, converted_root = _run_conversion_with_revalidation(
+        tmp_path, monkeypatch, reval_status="invalid", reval_config=None
+    )
+    # Session unchanged — still the original clone, still "invalid".
+    assert sess.repo_path == original_clone
+    assert sess.status == "invalid"
+    assert sess.config is None
+    # Original clone is still on disk (not cleaned up).
+    assert original_clone.exists()
+    # But the revalidation report IS available on the conversion result.
+    assert sess.conversion is not None
+    assert sess.conversion.revalidation is not None
+    assert sess.conversion.revalidation["status"] == "invalid"
+    assert sess.conversion.status == "completed"
+

@@ -79,6 +79,7 @@ def run_round(
     parent_branch: str = "anvil/exp",
     eval_mode: str | None = None,
     max_turns: int = 30,
+    mode: str | None = None,
 ) -> RoundReport:
     """Run round ``round_id`` end-to-end. Returns a report.
 
@@ -92,11 +93,16 @@ def run_round(
         ``eval/mutations.jsonl``.
       * On KEEP: ff-merges round branch into ``parent_branch``.
         On REVERT/INFRA_FAIL: deletes the round branch.
+
+    ``mode`` (optimization mode: "prompt" or "code") overrides the value
+    read from ``harness/config.yaml`` for this round when provided. When
+    ``None`` (the default) the mode is read from disk via
+    :func:`_read_optimization_mode`, preserving backward compatibility.
     """
     repo_root = Path(repo_root).resolve()
     scaffold_root = Path(scaffold_root or (repo_root / "scaffold")).resolve()
 
-    mode = _read_optimization_mode(scaffold_root)
+    mode = mode if mode is not None else _read_optimization_mode(scaffold_root)
     optimizer_endpoint = _read_optimizer_endpoint(scaffold_root)
     print(f"[round {round_id}] mode={mode}")
 
