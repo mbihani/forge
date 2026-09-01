@@ -1726,6 +1726,22 @@ async def get_session_config(session_id: str) -> dict[str, Any]:
 async def start_optimize(session_id: str, req: OptimizeRequest) -> dict[str, str]:
     _require_imports()
     sess = _require_session(session_id)
+    # Resolve + validate the optimization mode BEFORE the status transition so
+    # an invalid mode (e.g. a typo in harness/config.yaml) returns 400 without
+    # leaving the session stuck in "building_baseline". Resolution chain:
+    # explicit request > session config > "prompt" default. The mode selects
+    # what the optimizer mutates (prompt scaffolds vs agent Python code) and
+    # overrides the value on disk for the duration of the run.
+    mode = req.mode
+    if mode is None and sess.config:
+        mode = sess.config.get("mode")
+    if mode is None:
+        mode = "prompt"
+    if mode not in ("prompt", "code"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"invalid optimization mode {mode!r}; expected 'prompt' or 'code'",
+        )
     # Check-and-set under the lock: mark in-progress atomically so a
     # concurrent POST gets 409. The lock is released BEFORE any await.
     with _session_lock:
@@ -1743,12 +1759,6 @@ async def start_optimize(session_id: str, req: OptimizeRequest) -> dict[str, str
     eval_mode = req.eval_mode
     if eval_mode is None and sess.config:
         eval_mode = (sess.config.get("eval") or {}).get("default_mode")
-    # Resolve mode: explicit request > session config > "prompt" default.
-    # The mode selects what the optimizer mutates (prompt scaffolds vs agent
-    # Python code) and overrides the value on disk for the duration of the run.
-    mode = req.mode
-    if mode is None and sess.config:
-        mode = sess.config.get("mode") or "prompt"
     # B7: _ensure_parent_branch now runs INSIDE the optimization task
     # so a git failure sets status to 'error' instead of leaving the
     # session stuck in 'building_baseline'.

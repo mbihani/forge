@@ -2312,6 +2312,41 @@ def test_optimize_no_mode_no_config_defaults_to_prompt(
     assert round_calls[0]["mode"] == "prompt"
 
 
+def test_optimize_invalid_config_mode_rejected(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
+) -> None:
+    """A session whose config carries an invalid mode (e.g. a typo like
+    "promt") is rejected with 400 before any optimization starts. The mode is
+    validated after resolution and before the status transition, so an
+    invalid value can't propagate to run_round — and the session is NOT left
+    stuck in "building_baseline" (it stays "validated" for a retry)."""
+    from anvil.orchestrator.app import SessionData
+
+    sid = "sess-bad-mode"
+    sess = SessionData(
+        session_id=sid,
+        repo_url="https://github.com/user/repo",
+        repo_path=sessions_root / sid,
+        status="validated",
+        validation={"status": "valid", "checks": [], "convertible": False},
+        config={"mode": "invalid", "eval": {"default_mode": "quick"}},
+        baseline=None,
+        rounds=[],
+        frontier=None,
+        finalized=None,
+        error=None,
+    )
+    app_module._sessions[sid] = sess
+    resp = client.post(f"/api/session/{sid}/optimize", json={"max_rounds": 1, "max_turns": 5})
+    assert resp.status_code == 400
+    detail = resp.json()["detail"]
+    assert "invalid optimization mode" in detail
+    assert "'invalid'" in detail
+    # The session was not transitioned to building_baseline — it stays
+    # validated so the user can fix the config and retry.
+    assert app_module._sessions[sid].status == "validated"
+
+
 def test_dashboard_has_opt_mode_selector(client: TestClient) -> None:
     """The dashboard ships the Optimization mode selector in Step 3."""
     html = client.get("/").text
