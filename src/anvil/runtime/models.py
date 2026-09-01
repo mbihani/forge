@@ -21,6 +21,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from anvil.eval.engines import is_valid_engine_name
+
 
 class SamplingConfig(BaseModel):
     """Sampling parameters for a model call."""
@@ -75,7 +77,16 @@ class ParetoObjective(BaseModel):
 
     name: str
     direction: Literal["maximize", "minimize"] = "maximize"
-    source: Literal["aggregate", "tokens", "context_chars", "n_rows"] = "aggregate"
+    # ``latency`` reads ``cost_metrics["latency_ms_median"]`` — the savesage
+    # code-mode/latency objective; the others read the aggregate or a token/
+    # context/row cost proxy.
+    source: Literal["aggregate", "tokens", "context_chars", "n_rows", "latency"] = "aggregate"
+    # Optional per-objective epsilon. A single scalar ``gate.epsilon`` cannot
+    # serve objectives on different scales (accuracy ∈ [0,1], epsilon ~0.005 vs
+    # latency in ms, epsilon ~hundreds). When set, this objective uses its own
+    # epsilon in the frontier's keep/regress test; when None it falls back to
+    # the global ``gate.epsilon``.
+    epsilon: float | None = None
 
 
 class ParetoConfig(BaseModel):
@@ -261,7 +272,26 @@ class ScorerConfig(BaseModel):
 class EvalConfig(BaseModel):
     """Eval-side configuration."""
 
+    # Which eval engine scores a branch.
+    #   genai — the built-in default: ``mlflow.genai.evaluate`` with
+    #           LLM/programmatic scorers over the golden set (builds per-row
+    #           RETRIEVER traces for RetrievalGroundedness).
+    #   <name> — any pluggable domain engine registered under that name (see
+    #            anvil.eval.engines); the runner resolves it through the
+    #            registry, which lazily imports ``anvil.domains.<name>``. The
+    #            core never enumerates domains here, so a new domain is a pure
+    #            add. Validated as a lowercase identifier (it also becomes the
+    #            trailing segment of that import path). Existence is checked at
+    #            dispatch time by the registry, which fails loudly on an
+    #            unknown engine rather than falling back to genai.
+    engine: str = "genai"
     default_mode: Literal["quick", "standard", "full"] = "standard"
+    # Judged-field slugs (MLflow style, e.g. ``rewards_programType``) dropped
+    # from the headline ``aggregate`` on the savesage CODE-mode/latency path so
+    # the accuracy FLOOR the latency gate protects measures real quality, not
+    # stale-GT artifacts. Ignored by the prompt-mode path (full 28-field
+    # aggregate) and by the genai engine.
+    accuracy_exclude_fields: list[str] = Field(default_factory=list)
     held_out_test: bool = False
     split: SplitConfig = Field(default_factory=SplitConfig)
     modes: dict[str, EvalModeConfig] = Field(default_factory=dict)
@@ -275,6 +305,26 @@ class EvalConfig(BaseModel):
         ]
     )
     safety_guard_threshold: float = 0.95
+
+    @field_validator("engine")
+    @classmethod
+    def _engine_name_is_safe_identifier(cls, v: str) -> str:
+        """Reject an engine name that is not a lowercase identifier.
+
+        The name is dispatched by :mod:`anvil.eval.engines` and, for a
+        pluggable engine, becomes the trailing segment of the import path
+        ``anvil.domains.<name>`` — so an unsafe value (dots, slashes,
+        ``..``) could redirect the import. Delegates to the shared
+        :func:`anvil.eval.engines.is_valid_engine_name` so the rule stays
+        in sync with the registry; whether the engine actually exists is
+        checked at dispatch time by the registry.
+        """
+        if not is_valid_engine_name(v):
+            raise ValueError(
+                f"eval.engine {v!r} must be a lowercase identifier "
+                r"matching ^[a-z][a-z0-9_]*$"
+            )
+        return v
 
     @field_validator("scorers", mode="before")
     @classmethod

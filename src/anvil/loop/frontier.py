@@ -86,6 +86,7 @@ class Frontier:
         directions: dict[str, str] | None = None,
         sources: dict[str, str] | None = None,
         epsilon: float = DEFAULT_EPSILON,
+        epsilons: dict[str, float] | None = None,
     ) -> None:
         self.best: dict[str, float] = {k: float(v) for k, v in best.items()} if best else {}
         if objectives is not None:
@@ -98,6 +99,10 @@ class Frontier:
         self.directions = {obj: (directions or {}).get(obj, "maximize") for obj in self._objectives}
         self.sources = {obj: (sources or {}).get(obj, obj) for obj in self._objectives}
         self.epsilon = float(epsilon)
+        # Optional per-objective epsilon overrides. Objectives absent here use
+        # the scalar ``epsilon`` (see :meth:`should_keep`). Needed because
+        # accuracy and latency live on different scales.
+        self.epsilons: dict[str, float] = {k: float(v) for k, v in (epsilons or {}).items()}
 
     @property
     def objectives(self) -> list[str]:
@@ -112,6 +117,7 @@ class Frontier:
         directions: dict[str, str] | None = None,
         sources: dict[str, str] | None = None,
         epsilon: float = DEFAULT_EPSILON,
+        epsilons: dict[str, float] | None = None,
     ) -> Frontier:
         """Initialize a frontier whose best-so-far IS ``scores`` (round 1)."""
         return cls(
@@ -120,6 +126,7 @@ class Frontier:
             directions=directions,
             sources=sources,
             epsilon=epsilon,
+            epsilons=epsilons,
         )
 
     @staticmethod
@@ -131,8 +138,14 @@ class Frontier:
         pareto: bool = True,
         objectives: list[str] | None = None,
         directions: dict[str, str] | None = None,
+        epsilons: dict[str, float] | None = None,
     ) -> bool:
         """Gate decision: keep iff the mutation extends the frontier.
+
+        ``epsilons`` optionally overrides ``epsilon`` per objective (Pareto
+        branch only) — an objective not listed uses the scalar ``epsilon``.
+        This lets accuracy (∈[0,1]) and latency (ms) carry sensible, different
+        thresholds in the same gate.
 
         ``pareto=True`` (multi-objective): keep iff at least one objective
         improves by more than ``epsilon`` AND no objective regresses by
@@ -200,10 +213,11 @@ class Frontier:
                 improves_any = True  # frontier has no best yet → extends
                 continue
             direction = (directions or {}).get(obj, "maximize")
+            obj_eps = (epsilons or {}).get(obj, epsilon)
             delta = (new - cur) if direction == "maximize" else (cur - new)
-            if delta < -epsilon:
+            if delta < -obj_eps:
                 return False  # regressed beyond epsilon → dominated → revert
-            if delta > epsilon:
+            if delta > obj_eps:
                 improves_any = True
         return improves_any
 
@@ -244,6 +258,7 @@ class Frontier:
             pareto=self.pareto,
             objectives=self._objectives,
             directions=self.directions,
+            epsilons=self.epsilons,
         )
         if kept:
             for obj in self._objectives:
@@ -260,7 +275,7 @@ class Frontier:
         return kept
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "best": {k: float(v) for k, v in self.best.items()},
             "objectives": list(self._objectives),
             "pareto": self.pareto,
@@ -268,6 +283,11 @@ class Frontier:
             "sources": dict(self.sources),
             "epsilon": self.epsilon,
         }
+        # Only emit per-objective epsilons when present, so a frontier with no
+        # overrides keeps the historical on-disk shape byte-for-byte.
+        if self.epsilons:
+            payload["epsilons"] = dict(self.epsilons)
+        return payload
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Frontier:
@@ -278,6 +298,7 @@ class Frontier:
             directions=dict(raw.get("directions", {})),
             sources=dict(raw.get("sources", {})),
             epsilon=float(raw.get("epsilon", DEFAULT_EPSILON)),
+            epsilons=dict(raw.get("epsilons", {})),
         )
 
     def __eq__(self, other: object) -> bool:
@@ -290,6 +311,7 @@ class Frontier:
             and self.directions == other.directions
             and self.sources == other.sources
             and self.epsilon == other.epsilon
+            and self.epsilons == other.epsilons
         )
 
     def __repr__(self) -> str:  # pragma: no cover - debug aid
@@ -315,6 +337,7 @@ def _scores_for_objectives(report: Any, objectives: list[ParetoObjective]) -> di
                 "tokens": "total_tokens",
                 "context_chars": "total_context_chars",
                 "n_rows": "n_rows",
+                "latency": "latency_ms_median",
             }[objective.source]
             if metric == "n_rows" and metric not in cost_metrics:
                 value = getattr(report, "n_rows", getattr(report, "n_examples", None))
@@ -482,6 +505,7 @@ def gate_decision(
         objectives = None
         directions: dict[str, str] = {}
         sources: dict[str, str] = {}
+        epsilons: dict[str, float] = {}
     else:
         pareto_enabled = pareto.enabled
         objectives = (
@@ -501,6 +525,12 @@ def gate_decision(
             if pareto.enabled
             else {AGGREGATE_KEY: AGGREGATE_KEY}
         )
+        # Per-objective epsilon overrides (only the objectives that set one).
+        epsilons = (
+            {o.name: o.epsilon for o in pareto.objectives if o.epsilon is not None}
+            if pareto.enabled
+            else {}
+        )
 
     frontier = load_frontier(repo_root)
     if frontier is None:
@@ -516,12 +546,14 @@ def gate_decision(
             directions=directions,
             sources=sources,
             epsilon=epsilon,
+            epsilons=epsilons,
         )
         save_frontier(repo_root, frontier)
     else:
         # Adopt the current gate config rather than trusting a stale file.
         frontier.pareto = pareto_enabled
         frontier.epsilon = epsilon
+        frontier.epsilons = epsilons
         if objectives is not None:
             frontier._objectives = objectives
             frontier.directions = directions
