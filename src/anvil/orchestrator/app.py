@@ -369,7 +369,7 @@ def _ensure_parent_branch(repo_root: Path) -> None:
 
 def _extend_anvil_path(repo_path: Path) -> None:
     """Extend ``anvil.__path__`` with the cloned repo's ``src/anvil/`` so
-    domain packages in the agent repo (e.g. ``anvil.domains.savesage``)
+    domain packages in the agent repo (e.g. ``anvil.domains.<name>``)
     become importable. Forge itself stays domain-agnostic — domain code
     lives in the cloned agent repo, not in the forge repo.
 

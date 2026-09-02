@@ -1,6 +1,6 @@
 """The orchestrator extends ``anvil.__path__`` with the cloned agent
 repo's ``src/anvil/`` so domain packages shipped in the agent repo
-(e.g. ``anvil.domains.savesage``) become importable. Forge itself stays
+(e.g. ``anvil.domains.<name>``) become importable. Forge itself stays
 domain-agnostic — no domain code lives in the forge repo.
 
 These tests verify the generic path-extension mechanism: it works for
