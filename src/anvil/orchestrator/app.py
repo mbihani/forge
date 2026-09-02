@@ -170,7 +170,7 @@ class CheckResult(BaseModel):
 class ValidationReport(BaseModel):
     status: str  # valid/invalid
     checks: list[CheckResult]
-    # True when the repo failed validation but has a recognizable savesage-style
+    # True when the repo failed validation but has a recognizable agent-style
     # alternative structure (prompts/ + schema/ + harness/ + skills/) that the
     # auto-converter can transform into the forge-compatible layout. Gates the
     # "Convert to forge-compatible" button in the UI.
@@ -494,7 +494,7 @@ def _load_yaml(path: Path) -> Any:
 # "create scaffold/harness.yaml" message.
 # ---------------------------------------------------------------------------
 
-# Finding categories that represent a recognizable savesage-style structure
+# Finding categories that represent a recognizable agent-style structure
 # the forge-converter agent can transform additively (prompts/, schema/,
 # skills/*.py, judge/, harness/*.py, config.py). ``tests`` and ``data_dir``
 # are excluded — they are benign remediation hints and a *valid* forge repo
@@ -961,7 +961,7 @@ def _run_validation(repo_path: Path) -> tuple[dict, dict | None, dict[str, list[
     so the auto-converter can feed it to :func:`build_conversion_prompt`.
 
     The report dict carries a ``convertible`` flag (True when the repo failed
-    but has a recognizable savesage-style structure the converter can handle)
+    but has a recognizable agent-style structure the converter can handle)
     that gates the "Convert to forge-compatible" button in the UI.
     """
     # Scan for alternative structures once — used by smart remediation.
@@ -1985,7 +1985,7 @@ async def get_finalize(session_id: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Conversion endpoints — auto-convert a custom (savesage-style) repo into the
+# Conversion endpoints — auto-convert a custom (agent-style) repo into the
 # forge-compatible structure via a managed Omnigent agent. See
 # :mod:`anvil.orchestrator.conversion` for the agent flow + PII safety.
 # ---------------------------------------------------------------------------
@@ -2244,7 +2244,7 @@ async function validateRepo() {
     } else {
       summary.appendChild(el('span', 'Fix the issues above, then re-validate.', null));
       // The "Convert to forge-compatible" button appears only when the repo
-      // failed validation BUT has a recognizable savesage-style alternative
+      // failed validation BUT has a recognizable agent-style alternative
       // structure the auto-converter can transform. Gated on `convertible`,
       // which the POST /api/session response nests inside `validation`.
       if (data.validation && data.validation.convertible === true) {
