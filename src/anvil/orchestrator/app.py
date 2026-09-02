@@ -1653,18 +1653,23 @@ async def crash_log() -> dict[str, Any]:
 
 @app.post("/api/session")
 async def create_session(req: CreateSessionRequest) -> dict[str, Any]:
-    """Clone the agent repo, validate it, return a new session.
+    """Load the agent repo, validate it, return a new session.
 
-    Supports subdirectory URLs like
+    Local filesystem paths (absolute or ``~``-prefixed) are used in place
+    without cloning. Supports subdirectory URLs like
     ``https://github.com/user/repo/tree/main/statement-agent`` — the
     repo is cloned at the root and validation/optimization run against
     the specified subdirectory.
     """
     session_id = uuid.uuid4().hex[:12]
-    dest_path = _SESSIONS_ROOT / session_id
-
-    # Parse the URL for subdirectory + branch support.
-    clone_url, branch, subpath = _parse_github_url(req.repo_url)
+    is_local_path = req.repo_url.startswith(("/", "~"))
+    if is_local_path:
+        dest_path = Path(req.repo_url).expanduser()
+        clone_url, branch, subpath = req.repo_url, None, None
+    else:
+        dest_path = _SESSIONS_ROOT / session_id
+        # Parse the URL for subdirectory + branch support.
+        clone_url, branch, subpath = _parse_github_url(req.repo_url)
 
     sess = SessionData(
         session_id=session_id,
@@ -1688,25 +1693,26 @@ async def create_session(req: CreateSessionRequest) -> dict[str, Any]:
     with _session_lock:
         _sessions[session_id] = sess
 
-    # Clone (blocking) in a thread pool.  Only pass --branch when a
-    # branch was extracted from the URL so existing callers (plain URLs)
-    # are unaffected.
-    clone_kwargs: dict[str, Any] = {}
-    if branch is not None:
-        clone_kwargs["branch"] = branch
-    err = await anyio.to_thread.run_sync(
-        partial(_clone_repo, clone_url, dest_path, req.github_token, **clone_kwargs)
-    )
-    if err is not None:
-        # B1: Redact any embedded token from the git error message
-        # before storing it in the session or returning it to the client.
-        token = req.github_token
-        if token:
-            err = err.replace(token, "***")
-        with _session_lock:
-            sess.status = "invalid"
-            sess.error = err
-        raise HTTPException(status_code=400, detail=err)
+    if not is_local_path:
+        # Clone (blocking) in a thread pool. Only pass --branch when a
+        # branch was extracted from the URL so existing callers (plain URLs)
+        # are unaffected.
+        clone_kwargs: dict[str, Any] = {}
+        if branch is not None:
+            clone_kwargs["branch"] = branch
+        err = await anyio.to_thread.run_sync(
+            partial(_clone_repo, clone_url, dest_path, req.github_token, **clone_kwargs)
+        )
+        if err is not None:
+            # B1: Redact any embedded token from the git error message
+            # before storing it in the session or returning it to the client.
+            token = req.github_token
+            if token:
+                err = err.replace(token, "***")
+            with _session_lock:
+                sess.status = "invalid"
+                sess.error = err
+            raise HTTPException(status_code=400, detail=err)
 
     # Resolve the agent root — the subdirectory if a subpath was given.
     agent_root = dest_path / subpath if subpath else dest_path
@@ -2105,8 +2111,8 @@ _DASHBOARD_HTML = """<!doctype html>
 
   <div class="card step active" id="step1">
     <h2>Step 1 · Select Agent Repository</h2>
-    <label for="repo-url">GitHub repo URL</label>
-    <input id="repo-url" type="text" placeholder="https://github.com/user/savesage-agent" autocomplete="off">
+    <label for="repo-url">GitHub repo URL or local path</label>
+    <input id="repo-url" type="text" placeholder="https://github.com/user/repo or /path/to/local/repo" autocomplete="off">
     <label for="gh-token">GitHub token (optional, for private repos)</label>
     <input id="gh-token" type="password" placeholder="optional, for private repos" autocomplete="off">
     <button id="btn-validate" onclick="validateRepo()">Validate Repository</button>
