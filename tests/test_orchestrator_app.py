@@ -374,6 +374,32 @@ def test_create_session_clone_failure(
     assert "repository not found" in resp.json()["detail"]
 
 
+def test_create_session_uses_local_repo_without_cloning(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    sessions_root: Path,
+) -> None:
+    source = _seed_repo(tmp_path / "local-agent-repo")
+
+    def unexpected_clone(*_args: Any, **_kwargs: Any) -> str | None:
+        pytest.fail("local repositories must not be cloned")
+
+    monkeypatch.setattr(app_module, "_clone_repo", unexpected_clone)
+    resp = client.post(
+        "/api/session",
+        json={"repo_url": str(source), "github_token": "token-for-later-git-ops"},
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "validated"
+    sess = app_module._sessions[resp.json()["session_id"]]
+    assert sess.repo_path == source
+    assert sess._clone_root == source
+    assert sess._github_token == "token-for-later-git-ops"
+    assert list(sessions_root.iterdir()) == []
+
+
 def test_create_session_clone_failure_redacts_token(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
 ) -> None:
@@ -2499,4 +2525,3 @@ def test_conversion_revalidation_fail_keeps_original_session(
     assert sess.conversion.revalidation is not None
     assert sess.conversion.revalidation["status"] == "invalid"
     assert sess.conversion.status == "completed"
-
