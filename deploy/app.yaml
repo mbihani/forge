@@ -32,3 +32,5 @@ env:
     value: ${var.optimizer_model}
   - name: ANVIL_DOMAIN_CONFIG
     value: ${var.domain_config}
+  - name: ANVIL_OPTIMIZER_BACKEND
+    value: omnigent
