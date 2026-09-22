@@ -421,6 +421,11 @@ def _extend_anvil_path(repo_path: Path) -> None:
       ``sys.modules`` / ``_ENGINES`` from a *different* clone path, so
       :func:`load_engine` re-imports the active session's code instead
       of reusing the earlier session's.
+    * Keeps the already-imported ``anvil.domains`` parent namespace
+      **cached and consistent**: it re-derives that package's ``__path__``
+      in place (never pops the parent, which would orphan cached
+      ``anvil.domains.<other>`` children) and drops only the evicted
+      child's stale attribute.
 
     Idempotent: re-pointing at the same clone is a no-op (resolved-path
     dedup, symlink-safe; a domain already loaded from *this* clone is
@@ -444,6 +449,12 @@ def _extend_anvil_path(repo_path: Path) -> None:
             os.path.realpath(p) for p in anvil.__path__ if os.path.realpath(p) != candidate_str
         ]
 
+    # The already-imported ``anvil.domains`` namespace package (if any).
+    # We keep it cached and only re-derive its ``__path__`` below — never
+    # pop it — so its still-valid child modules stay attached (Python's
+    # parent/child import-cache invariant).
+    domains_mod = sys.modules.get("anvil.domains")
+
     # Evict this clone's domains that are cached from a DIFFERENT clone
     # (or left as a stale registry-only entry), so ``load_engine``
     # re-imports the active session's code rather than silently reusing
@@ -463,6 +474,12 @@ def _extend_anvil_path(repo_path: Path) -> None:
                 f"anvil.domains.{name}."
             ):
                 del sys.modules[mod_name]
+        # Keep the parent namespace consistent with the evicted child: drop
+        # the stale attribute so ``from anvil.domains import <name>`` (which
+        # returns an existing attribute without re-importing) and importlib
+        # re-import the active clone's module instead of the orphaned one.
+        if domains_mod is not None and hasattr(domains_mod, name):
+            delattr(domains_mod, name)
         evicted = True
 
     # Rebuild ``anvil.__path__``: forge paths first (core-module safety),
@@ -480,12 +497,18 @@ def _extend_anvil_path(repo_path: Path) -> None:
     changed = list(anvil.__path__) != new_path
     if changed:
         anvil.__path__[:] = new_path
-    if evicted or changed:
-        # Drop the stale ``anvil.domains`` namespace package: its
-        # ``__path__`` was frozen from the old ``anvil.__path__`` ordering.
-        # Any evicted submodules re-import from the new ordering; the
-        # namespace itself re-derives its search path cleanly.
-        sys.modules.pop("anvil.domains", None)
+    if domains_mod is not None and (changed or evicted):
+        # Re-derive the ALREADY-IMPORTED ``anvil.domains`` namespace's
+        # ``__path__`` in place from the new ordering, rather than popping
+        # the parent out of ``sys.modules`` (which would orphan cached
+        # ``anvil.domains.<other>`` children and break the parent/child
+        # import invariant). Future submodule imports resolve against this
+        # fresh, explicit search path; still-cached children stay attached.
+        domains_mod.__path__ = [
+            os.path.join(p, "domains")
+            for p in anvil.__path__
+            if os.path.isdir(os.path.join(p, "domains"))
+        ]
 
 
 def _parse_github_url(url: str) -> tuple[str, str | None, str | None]:

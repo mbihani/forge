@@ -10,6 +10,7 @@ registers an eval engine on import.
 
 from __future__ import annotations
 
+import importlib
 import os
 import sys
 from pathlib import Path
@@ -205,6 +206,62 @@ def test_switching_sessions_preserves_other_domain(tmp_path: Path):
     assert load_engine("domain_b_test")() == "b-result"
     # domain_a is untouched — still resolvable and unchanged.
     assert load_engine("domain_a_test")() == "a-result"
+    # And it resolves through the REAL import machinery (not just the
+    # _ENGINES fast path): importing the still-valid child after the switch
+    # returns the same cached module from session A's clone.
+    child = importlib.import_module("anvil.domains.domain_a_test")
+    assert child is sys.modules["anvil.domains.domain_a_test"]
+    assert str(repo_a.resolve()) in (child.__file__ or "")
+
+
+def test_switch_keeps_parent_namespace_and_child_attached(tmp_path: Path):
+    """The switch must NOT pop the ``anvil.domains`` parent namespace: doing
+    so orphans cached ``anvil.domains.<other>`` children and breaks Python's
+    parent/child import-cache invariant. After switching sessions the parent
+    stays the same cached object and still exposes the untouched child as an
+    attribute (so ``from anvil.domains import <other>`` keeps working)."""
+    repo_a = _make_fake_agent_repo(tmp_path / "a", domain="domain_a_test", result="a-result")
+    repo_b = _make_fake_agent_repo(tmp_path / "b", domain="domain_b_test", result="b-result")
+
+    _extend_anvil_path(repo_a)
+    load_engine("domain_a_test")  # real import → binds child attr on parent
+    parent_before = sys.modules.get("anvil.domains")
+    assert parent_before is not None
+    child_before = sys.modules["anvil.domains.domain_a_test"]
+    assert getattr(parent_before, "domain_a_test", None) is child_before
+
+    _extend_anvil_path(repo_b)  # switch to a session shipping a DIFFERENT domain
+
+    parent_after = sys.modules.get("anvil.domains")
+    assert parent_after is parent_before, "parent namespace must not be popped/recreated"
+    # The still-valid child remains cached AND attached to the parent.
+    assert sys.modules.get("anvil.domains.domain_a_test") is child_before
+    assert getattr(parent_after, "domain_a_test", None) is child_before
+
+
+def test_switch_shared_domain_reimports_via_import_machinery(tmp_path: Path):
+    """After a switch, a fresh ``importlib.import_module`` of the shared
+    domain resolves the ACTIVE clone's code through the REAL import
+    machinery — not the ``_ENGINES`` registry short-circuit. We explicitly
+    clear the registry and the module cache so the assertion exercises the
+    path splice / parent ``__path__`` re-derivation, not the fast path."""
+    from anvil.eval.engines import _ENGINES
+
+    shared = "shared_reimport_test"
+    repo1 = _make_fake_agent_repo(tmp_path / "s1", domain=shared, result="from-session-1")
+    repo2 = _make_fake_agent_repo(tmp_path / "s2", domain=shared, result="from-session-2")
+
+    _extend_anvil_path(repo1)
+    load_engine(shared)  # cache session 1 (module + registry)
+
+    _extend_anvil_path(repo2)  # switch: evicts the shared child + registry entry
+    # Force the real import path regardless of eviction details.
+    _ENGINES.pop(shared, None)
+    sys.modules.pop(f"anvil.domains.{shared}", None)
+
+    child = importlib.import_module(f"anvil.domains.{shared}")
+    assert str(repo2.resolve()) in (child.__file__ or ""), "must resolve the ACTIVE clone via import"
+    assert child.fake_engine() == "from-session-2"
 
 
 def test_clone_path_never_precedes_forge_path(tmp_path: Path):
