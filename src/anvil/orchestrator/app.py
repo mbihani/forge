@@ -367,34 +367,125 @@ def _ensure_parent_branch(repo_root: Path) -> None:
         )
 
 
+# Forge's own ``anvil.__path__`` entries, captured before any clone
+# ``src/anvil/`` is spliced in. Clone paths are always ordered AFTER
+# these so a cloned agent repo (which is a full fork shipping the whole
+# ``src/anvil/`` tree) can never shadow forge's core modules
+# (``anvil.eval``, ``anvil.orchestrator``, …) on a fresh import — only
+# ``anvil.domains.<name>``, which forge does not ship, falls through to
+# a clone. Captured lazily on the first :func:`_extend_anvil_path` call
+# (the path is still pristine then); ``None`` means "not yet captured".
+_FORGE_ANVIL_PATH: list[str] | None = None
+
+
+def _clone_shipped_domains(anvil_src: Path) -> list[str]:
+    """Domain package names shipped under ``<anvil_src>/domains/`` —
+    immediate subdirectories that contain an ``__init__.py``."""
+    domains_dir = anvil_src / "domains"
+    if not domains_dir.is_dir():
+        return []
+    names: list[str] = []
+    for child in sorted(domains_dir.iterdir()):
+        if child.is_dir() and (child / "__init__.py").is_file():
+            names.append(child.name)
+    return names
+
+
 def _extend_anvil_path(repo_path: Path) -> None:
-    """Extend ``anvil.__path__`` with the cloned repo's ``src/anvil/`` so
-    domain packages in the agent repo (e.g. ``anvil.domains.<name>``)
-    become importable. Forge itself stays domain-agnostic — domain code
-    lives in the cloned agent repo, not in the forge repo.
+    """Point ``anvil.domains.<name>`` resolution at *this session's*
+    cloned ``src/anvil/`` so domain packages in the agent repo become
+    importable. Forge itself stays domain-agnostic — domain code lives
+    in the cloned agent repo, not in the forge repo.
 
     The deployed app runs with ``PYTHONPATH=src`` (forge's ``src``), so
     ``anvil.domains.<name>`` does not resolve from the forge package.
     The eval-engine registry (:func:`anvil.eval.engines.load_engine`)
-    imports ``anvil.domains.<name>`` by convention; extending
-    ``anvil.__path__`` makes that import find the agent repo's copy
-    without copying any domain code into forge.
+    imports ``anvil.domains.<name>`` by convention; adding the agent
+    repo's ``src/anvil/`` to ``anvil.__path__`` makes that import find
+    the agent repo's copy without copying any domain code into forge.
 
-    Idempotent: safe to call multiple times (deduplicates by resolved
-    path). Silently returns when the agent repo has no ``src/anvil/``
-    directory — plain repos that don't ship a domain package are
-    unaffected.
+    **Multi-session correctness.** The orchestrator serves many sessions
+    over one process lifetime (``_sessions`` is process-global and
+    concurrent sessions are supported). ``anvil.__path__``,
+    ``sys.modules`` and the engine registry (``anvil.eval.engines._ENGINES``)
+    are all process-global, so a naive append would let a later session
+    that ships the *same* ``anvil.domains.<name>`` silently reuse an
+    earlier session's cached module/engine. To prevent that, this
+    function:
+
+    * Orders the forge-owned path entries first (clone code can never
+      shadow forge's core modules), then clone paths with **this
+      session's clone first** — so a domain name shipped by multiple
+      clones resolves from the active session.
+    * **Evicts** any domain this clone ships that is currently cached in
+      ``sys.modules`` / ``_ENGINES`` from a *different* clone path, so
+      :func:`load_engine` re-imports the active session's code instead
+      of reusing the earlier session's.
+
+    Idempotent: re-pointing at the same clone is a no-op (resolved-path
+    dedup, symlink-safe; a domain already loaded from *this* clone is
+    not evicted). Silently returns when the agent repo has no
+    ``src/anvil/`` directory — plain repos that don't ship a domain
+    package are unaffected.
     """
+    global _FORGE_ANVIL_PATH
     import anvil
+    from anvil.eval.engines import _ENGINES
 
     candidate = (repo_path / "src" / "anvil").resolve()
     if not candidate.is_dir():
         return
     candidate_str = str(candidate)
-    # ``anvil.__path__`` is a _NamespacePath (list-like); extend it so
-    # ``import anvil.domains.<name>`` finds the agent repo's subpackage.
-    if candidate_str not in list(anvil.__path__):
-        anvil.__path__.append(candidate_str)
+
+    if _FORGE_ANVIL_PATH is None:
+        # First call: current entries are forge's own — no clone spliced
+        # yet. Normalize (realpath) and drop the candidate defensively.
+        _FORGE_ANVIL_PATH = [
+            os.path.realpath(p) for p in anvil.__path__ if os.path.realpath(p) != candidate_str
+        ]
+
+    # Evict this clone's domains that are cached from a DIFFERENT clone
+    # (or left as a stale registry-only entry), so ``load_engine``
+    # re-imports the active session's code rather than silently reusing
+    # an earlier session's module/engine.
+    evicted = False
+    for name in _clone_shipped_domains(candidate):
+        mod = sys.modules.get(f"anvil.domains.{name}")
+        mod_file = getattr(mod, "__file__", None) if mod is not None else None
+        cached_here = mod_file is not None and mod_file.startswith(candidate_str + os.sep)
+        if cached_here:
+            continue  # already loaded from this clone — nothing to switch
+        if mod is None and name not in _ENGINES:
+            continue  # not cached anywhere — nothing to evict
+        _ENGINES.pop(name, None)
+        for mod_name in list(sys.modules):
+            if mod_name == f"anvil.domains.{name}" or mod_name.startswith(
+                f"anvil.domains.{name}."
+            ):
+                del sys.modules[mod_name]
+        evicted = True
+
+    # Rebuild ``anvil.__path__``: forge paths first (core-module safety),
+    # then clone paths with this session's clone first. Resolved-path
+    # dedup collapses any symlink-form duplicate of an existing entry.
+    forge_set = set(_FORGE_ANVIL_PATH)
+    other_clones = [
+        rp
+        for rp in (os.path.realpath(p) for p in anvil.__path__)
+        if rp not in forge_set and rp != candidate_str
+    ]
+    # ``dict.fromkeys`` preserves order while removing any duplicate
+    # clone entries introduced by symlink aliases.
+    new_path = list(dict.fromkeys([*_FORGE_ANVIL_PATH, candidate_str, *other_clones]))
+    changed = list(anvil.__path__) != new_path
+    if changed:
+        anvil.__path__[:] = new_path
+    if evicted or changed:
+        # Drop the stale ``anvil.domains`` namespace package: its
+        # ``__path__`` was frozen from the old ``anvil.__path__`` ordering.
+        # Any evicted submodules re-import from the new ordering; the
+        # namespace itself re-derives its search path cleanly.
+        sys.modules.pop("anvil.domains", None)
 
 
 def _parse_github_url(url: str) -> tuple[str, str | None, str | None]:
