@@ -181,18 +181,56 @@ def hard_label_match(output: str, label: Any) -> float:
     return reference_match(output, label)
 
 
+def _hex_digest(name: str) -> str:
+    """Full SHA-256 hex digest of ``name`` (injective in practice)."""
+    return hashlib.sha256(name.encode("utf-8")).hexdigest()
+
+
+def _unique_suffixes(
+    names: list[str],
+    *,
+    digest_fn: Callable[[str], str] = _hex_digest,
+    start_len: int = 6,
+) -> dict[str, str]:
+    """Map each name in ``names`` to the shortest hex-prefix that is UNIQUE
+    across the group.
+
+    Starts at ``start_len`` hex chars and lengthens deterministically until
+    every name's prefix is distinct — so a short-prefix birthday collision
+    (the 24-bit hole in the old 6-hex scheme) is extended away rather than
+    silently merging two objectives. Depends only on the group's names, so
+    it is order-independent and reproducible (same names → same suffixes).
+    Falls through to the full digest; if even that collides for two DISTINCT
+    names (a genuine SHA-256 collision — not observed in practice) it raises
+    rather than emit a duplicate key.
+    """
+    ordered = sorted(names)
+    full_len = len(digest_fn(ordered[0])) if ordered else 0
+    for length in range(start_len, max(start_len, full_len) + 1):
+        suffixes = {n: digest_fn(n)[:length] for n in ordered}
+        if len(set(suffixes.values())) == len(ordered):
+            return suffixes
+    raise ValueError(f"could not derive collision-free suffixes for names {ordered!r}")
+
+
 def build_key_map(rows: list[dict[str, Any]]) -> dict[tuple[str, str], str]:
     """Map each ``(prefix, assessment-name)`` to a UNIQUE, stable objective key.
 
     The base key is ``<prefix>_<slug(name)>``. Because the slug is lossy,
     two distinct names can share a base (e.g. ``correctness-v1`` and
     ``correctness v1`` both slug to ``correctness_v1``). When that happens
-    every colliding name is disambiguated with a short stable hash of its
-    ORIGINAL name (``<base>__<6-hex>``), so every distinct assessment keeps
-    its own frontier objective (Decision #3: all objectives count
-    independently) and never silently averages into another. Deriving the
-    map from the frozen, deterministically-selected rows keeps the key set
-    identical every round (the HARD CONSTRAINT).
+    every colliding name is disambiguated with the shortest UNIQUE hex
+    prefix of its original name's digest (``<base>__<hex>``), extended until
+    the whole group is collision-free (see :func:`_unique_suffixes`). Base
+    keys never contain ``__`` (the slug collapses non-alphanumeric runs to a
+    single ``_``), so the plain and disambiguated namespaces are disjoint;
+    distinct slugs give distinct keys; and within a colliding group the
+    suffixes are guaranteed distinct. The function then ASSERTS the whole
+    generated key set is unique and fails loud otherwise — so two distinct
+    assessments can never silently average into one objective (Decision #3:
+    all objectives count independently). Deriving the map from the frozen,
+    deterministically-selected rows keeps the key set identical every round
+    (the HARD CONSTRAINT).
     """
     by_prefix: dict[str, set[str]] = {"ref": set(), "human": set(), "judge": set()}
     for row in rows:
@@ -212,9 +250,17 @@ def build_key_map(rows: list[dict[str, Any]]) -> dict[tuple[str, str], str]:
             if len(group) == 1:
                 key_map[(prefix, group[0])] = f"{prefix}_{slug}"
             else:
+                suffixes = _unique_suffixes(group)
                 for name in group:
-                    digest = hashlib.sha256(name.encode("utf-8")).hexdigest()[:6]
-                    key_map[(prefix, name)] = f"{prefix}_{slug}__{digest}"
+                    key_map[(prefix, name)] = f"{prefix}_{slug}__{suffixes[name]}"
+
+    # Belt-and-suspenders: the construction above is collision-free by
+    # design, but assert it before any scoring so a future change can never
+    # silently reintroduce the merge bug.
+    values = list(key_map.values())
+    if len(values) != len(set(values)):
+        dupes = sorted({v for v in values if values.count(v) > 1})
+        raise ValueError(f"build_key_map produced duplicate objective keys: {dupes}")
     return key_map
 
 

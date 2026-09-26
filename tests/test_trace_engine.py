@@ -29,6 +29,8 @@ from types import SimpleNamespace
 from mlflow.entities import AssessmentSource, Expectation, Feedback
 
 from anvil.domains.trace.eval import (
+    _slug,
+    _unique_suffixes,
     aggregate_report,
     build_judge_fn,
     build_key_map,
@@ -376,6 +378,71 @@ def test_slug_collisions_stay_distinct_objectives() -> None:
     assert sorted(call_log) == ["correctness v1", "correctness-v1"]
     assert set(scores.keys()) == set(keys)
     assert sorted(scores.values()) == [0.0, 1.0]  # distinct, not averaged to 0.5
+
+
+def test_key_map_unique_over_adversarial_collision_group() -> None:
+    # A large group of DISTINCT names that all slugify to the same base must
+    # map to fully distinct keys — the no-duplicate invariant, not just a
+    # convenient pair. Each punctuation/whitespace variant slugs to "dup_1".
+    seps = [" ", "-", "_", ".", "!", "/", ",", ":", ";", "  ", "--", " - "]
+    names = [f"dup{sep}1" for sep in seps]
+    assert len({_slug(n) for n in names}) == 1  # they really do collide
+    rows = [
+        {
+            "query": "q",
+            "expectations": [],
+            "human_labels": [],
+            "judge_rubrics": [{"name": n, "value": "pass", "source_id": "m"} for n in names],
+        }
+    ]
+    key_map = build_key_map(rows)
+    keys = list(key_map.values())
+    assert len(keys) == len(names)  # every distinct name kept
+    assert len(set(keys)) == len(names)  # and every key is unique
+    # Scoring surfaces one objective per name (nothing averaged away).
+    scores = score_row(rows[0], "out", lambda **k: 1.0, key_map)
+    assert len(scores) == len(names)
+
+
+def test_unique_suffixes_extends_past_short_collision() -> None:
+    # Force the disambiguation path to itself collide at the default 6-hex
+    # length: two DISTINCT names whose digests share the first 6 hex chars
+    # but differ at the 7th. The suffixer must lengthen until unique.
+    fake = {"a": "abcdef" + "1" * 58, "b": "abcdef" + "2" * 58}
+    suffixes = _unique_suffixes(["a", "b"], digest_fn=fake.__getitem__)
+    assert suffixes["a"] != suffixes["b"]  # collision resolved
+    assert len(suffixes["a"]) == 7  # extended exactly one char past 6
+
+    # If even the FULL digest collides for two distinct names (a genuine
+    # SHA-256 collision), it must fail loud rather than emit a duplicate.
+    import pytest
+
+    same = {"a": "f" * 64, "b": "f" * 64}
+    with pytest.raises(ValueError, match="collision-free"):
+        _unique_suffixes(["a", "b"], digest_fn=same.__getitem__)
+
+
+def test_build_key_map_asserts_no_duplicates(monkeypatch) -> None:
+    # If the suffixer ever regressed and emitted a duplicate, build_key_map
+    # must fail loud before scoring rather than silently merge objectives.
+    import pytest
+
+    import anvil.domains.trace.eval as te
+
+    monkeypatch.setattr(te, "_unique_suffixes", lambda group, **_k: dict.fromkeys(group, "x"))
+    rows = [
+        {
+            "query": "q",
+            "expectations": [],
+            "human_labels": [],
+            "judge_rubrics": [
+                {"name": "dup-1", "value": "pass", "source_id": "m"},
+                {"name": "dup 1", "value": "pass", "source_id": "m"},
+            ],
+        }
+    ]
+    with pytest.raises(ValueError, match="duplicate objective keys"):
+        build_key_map(rows)
 
 
 # ---------------------------------------------------------------------------
