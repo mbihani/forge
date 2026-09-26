@@ -269,6 +269,85 @@ class ScorerConfig(BaseModel):
         return self
 
 
+# Assessment source types the trace engine understands. Mirrors
+# ``mlflow.entities.assessment_source.AssessmentSourceType`` without
+# importing mlflow here (this module must stay import-light — see the
+# module docstring). ``HUMAN`` labels are the ground-truth signal;
+# ``LLM_JUDGE``/``AI_JUDGE`` are re-runnable rubric judges. ``CODE`` is
+# accepted so a config may opt into deterministic code assessments, but
+# it is not in the default include set.
+_KNOWN_ASSESSMENT_SOURCE_TYPES = frozenset(
+    {"HUMAN", "LLM_JUDGE", "AI_JUDGE", "CODE"}
+)
+
+
+class TraceEvalConfig(BaseModel):
+    """Configuration for the ``trace`` eval engine (Option A).
+
+    The trace engine turns an agent's MLflow traces — which already carry
+    LLM-judge and human assessments — into a frozen eval dataset. Each
+    round RE-RUNS the mutated agent over the trace inputs and RE-SCORES
+    against those assessments (replaying stored scores would give
+    ``score_delta ≡ 0``, so the traces supply the dataset + scoring
+    TARGETS, not the scores). See :mod:`anvil.domains.trace`.
+
+    * ``experiment_id`` — the MLflow experiment to ingest (1 experiment ==
+      1 agent). Only consulted by the one-time ingest CLI; the eval run
+      itself reads the frozen snapshot, never the live server.
+    * ``max_traces`` — cap on traces pulled during ingest.
+    * ``snapshot_path`` — frozen JSONL the eval run reads (relative paths
+      resolve against the repo root).
+    * ``min_human_weight`` — weight applied to human objectives
+      (``ref_*`` / ``human_*``) in the aggregate; judge objectives
+      (``judge_*``) weigh 1.0, so humans are weighted strictly above
+      judges (must be ``> 1.0``).
+    * ``include_source_types`` — assessment source types kept during
+      ingest; others are dropped.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    experiment_id: str | None = None
+    max_traces: int = 200
+    snapshot_path: str = "data/trace_snapshot.jsonl"
+    min_human_weight: float = 2.0
+    include_source_types: list[str] = Field(
+        default_factory=lambda: ["HUMAN", "LLM_JUDGE", "AI_JUDGE"]
+    )
+
+    @field_validator("max_traces")
+    @classmethod
+    def _max_traces_positive(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("trace.max_traces must be > 0")
+        return v
+
+    @field_validator("min_human_weight")
+    @classmethod
+    def _min_human_weight_above_judges(cls, v: float) -> float:
+        """Human objectives must weigh strictly above the judge weight (1.0).
+
+        The whole point of DECISION #3 is that human labels dominate the
+        aggregate; a value ``<= 1.0`` would silently equalize (or invert)
+        that, so reject it loudly.
+        """
+        if not math.isfinite(v) or v <= 1.0:
+            raise ValueError("trace.min_human_weight must be finite and > 1.0")
+        return v
+
+    @field_validator("include_source_types")
+    @classmethod
+    def _known_source_types(cls, v: list[str]) -> list[str]:
+        """Reject an unknown source type so a typo fails at config-load."""
+        unknown = [s for s in v if s not in _KNOWN_ASSESSMENT_SOURCE_TYPES]
+        if unknown:
+            raise ValueError(
+                f"trace.include_source_types has unknown entries {unknown}; "
+                f"valid values are {sorted(_KNOWN_ASSESSMENT_SOURCE_TYPES)}"
+            )
+        return v
+
+
 class EvalConfig(BaseModel):
     """Eval-side configuration."""
 
@@ -297,6 +376,10 @@ class EvalConfig(BaseModel):
     modes: dict[str, EvalModeConfig] = Field(default_factory=dict)
     n_workers: int = 4
     inter_row_cooldown_s: float = 0.0
+    # Config for the ``trace`` eval engine (``engine: trace``). Ignored by
+    # the genai and savesage engines. Optional so existing configs that
+    # never set it validate unchanged.
+    trace: TraceEvalConfig | None = None
     scorers: list[ScorerConfig] = Field(
         default_factory=lambda: [
             ScorerConfig(name="correctness"),
