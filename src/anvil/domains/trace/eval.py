@@ -30,9 +30,11 @@ the mapping/aggregation logic is unit-testable with no live gateway.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
+import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
@@ -88,10 +90,11 @@ def _normalize(text: Any) -> str:
 def reference_match(output: str, reference: Any) -> float:
     """Deterministic 1.0/0.0 compare of ``output`` against a reference label.
 
-    A string reference matches when it equals the output (normalized) or
-    appears as a normalized substring of it (reference labels are often a
-    key fact the answer must contain). A non-string reference is compared
-    by canonical-JSON equality.
+    Used for HUMAN Expectation (expected-response reference text) and for
+    categorical (string) hard labels. A string reference matches when it
+    equals the output (normalized) or appears as a normalized substring of
+    it (reference labels are often a key fact the answer must contain). A
+    non-string reference is compared by canonical-JSON equality.
     """
     if isinstance(reference, str):
         ref = _normalize(reference)
@@ -111,51 +114,155 @@ def reference_match(output: str, reference: Any) -> float:
     return 1.0 if _normalize(output) == _normalize(ref_canon) else 0.0
 
 
-def objective_keys(rows: list[dict[str, Any]]) -> list[str]:
-    """The stable, sorted set of ``per_judge`` keys across ``rows``.
+_TRUE_TOKENS = frozenset({"true", "yes", "y", "pass", "correct", "1"})
+_FALSE_TOKENS = frozenset({"false", "no", "n", "fail", "incorrect", "0"})
 
-    Deriving keys from the frozen (and deterministically selected) rows is
-    what guarantees the HARD CONSTRAINT that the ``per_judge`` key set is
-    identical every round — freezing the dataset freezes the keys.
+
+def _extract_bool(output: str) -> bool | None:
+    """Read a boolean verdict out of the NEW output, or None if absent."""
+    try:
+        val = json.loads(str(output).strip())
+        if isinstance(val, bool):
+            return val
+    except (ValueError, TypeError):
+        pass
+    norm = _normalize(output)
+    if norm in _TRUE_TOKENS:
+        return True
+    if norm in _FALSE_TOKENS:
+        return False
+    # First alphanumeric token (punctuation-insensitive), e.g. "yes," -> "yes".
+    tokens = re.findall(r"[a-z0-9]+", norm)
+    first = tokens[0] if tokens else ""
+    if first in _TRUE_TOKENS:
+        return True
+    if first in _FALSE_TOKENS:
+        return False
+    return None
+
+
+def _extract_number(output: str) -> float | None:
+    """Read the first numeric value out of the NEW output, or None."""
+    try:
+        val = json.loads(str(output).strip())
+        if isinstance(val, (int, float)) and not isinstance(val, bool):
+            return float(val)
+    except (ValueError, TypeError):
+        pass
+    match = re.search(r"-?\d+(?:\.\d+)?", str(output))
+    return float(match.group()) if match else None
+
+
+def hard_label_match(output: str, label: Any) -> float:
+    """Programmatic 1.0/0.0 check of the NEW output against a human hard label.
+
+    A hard label records the ground-truth verdict/value the agent should
+    produce, so — unlike a reference-text Expectation — it is scored by
+    reading the corresponding signal *out of the new output* and comparing
+    it to the label, not by string-comparing the output to the label's
+    printed form. This is what makes a ``human_*`` objective actually move
+    when the mutated agent's output changes (Decision #3):
+
+    * boolean label → parse a boolean verdict from the output;
+    * numeric label → parse the first number from the output (exact match);
+    * categorical / text label → :func:`reference_match`.
+
+    ``bool`` is checked before ``int``/``float`` because ``bool`` is an
+    ``int`` subclass.
     """
-    keys: set[str] = set()
+    if isinstance(label, bool):
+        got = _extract_bool(output)
+        return 1.0 if got is not None and got == label else 0.0
+    if isinstance(label, (int, float)):
+        got = _extract_number(output)
+        if got is None:
+            return 0.0
+        return 1.0 if abs(got - float(label)) <= 1e-9 else 0.0
+    return reference_match(output, label)
+
+
+def build_key_map(rows: list[dict[str, Any]]) -> dict[tuple[str, str], str]:
+    """Map each ``(prefix, assessment-name)`` to a UNIQUE, stable objective key.
+
+    The base key is ``<prefix>_<slug(name)>``. Because the slug is lossy,
+    two distinct names can share a base (e.g. ``correctness-v1`` and
+    ``correctness v1`` both slug to ``correctness_v1``). When that happens
+    every colliding name is disambiguated with a short stable hash of its
+    ORIGINAL name (``<base>__<6-hex>``), so every distinct assessment keeps
+    its own frontier objective (Decision #3: all objectives count
+    independently) and never silently averages into another. Deriving the
+    map from the frozen, deterministically-selected rows keeps the key set
+    identical every round (the HARD CONSTRAINT).
+    """
+    by_prefix: dict[str, set[str]] = {"ref": set(), "human": set(), "judge": set()}
     for row in rows:
         for exp in row.get("expectations", []):
-            keys.add(f"ref_{_slug(exp['name'])}")
+            by_prefix["ref"].add(str(exp["name"]))
         for lab in row.get("human_labels", []):
-            keys.add(f"human_{_slug(lab['name'])}")
+            by_prefix["human"].add(str(lab["name"]))
         for rub in row.get("judge_rubrics", []):
-            keys.add(f"judge_{_slug(rub['name'])}")
-    return sorted(keys)
+            by_prefix["judge"].add(str(rub["name"]))
+
+    key_map: dict[tuple[str, str], str] = {}
+    for prefix, names in by_prefix.items():
+        groups: dict[str, list[str]] = {}
+        for name in names:
+            groups.setdefault(_slug(name), []).append(name)
+        for slug, group in groups.items():
+            if len(group) == 1:
+                key_map[(prefix, group[0])] = f"{prefix}_{slug}"
+            else:
+                for name in group:
+                    digest = hashlib.sha256(name.encode("utf-8")).hexdigest()[:6]
+                    key_map[(prefix, name)] = f"{prefix}_{slug}__{digest}"
+    return key_map
+
+
+def objective_keys(rows: list[dict[str, Any]]) -> list[str]:
+    """The stable, sorted set of ``per_judge`` keys across ``rows``."""
+    return sorted(build_key_map(rows).values())
 
 
 def score_row(
     row: dict[str, Any],
     new_output: str,
     judge_fn: Callable[..., float],
+    key_map: dict[tuple[str, str], str] | None = None,
 ) -> dict[str, float]:
     """Score one row's objectives against ``new_output``.
 
     ``judge_fn(*, query, output, rubric)`` re-runs a rubric judge and
-    returns a score in ``[0, 1]``; it is injected so this stays pure. When
-    an objective key repeats within a row, the scores are averaged.
+    returns a score in ``[0, 1]``; it is injected so this stays pure.
+    ``key_map`` (from :func:`build_key_map`) supplies the collision-safe
+    objective keys; when omitted it is derived from this row alone (fine
+    for isolated unit tests). When an objective key repeats within a row,
+    the scores are averaged.
+
+    HUMAN Expectation is scored with :func:`reference_match` (reference
+    text); HUMAN Feedback with :func:`hard_label_match` (type-aware hard
+    label); judge rubrics are re-run via ``judge_fn``.
     """
+    if key_map is None:
+        key_map = build_key_map([row])
     contributions: dict[str, list[float]] = {}
 
     def _add(key: str, score: float) -> None:
         contributions.setdefault(key, []).append(float(score))
 
     for exp in row.get("expectations", []):
-        _add(f"ref_{_slug(exp['name'])}", reference_match(new_output, exp.get("value")))
+        key = key_map[("ref", str(exp["name"]))]
+        _add(key, reference_match(new_output, exp.get("value")))
     for lab in row.get("human_labels", []):
-        _add(f"human_{_slug(lab['name'])}", reference_match(new_output, lab.get("value")))
+        key = key_map[("human", str(lab["name"]))]
+        _add(key, hard_label_match(new_output, lab.get("value")))
     for rub in row.get("judge_rubrics", []):
+        key = key_map[("judge", str(rub["name"]))]
         try:
             score = judge_fn(query=row.get("query", ""), output=new_output, rubric=rub)
         except Exception as exc:  # noqa: BLE001 - isolate per-rubric judge failures
             logger.warning("judge failed for rubric %r: %s", rub.get("name"), exc)
             score = 0.0
-        _add(f"judge_{_slug(rub['name'])}", score)
+        _add(key, score)
 
     return {k: sum(v) / len(v) for k, v in contributions.items()}
 
@@ -172,14 +279,17 @@ def aggregate_report(
     row_scores: list[dict[str, float]],
     *,
     min_human_weight: float,
+    key_map: dict[tuple[str, str], str] | None = None,
 ) -> tuple[float, dict[str, float]]:
     """Macro-average per objective, then weighted-mean into the aggregate.
 
     ``per_judge[key]`` is the mean of that objective's per-row scores over
     the rows that carry it. The aggregate is the weighted mean over the
     full (stable) key set with human objectives weighted above judges.
+    ``key_map`` must be the SAME map passed to :func:`score_row` so the
+    aggregated keys line up with the scored keys.
     """
-    keys = objective_keys(rows)
+    keys = sorted((key_map or build_key_map(rows)).values())
     accum: dict[str, list[float]] = {k: [] for k in keys}
     for scores in row_scores:
         for key, val in scores.items():
@@ -285,17 +395,35 @@ def _build_predictor(
     runtime_config_path: Path | str | None,
     runtime_client: Any,
 ) -> Callable[[str], tuple[str, float | None]]:
-    """Return ``predict(query) -> (output_text, latency_ms)`` for the mode."""
+    """Return ``predict(query) -> (output_text, latency_ms)`` for the mode.
+
+    The re-run agent (code-mode ``MemorySystem`` / prompt-mode
+    ``AnvilAgent``) can hold mutable per-conversation state, so under the
+    default parallel path (``n_workers > 1``) a single shared instance
+    would race and leak state across rows. Each worker thread therefore
+    constructs and caches its OWN agent in thread-local storage — the
+    gateway ``runtime_client`` is stateless (fresh OpenAI client + token
+    per request) and is safely shared.
+    """
+    local = threading.local()
+
     if snapshot.config.mode == "code":
         from anvil.eval.runner import _load_memory_system  # noqa: PLC0415
 
-        memory_system = _load_memory_system(
-            snapshot.config.agent_module,
-            llm_client=runtime_client,
-            model=snapshot.config.runtime_endpoint,
-        )
+        agent_module = snapshot.config.agent_module
+        model = snapshot.config.runtime_endpoint
+
+        def _get_memory_system() -> Any:
+            inst = getattr(local, "agent", None)
+            if inst is None:
+                inst = _load_memory_system(
+                    agent_module, llm_client=runtime_client, model=model
+                )
+                local.agent = inst
+            return inst
 
         def _predict(query: str) -> tuple[str, float | None]:
+            memory_system = _get_memory_system()
             answer, meta = memory_system.predict(query)
             latency = meta.get("latency_ms") if isinstance(meta, dict) else None
             return (answer if isinstance(answer, str) else str(answer)), (
@@ -304,20 +432,26 @@ def _build_predictor(
 
         return _predict
 
+    from mlflow.types.responses import ResponsesAgentRequest  # noqa: PLC0415
+
     from anvil.eval.runner import _extract_final_text  # noqa: PLC0415
     from anvil.observability import SOURCE_EVAL  # noqa: PLC0415
     from anvil.runtime.agent import AnvilAgent  # noqa: PLC0415
 
-    agent = AnvilAgent(
-        scaffold_root=scaffold_path,
-        runtime_config_path=runtime_config_path,
-        source=SOURCE_EVAL,
-        client=runtime_client,
-    )
+    def _get_agent() -> Any:
+        inst = getattr(local, "agent", None)
+        if inst is None:
+            inst = AnvilAgent(
+                scaffold_root=scaffold_path,
+                runtime_config_path=runtime_config_path,
+                source=SOURCE_EVAL,
+                client=runtime_client,
+            )
+            local.agent = inst
+        return inst
 
     def _predict(query: str) -> tuple[str, float | None]:
-        from mlflow.types.responses import ResponsesAgentRequest  # noqa: PLC0415
-
+        agent = _get_agent()
         request = ResponsesAgentRequest(
             input=[{"type": "message", "role": "user", "content": query}]
         )
@@ -380,6 +514,10 @@ def evaluate_trace(
     all_rows = read_snapshot(snapshot_file)
     snap_hash = snapshot_content_hash(all_rows)
     selected = _select(all_rows, rows=mode_cfg.rows, buckets=dict(mode_cfg.buckets))
+    # One collision-safe key map for the whole run — score_row and
+    # aggregate_report MUST share it so scored keys line up with aggregated
+    # keys (and stay identical every round).
+    key_map = build_key_map(selected)
 
     # Re-run predictor (code/prompt) and rubric judge — injectable for tests.
     if predict_fn is None:
@@ -404,7 +542,7 @@ def evaluate_trace(
         except Exception as exc:  # noqa: BLE001 - isolate per-row failures
             logger.warning("prediction failed for %s: %s", row.get("example_id"), exc)
             output, latency_ms = "", None
-        scores = score_row(row, output, judge_fn)
+        scores = score_row(row, output, judge_fn, key_map)
         return {
             "example_id": row["example_id"],
             "query": row["query"],
@@ -427,7 +565,10 @@ def evaluate_trace(
 
     row_scores = [r["scores"] for r in scored_rows]
     aggregate, per_judge = aggregate_report(
-        selected, row_scores, min_human_weight=trace_cfg.min_human_weight
+        selected,
+        row_scores,
+        min_human_weight=trace_cfg.min_human_weight,
+        key_map=key_map,
     )
 
     # Single "trace" bucket mirrors the savesage per_bucket shape.
@@ -449,7 +590,7 @@ def evaluate_trace(
                 }
             )
 
-    keys = objective_keys(selected)
+    keys = sorted(key_map.values())
     fingerprint = compute_trace_fingerprint(keys, trace_cfg.min_human_weight, snap_hash)
 
     cost_metrics: dict[str, float] = {"n_rows": float(len(scored_rows))}

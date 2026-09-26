@@ -20,6 +20,9 @@ Covers:
 
 from __future__ import annotations
 
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -28,8 +31,10 @@ from mlflow.entities import AssessmentSource, Expectation, Feedback
 from anvil.domains.trace.eval import (
     aggregate_report,
     build_judge_fn,
+    build_key_map,
     compute_trace_fingerprint,
     compute_weights,
+    hard_label_match,
     objective_keys,
     reference_match,
     score_row,
@@ -282,6 +287,98 @@ def test_objective_keys_stable_and_sorted() -> None:
 
 
 # ---------------------------------------------------------------------------
+# BLOCKER 1: human hard labels are genuinely re-scored against the new output
+# ---------------------------------------------------------------------------
+
+
+def test_hard_label_match_bool_and_numeric() -> None:
+    # Boolean label — reads a boolean verdict OUT OF the output.
+    assert hard_label_match("true", True) == 1.0
+    assert hard_label_match("yes, this is correct", True) == 1.0
+    assert hard_label_match("false", True) == 0.0
+    assert hard_label_match("no", True) == 0.0
+    assert hard_label_match("false", False) == 1.0
+    assert hard_label_match("nothing boolean here", True) == 0.0
+    # Numeric label — reads the first number out of the output.
+    assert hard_label_match("the rating is 4", 4) == 1.0
+    assert hard_label_match("3", 4) == 0.0
+    assert hard_label_match("no number", 4) == 0.0
+    assert hard_label_match("score: 4.0", 4.0) == 1.0
+    # Categorical (string) label falls back to reference matching.
+    assert hard_label_match("sentiment: positive", "positive") == 1.0
+    assert hard_label_match("negative", "positive") == 0.0
+
+
+def test_human_bool_objective_moves_with_output() -> None:
+    # A REAL boolean human feedback (helpful=True). The human_* objective
+    # must move when the mutated agent's output changes — proving it scores
+    # the NEW output, not a literal text compare against "True".
+    row = {
+        "query": "q",
+        "expectations": [],
+        "human_labels": [{"name": "helpful", "value": True}],
+        "judge_rubrics": [],
+    }
+
+    def _no_judge(**_kwargs):
+        raise AssertionError("judge must not run for a human label")
+
+    good = score_row(row, "yes", _no_judge)
+    bad = score_row(row, "no", _no_judge)
+    assert good == {"human_helpful": 1.0}
+    assert bad == {"human_helpful": 0.0}
+    assert good != bad  # objective genuinely moves with the output
+
+
+def test_human_numeric_objective_moves_with_output() -> None:
+    row = {
+        "query": "q",
+        "expectations": [],
+        "human_labels": [{"name": "rating", "value": 4}],
+        "judge_rubrics": [],
+    }
+    assert score_row(row, "I'd rate this a 4", lambda **k: 0.0) == {"human_rating": 1.0}
+    assert score_row(row, "I'd rate this a 2", lambda **k: 0.0) == {"human_rating": 0.0}
+
+
+# ---------------------------------------------------------------------------
+# BLOCKER 2: colliding slugs keep separate objectives
+# ---------------------------------------------------------------------------
+
+
+def test_slug_collisions_stay_distinct_objectives() -> None:
+    # Two judge names that slugify identically must NOT collapse into one
+    # objective (they would silently average together otherwise).
+    rows = [
+        {
+            "query": "q",
+            "expectations": [],
+            "human_labels": [],
+            "judge_rubrics": [
+                {"name": "correctness-v1", "value": "pass", "source_id": "m"},
+                {"name": "correctness v1", "value": "pass", "source_id": "m"},
+            ],
+        }
+    ]
+    keys = objective_keys(rows)
+    assert len(keys) == 2  # both survive as separate objectives
+    assert len(set(keys)) == 2
+
+    # Both are scored independently (one passes, one fails) — neither is lost.
+    call_log: list[str] = []
+
+    def judge_fn(*, query, output, rubric):
+        call_log.append(rubric["name"])
+        return 1.0 if rubric["name"] == "correctness-v1" else 0.0
+
+    key_map = build_key_map(rows)
+    scores = score_row(rows[0], "out", judge_fn, key_map)
+    assert sorted(call_log) == ["correctness v1", "correctness-v1"]
+    assert set(scores.keys()) == set(keys)
+    assert sorted(scores.values()) == [0.0, 1.0]  # distinct, not averaged to 0.5
+
+
+# ---------------------------------------------------------------------------
 # fingerprint
 # ---------------------------------------------------------------------------
 
@@ -394,7 +491,8 @@ def _write_trace_scaffold(root: Path, snapshot_rel: str) -> tuple[Path, Path]:
         "eval:\n"
         "  engine: trace\n"
         "  default_mode: quick\n"
-        "  n_workers: 1\n"
+        # Exercise the DEFAULT parallel path (n_workers > 1), not a forced 1.
+        "  n_workers: 4\n"
         "  modes:\n"
         "    quick: {rows: 2}\n"
         f"  trace:\n"
@@ -498,3 +596,56 @@ def test_evaluate_trace_requires_trace_config(tmp_path: Path) -> None:
             predict_fn=lambda q: ("x", None),
             judge_fn=lambda **k: 1.0,
         )
+
+
+# ---------------------------------------------------------------------------
+# BLOCKER 3: the default parallel re-run path isolates agent state per thread
+# ---------------------------------------------------------------------------
+
+
+def test_build_predictor_isolates_agent_per_thread(monkeypatch) -> None:
+    """Each worker thread on the default parallel path gets its OWN agent.
+
+    A single shared memory/agent instance across ``n_workers > 1`` would
+    race and leak per-conversation state between concurrent rows. The
+    predictor must construct (and cache) one instance per worker thread.
+    """
+    import anvil.eval.runner as runner_mod
+    from anvil.domains.trace.eval import _build_predictor
+
+    constructed_on: list[int] = []
+    lock = threading.Lock()
+
+    class _FakeMemorySystem:
+        def __init__(self, **_kwargs) -> None:
+            self._owner = threading.get_ident()
+            with lock:
+                constructed_on.append(self._owner)
+
+        def predict(self, query: str):
+            # A foreign thread using this instance would trip this assert.
+            assert self._owner == threading.get_ident()
+            time.sleep(0.005)  # widen the race window
+            return "ok", {"latency_ms": 1.0}
+
+    monkeypatch.setattr(
+        runner_mod, "_load_memory_system", lambda *a, **k: _FakeMemorySystem()
+    )
+    snapshot = SimpleNamespace(
+        config=SimpleNamespace(mode="code", agent_module="x", runtime_endpoint="")
+    )
+    predict = _build_predictor(
+        snapshot,
+        scaffold_path=Path("."),
+        runtime_config_path=None,
+        runtime_client=None,
+    )
+
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        outputs = list(ex.map(lambda _i: predict("q"), range(40)))
+
+    assert all(out == ("ok", 1.0) for out in outputs)
+    # Exactly one construction per distinct worker thread (thread-local
+    # cache): no thread built twice, so nothing is shared across threads.
+    assert len(constructed_on) == len(set(constructed_on))
+    assert len(set(constructed_on)) >= 2  # the pool really used >1 thread
