@@ -18,6 +18,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+import httpx
 import pytest
 
 from anvil.optimizer.omnigent_client import (
@@ -684,3 +685,84 @@ def test_owned_client_no_hook_when_explicit_token() -> None:
         assert c._client.headers.get("Authorization") == "Bearer explicit-tok"  # type: ignore[attr-defined]
     finally:
         asyncio.run(c.aclose())
+
+
+# ---------------------------------------------------------------------------
+# Request-level auth (FIX 1) — exercised through ACTUAL client API calls
+# ---------------------------------------------------------------------------
+#
+# The tests above call ``_inject_auth_header`` directly. These drive a real
+# ``httpx.AsyncClient`` (via ``httpx.MockTransport``) through real
+# ``OmnigentClient`` methods and assert the header that ACTUALLY lands on
+# the wire — proving the request event hook fires per real request.
+
+
+def _mock_client(base_url: str, seen: list[str | None]) -> httpx.AsyncClient:
+    """A real httpx.AsyncClient whose transport records each request's
+    ``Authorization`` header and returns a canned 200 JSON body."""
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("Authorization"))
+        return httpx.Response(200, json={"id": "s1", "data": []})
+
+    return httpx.AsyncClient(base_url=base_url, transport=httpx.MockTransport(_handler))
+
+
+def test_request_mints_fresh_bearer_per_actual_call() -> None:
+    """(a) With no explicit token, EACH real request carries a freshly
+    minted ``Authorization: Bearer <token>`` and the minter is invoked
+    per request — two calls carry two DIFFERENT fresh tokens."""
+    seen: list[str | None] = []
+    tokens = iter(["tok-1", "tok-2"])
+    mint_calls: list[int] = []
+
+    def _minter() -> str:
+        mint_calls.append(1)
+        return next(tokens)
+
+    http_client = _mock_client("http://localhost:6767", seen)
+    c = OmnigentClient("http://localhost:6767", None, client=http_client, token_fn=_minter)
+    try:
+        asyncio.run(c.get_session("s1"))
+        asyncio.run(c.get_session("s1"))
+    finally:
+        asyncio.run(c.aclose())
+
+    # Both real requests carried their own freshly minted bearer.
+    assert seen == ["Bearer tok-1", "Bearer tok-2"]
+    # The minter was actually invoked once per request (per-request refresh).
+    assert len(mint_calls) == 2
+
+
+def test_request_carries_explicit_token_verbatim() -> None:
+    """(b) With an explicit token, every real request carries it verbatim."""
+    seen: list[str | None] = []
+    http_client = _mock_client("http://localhost:6767", seen)
+    c = OmnigentClient("http://localhost:6767", "explicit-tok", client=http_client)
+    try:
+        asyncio.run(c.get_session("s1"))
+        asyncio.run(c.list_environments("s1"))
+    finally:
+        asyncio.run(c.aclose())
+
+    assert seen == ["Bearer explicit-tok", "Bearer explicit-tok"]
+
+
+def test_no_request_is_sent_without_a_bearer() -> None:
+    """(c) No real request is ever sent with an empty/absent Authorization
+    header when the minter yields a token — every request carries a
+    non-empty ``Bearer <token>``."""
+    seen: list[str | None] = []
+    http_client = _mock_client("http://localhost:6767", seen)
+    c = OmnigentClient("http://localhost:6767", None, client=http_client, token_fn=lambda: "live-tok")
+    try:
+        asyncio.run(c.get_session("s1"))
+        asyncio.run(c.list_environments("s1"))
+        asyncio.run(c.delete_session("s1"))
+    finally:
+        asyncio.run(c.aclose())
+
+    assert len(seen) == 3
+    for auth in seen:
+        assert auth is not None and auth.startswith("Bearer ")
+        assert auth.removeprefix("Bearer ").strip() != ""

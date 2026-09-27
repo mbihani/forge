@@ -27,6 +27,7 @@ crashes and that a ``--rounds 2`` loop proceeds past the noop.
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -232,6 +233,94 @@ def test_run_round_clean_noop_unchanged(tmp_path: Path, monkeypatch: pytest.Monk
     assert report.decision is Decision.NOOP
     assert report.parse_status == "ok"
     assert report.git_commit_sha == parent_sha
+
+
+# ---------------------------------------------------------------------------
+# run_round — a swallowed optimizer-BACKEND failure must surface as a
+# distinguishable failure, not be disguised as a clean noop (FIX 2).
+# ---------------------------------------------------------------------------
+
+
+def _patch_omnigent_session(
+    monkeypatch: pytest.MonkeyPatch, *, optimizer_error: str | None
+) -> None:
+    """Route run_round down the omnigent backend path and stub the session.
+
+    Selects the omnigent backend via the ``ANVIL_OPTIMIZER_BACKEND`` env
+    override (the repo's ``harness/config.yaml`` carries no optimizer
+    section), then patches :func:`_run_omnigent_session` to return the
+    4-tuple ``(action, transcript, parse_result, optimizer_error)`` the
+    real backend would — driving the ACTUAL decision-override path in
+    ``run_round`` rather than fabricating the persisted round JSON.
+    """
+    import anvil.loop.round as round_mod
+
+    # A backend failure parses to a NoopAction (loop never crashes); the
+    # discriminator is the separate ``optimizer_error`` marker, not the
+    # action. A legitimate noop is the SAME action with ``optimizer_error``
+    # None — so this stub proves the two are told apart by the marker alone.
+    action = NoopAction(rationale="parser: no `json-action` fenced block in transcript")
+    transcript = (
+        "[omnigent backend error: HTTP 401]" if optimizer_error else "(clean noop)\n"
+    )
+    parse_result = ParseResult(
+        action=action,
+        parse_status="no_block" if optimizer_error else "ok",
+        n_blocks_found=0,
+    )
+
+    async def _fake_omnigent(**_kwargs: object):  # noqa: ANN003
+        return action, transcript, parse_result, optimizer_error
+
+    monkeypatch.setenv("ANVIL_OPTIMIZER_BACKEND", "omnigent")
+    monkeypatch.setattr(round_mod, "_run_omnigent_session", _fake_omnigent)
+
+
+def test_run_round_backend_failure_persists_infra_fail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A backend failure (``optimizer_error`` set) drives the PERSISTED
+    round decision to ``infra_fail`` and threads the error into the round
+    JSON — a regression that leaves it ``noop`` fails here."""
+    repo = _init_repo(tmp_path)
+    _patch_omnigent_session(
+        monkeypatch, optimizer_error="OmnigentError: HTTP 401 | login redirect"
+    )
+
+    report = run_round(round_id=1, repo_root=repo, parent_branch="anvil/exp", max_turns=1)
+
+    # In-memory report reflects the override.
+    assert report.decision is Decision.INFRA_FAIL
+    assert report.action_kind == "noop"
+
+    # The PERSISTED round JSON (what the orchestrator/UI read) carries both
+    # the infra_fail decision and the threaded error marker.
+    round_json = json.loads(
+        (repo / "eval" / "runs" / "round_001.json").read_text(encoding="utf-8")
+    )
+    assert round_json["decision"] == "infra_fail"
+    assert round_json["optimizer_error"] == "OmnigentError: HTTP 401 | login redirect"
+    assert "OmnigentError: HTTP 401" in round_json["notes"]
+
+
+def test_run_round_legit_noop_stays_noop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A legitimate optimizer-chosen noop (no ``optimizer_error``) must
+    REMAIN ``noop`` — never mislabeled as ``infra_fail``. This is the
+    complement that prevents over-correction."""
+    repo = _init_repo(tmp_path)
+    _patch_omnigent_session(monkeypatch, optimizer_error=None)
+
+    report = run_round(round_id=1, repo_root=repo, parent_branch="anvil/exp", max_turns=1)
+
+    assert report.decision is Decision.NOOP
+
+    round_json = json.loads(
+        (repo / "eval" / "runs" / "round_001.json").read_text(encoding="utf-8")
+    )
+    assert round_json["decision"] == "noop"
+    assert round_json["optimizer_error"] is None
 
 
 # ---------------------------------------------------------------------------
