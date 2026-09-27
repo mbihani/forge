@@ -436,6 +436,38 @@ def test_resolve_server_url_derived_strips_trailing_slash(
     )
 
 
+def test_resolve_server_url_host_already_has_omnigent_suffix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(c) A ``DATABRICKS_HOST`` already ending in ``/omnigent`` is not doubled
+    up into ``.../omnigent/omnigent`` (a trailing slash on it is fine too)."""
+    monkeypatch.delenv("OMNIGENT_SERVER_URL", raising=False)
+    for host in (
+        "https://foo.cloud.databricks.com/omnigent",
+        "https://foo.cloud.databricks.com/omnigent/",
+    ):
+        monkeypatch.setenv("DATABRICKS_HOST", host)
+        assert (
+            resolve_omnigent_server_url()
+            == "https://foo.cloud.databricks.com/omnigent"
+        )
+
+
+def test_resolve_server_url_host_has_legacy_api_suffix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(d) A ``DATABRICKS_HOST`` ending in the legacy ``/api/2.0/omnigent`` API
+    surface collapses to a single ``/omnigent`` base."""
+    monkeypatch.delenv("OMNIGENT_SERVER_URL", raising=False)
+    monkeypatch.setenv(
+        "DATABRICKS_HOST", "https://foo.cloud.databricks.com/api/2.0/omnigent"
+    )
+    assert (
+        resolve_omnigent_server_url()
+        == "https://foo.cloud.databricks.com/omnigent"
+    )
+
+
 def test_resolve_server_url_empty_env_treated_as_unset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

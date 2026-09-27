@@ -46,8 +46,11 @@ def resolve_omnigent_server_url() -> str | None:
     1. **Explicit override** — if ``OMNIGENT_SERVER_URL`` is set and non-empty,
        it is returned verbatim (local dev / explicit pin; nothing is appended).
     2. **Derived from the workspace host** — otherwise ``f"{host}/omnigent"``
-       where ``host`` is ``DATABRICKS_HOST`` with any trailing slash stripped.
-       When the app runs as a Databricks App in workspace host
+       where ``host`` is ``DATABRICKS_HOST`` normalized: a trailing slash and a
+       trailing ``/omnigent`` or ``/api/2.0/omnigent`` segment are stripped
+       before exactly one ``/omnigent`` is appended, so a host that already
+       carries the suffix does not produce a doubled ``.../omnigent/omnigent``
+       path. When the app runs as a Databricks App in workspace host
        ``https://<workspace-host>`` the Omnigent server is reachable at
        ``https://<workspace-host>/omnigent``.
 
@@ -60,6 +63,13 @@ def resolve_omnigent_server_url() -> str | None:
     host = os.getenv("DATABRICKS_HOST")
     if host:
         host = host.rstrip("/")
+        # Strip an already-present Omnigent suffix so we never double it up
+        # (mirrors ``build_session_url``'s host recovery). Check the longer
+        # legacy suffix first.
+        for suffix in ("/api/2.0/omnigent", "/omnigent"):
+            if host.endswith(suffix):
+                host = host[: -len(suffix)].rstrip("/")
+                break
         if host:
             return f"{host}/omnigent"
     return None
