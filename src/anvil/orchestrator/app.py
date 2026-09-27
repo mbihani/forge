@@ -170,7 +170,7 @@ class CheckResult(BaseModel):
 class ValidationReport(BaseModel):
     status: str  # valid/invalid
     checks: list[CheckResult]
-    # True when the repo failed validation but has a recognizable savesage-style
+    # True when the repo failed validation but has a recognizable agent-style
     # alternative structure (prompts/ + schema/ + harness/ + skills/) that the
     # auto-converter can transform into the forge-compatible layout. Gates the
     # "Convert to forge-compatible" button in the UI.
@@ -367,6 +367,150 @@ def _ensure_parent_branch(repo_root: Path) -> None:
         )
 
 
+# Forge's own ``anvil.__path__`` entries, captured before any clone
+# ``src/anvil/`` is spliced in. Clone paths are always ordered AFTER
+# these so a cloned agent repo (which is a full fork shipping the whole
+# ``src/anvil/`` tree) can never shadow forge's core modules
+# (``anvil.eval``, ``anvil.orchestrator``, …) on a fresh import — only
+# ``anvil.domains.<name>``, which forge does not ship, falls through to
+# a clone. Captured lazily on the first :func:`_extend_anvil_path` call
+# (the path is still pristine then); ``None`` means "not yet captured".
+_FORGE_ANVIL_PATH: list[str] | None = None
+
+
+def _clone_shipped_domains(anvil_src: Path) -> list[str]:
+    """Domain package names shipped under ``<anvil_src>/domains/`` —
+    immediate subdirectories that contain an ``__init__.py``."""
+    domains_dir = anvil_src / "domains"
+    if not domains_dir.is_dir():
+        return []
+    names: list[str] = []
+    for child in sorted(domains_dir.iterdir()):
+        if child.is_dir() and (child / "__init__.py").is_file():
+            names.append(child.name)
+    return names
+
+
+def _extend_anvil_path(repo_path: Path) -> None:
+    """Point ``anvil.domains.<name>`` resolution at *this session's*
+    cloned ``src/anvil/`` so domain packages in the agent repo become
+    importable. Forge itself stays domain-agnostic — domain code lives
+    in the cloned agent repo, not in the forge repo.
+
+    The deployed app runs with ``PYTHONPATH=src`` (forge's ``src``), so
+    ``anvil.domains.<name>`` does not resolve from the forge package.
+    The eval-engine registry (:func:`anvil.eval.engines.load_engine`)
+    imports ``anvil.domains.<name>`` by convention; adding the agent
+    repo's ``src/anvil/`` to ``anvil.__path__`` makes that import find
+    the agent repo's copy without copying any domain code into forge.
+
+    **Multi-session correctness.** The orchestrator serves many sessions
+    over one process lifetime (``_sessions`` is process-global and
+    concurrent sessions are supported). ``anvil.__path__``,
+    ``sys.modules`` and the engine registry (``anvil.eval.engines._ENGINES``)
+    are all process-global, so a naive append would let a later session
+    that ships the *same* ``anvil.domains.<name>`` silently reuse an
+    earlier session's cached module/engine. To prevent that, this
+    function:
+
+    * Orders the forge-owned path entries first (clone code can never
+      shadow forge's core modules), then clone paths with **this
+      session's clone first** — so a domain name shipped by multiple
+      clones resolves from the active session.
+    * **Evicts** any domain this clone ships that is currently cached in
+      ``sys.modules`` / ``_ENGINES`` from a *different* clone path, so
+      :func:`load_engine` re-imports the active session's code instead
+      of reusing the earlier session's.
+    * Keeps the already-imported ``anvil.domains`` parent namespace
+      **cached and consistent**: it re-derives that package's ``__path__``
+      in place (never pops the parent, which would orphan cached
+      ``anvil.domains.<other>`` children) and drops only the evicted
+      child's stale attribute.
+
+    Idempotent: re-pointing at the same clone is a no-op (resolved-path
+    dedup, symlink-safe; a domain already loaded from *this* clone is
+    not evicted). Silently returns when the agent repo has no
+    ``src/anvil/`` directory — plain repos that don't ship a domain
+    package are unaffected.
+    """
+    global _FORGE_ANVIL_PATH
+    import anvil
+    from anvil.eval.engines import _ENGINES
+
+    candidate = (repo_path / "src" / "anvil").resolve()
+    if not candidate.is_dir():
+        return
+    candidate_str = str(candidate)
+
+    if _FORGE_ANVIL_PATH is None:
+        # First call: current entries are forge's own — no clone spliced
+        # yet. Normalize (realpath) and drop the candidate defensively.
+        _FORGE_ANVIL_PATH = [
+            os.path.realpath(p) for p in anvil.__path__ if os.path.realpath(p) != candidate_str
+        ]
+
+    # The already-imported ``anvil.domains`` namespace package (if any).
+    # We keep it cached and only re-derive its ``__path__`` below — never
+    # pop it — so its still-valid child modules stay attached (Python's
+    # parent/child import-cache invariant).
+    domains_mod = sys.modules.get("anvil.domains")
+
+    # Evict this clone's domains that are cached from a DIFFERENT clone
+    # (or left as a stale registry-only entry), so ``load_engine``
+    # re-imports the active session's code rather than silently reusing
+    # an earlier session's module/engine.
+    evicted = False
+    for name in _clone_shipped_domains(candidate):
+        mod = sys.modules.get(f"anvil.domains.{name}")
+        mod_file = getattr(mod, "__file__", None) if mod is not None else None
+        cached_here = mod_file is not None and mod_file.startswith(candidate_str + os.sep)
+        if cached_here:
+            continue  # already loaded from this clone — nothing to switch
+        if mod is None and name not in _ENGINES:
+            continue  # not cached anywhere — nothing to evict
+        _ENGINES.pop(name, None)
+        for mod_name in list(sys.modules):
+            if mod_name == f"anvil.domains.{name}" or mod_name.startswith(
+                f"anvil.domains.{name}."
+            ):
+                del sys.modules[mod_name]
+        # Keep the parent namespace consistent with the evicted child: drop
+        # the stale attribute so ``from anvil.domains import <name>`` (which
+        # returns an existing attribute without re-importing) and importlib
+        # re-import the active clone's module instead of the orphaned one.
+        if domains_mod is not None and hasattr(domains_mod, name):
+            delattr(domains_mod, name)
+        evicted = True
+
+    # Rebuild ``anvil.__path__``: forge paths first (core-module safety),
+    # then clone paths with this session's clone first. Resolved-path
+    # dedup collapses any symlink-form duplicate of an existing entry.
+    forge_set = set(_FORGE_ANVIL_PATH)
+    other_clones = [
+        rp
+        for rp in (os.path.realpath(p) for p in anvil.__path__)
+        if rp not in forge_set and rp != candidate_str
+    ]
+    # ``dict.fromkeys`` preserves order while removing any duplicate
+    # clone entries introduced by symlink aliases.
+    new_path = list(dict.fromkeys([*_FORGE_ANVIL_PATH, candidate_str, *other_clones]))
+    changed = list(anvil.__path__) != new_path
+    if changed:
+        anvil.__path__[:] = new_path
+    if domains_mod is not None and (changed or evicted):
+        # Re-derive the ALREADY-IMPORTED ``anvil.domains`` namespace's
+        # ``__path__`` in place from the new ordering, rather than popping
+        # the parent out of ``sys.modules`` (which would orphan cached
+        # ``anvil.domains.<other>`` children and break the parent/child
+        # import invariant). Future submodule imports resolve against this
+        # fresh, explicit search path; still-cached children stay attached.
+        domains_mod.__path__ = [
+            os.path.join(p, "domains")
+            for p in anvil.__path__
+            if os.path.isdir(os.path.join(p, "domains"))
+        ]
+
+
 def _parse_github_url(url: str) -> tuple[str, str | None, str | None]:
     """Extract ``(clone_url, branch, subpath)`` from a GitHub URL.
 
@@ -464,7 +608,7 @@ def _load_yaml(path: Path) -> Any:
 # "create scaffold/harness.yaml" message.
 # ---------------------------------------------------------------------------
 
-# Finding categories that represent a recognizable savesage-style structure
+# Finding categories that represent a recognizable agent-style structure
 # the forge-converter agent can transform additively (prompts/, schema/,
 # skills/*.py, judge/, harness/*.py, config.py). ``tests`` and ``data_dir``
 # are excluded — they are benign remediation hints and a *valid* forge repo
@@ -931,7 +1075,7 @@ def _run_validation(repo_path: Path) -> tuple[dict, dict | None, dict[str, list[
     so the auto-converter can feed it to :func:`build_conversion_prompt`.
 
     The report dict carries a ``convertible`` flag (True when the repo failed
-    but has a recognizable savesage-style structure the converter can handle)
+    but has a recognizable agent-style structure the converter can handle)
     that gates the "Convert to forge-compatible" button in the UI.
     """
     # Scan for alternative structures once — used by smart remediation.
@@ -1324,6 +1468,11 @@ async def _run_optimization_task(
         sess = _get_session(session_id)
         if sess is None:
             return
+        # Belt-and-suspenders: extend anvil.__path__ again in case the
+        # session was created before this fix was deployed (or the path
+        # entry was lost on a process restart that reloaded sessions
+        # from disk). Idempotent — no-op if already extended.
+        _extend_anvil_path(sess.repo_path)
         # B7: Ensure the parent branch exists — inside the task so a
         # failure transitions to 'error' instead of a stuck session.
         await anyio.to_thread.run_sync(partial(_ensure_parent_branch, sess.repo_path))
@@ -1728,6 +1877,11 @@ async def create_session(req: CreateSessionRequest) -> dict[str, Any]:
         sess.repo_path = agent_root
         sess.status = "validating"
 
+    # Extend anvil.__path__ so domain packages shipped in the cloned
+    # agent repo (src/anvil/domains/<name>/) become importable. Fast
+    # path check + list append — no thread pool needed.
+    _extend_anvil_path(agent_root)
+
     # Validate (file I/O + git) in a thread pool.
     report, config, findings = await anyio.to_thread.run_sync(partial(_run_validation, agent_root))
     with _session_lock:
@@ -1951,7 +2105,7 @@ async def get_finalize(session_id: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Conversion endpoints — auto-convert a custom (savesage-style) repo into the
+# Conversion endpoints — auto-convert a custom (agent-style) repo into the
 # forge-compatible structure via a managed Omnigent agent. See
 # :mod:`anvil.orchestrator.conversion` for the agent flow + PII safety.
 # ---------------------------------------------------------------------------
@@ -2210,7 +2364,7 @@ async function validateRepo() {
     } else {
       summary.appendChild(el('span', 'Fix the issues above, then re-validate.', null));
       // The "Convert to forge-compatible" button appears only when the repo
-      // failed validation BUT has a recognizable savesage-style alternative
+      // failed validation BUT has a recognizable agent-style alternative
       // structure the auto-converter can transform. Gated on `convertible`,
       // which the POST /api/session response nests inside `validation`.
       if (data.validation && data.validation.convertible === true) {
