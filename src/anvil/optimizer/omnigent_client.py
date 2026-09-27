@@ -29,11 +29,26 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
+
+
+def _default_token_fn() -> str:
+    """Mint a fresh Databricks OAuth/SP token for the app's own identity.
+
+    Reuses the EXACT same token-minting mechanism the AI Gateway client
+    uses (:func:`anvil.runtime.client._get_fresh_sp_token`) rather than
+    duplicating the SDK resolution logic. Imported lazily so importing
+    this module never requires the Databricks SDK — the token is only
+    needed on the default (app-identity) auth path, which is exercised at
+    request time, not at import.
+    """
+    from anvil.runtime.client import _get_fresh_sp_token
+
+    return _get_fresh_sp_token()
 
 
 def resolve_omnigent_server_url() -> str | None:
@@ -176,12 +191,30 @@ class SessionCreateMetadata:
 class OmnigentClient:
     """Async client for the Omnigent server REST API.
 
+    Authentication precedence (see :meth:`_resolve_token`):
+
+    * If ``auth_token`` (or ``OMNIGENT_AUTH_TOKEN`` upstream) is set and
+      non-empty, it is sent verbatim as a static ``Authorization: Bearer
+      <token>`` header — the local/dev / explicit-override path.
+    * OTHERWISE the client authenticates as the deployed app's own
+      Databricks identity: it mints a fresh OAuth/SP token via
+      ``token_fn`` on EVERY request (a request event hook), because SP
+      tokens expire (~1h). This matches the deployment intent — the app
+      reaches the in-workspace Omnigent control-plane with its own
+      identity. An empty/None ``Authorization`` header is never sent.
+
     Args:
         base_url: Server origin, e.g. ``http://localhost:6767``.
-        auth_token: Optional Bearer token for the ``Authorization`` header.
+        auth_token: Optional explicit Bearer token. When set it wins and
+            is used verbatim; when unset the app-identity token minter is
+            used per-request instead.
         client: Injected :class:`httpx.AsyncClient` (or a test fake). When
             omitted a fresh client is created and closed with this wrapper.
         timeout: Default request timeout in seconds.
+        token_fn: Zero-arg callable returning a fresh bearer token, used
+            only when no explicit ``auth_token`` is set. Defaults to the
+            app's Databricks OAuth/SP minter (:func:`_default_token_fn`).
+            Injected in tests.
     """
 
     def __init__(
@@ -191,20 +224,65 @@ class OmnigentClient:
         *,
         client: httpx.AsyncClient | None = None,
         timeout: float = 300.0,
+        token_fn: Callable[[], str] | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
         self._owns_client = client is None
+        # An explicit token wins and is sent verbatim. When it is unset we
+        # fall back to minting the app's own Databricks OAuth token per
+        # request (SP tokens expire ~1h), so we must NOT freeze a header.
+        self._explicit_token = auth_token or None
+        self._token_fn = token_fn or _default_token_fn
         headers: dict[str, str] = {"Accept": "application/json"}
-        if auth_token:
-            headers["Authorization"] = f"Bearer {auth_token}"
+        if self._explicit_token:
+            headers["Authorization"] = f"Bearer {self._explicit_token}"
+        # Register the per-request auth hook only on the app-identity path
+        # (no explicit token). The hook refreshes the bearer on every
+        # request so a token minted at construction time can never expire
+        # out from under a long-running optimization.
+        event_hooks: dict[str, list[Any]] = {}
+        if not self._explicit_token:
+            event_hooks["request"] = [self._inject_auth_header]
         self._client = client or httpx.AsyncClient(
-            base_url=self._base_url, headers=headers, timeout=timeout
+            base_url=self._base_url,
+            headers=headers,
+            timeout=timeout,
+            event_hooks=event_hooks,
         )
         if client is not None:
             # Respect caller-provided client auth headers if not already set.
             for key, value in headers.items():
                 self._client.headers.setdefault(key, value)
+            # Wire the per-request auth hook onto a caller-provided real
+            # httpx client too, when it exposes ``event_hooks`` (test fakes
+            # generally do not — they run no requests, so this is skipped).
+            if not self._explicit_token:
+                hooks = getattr(self._client, "event_hooks", None)
+                if isinstance(hooks, dict):
+                    hooks.setdefault("request", []).append(self._inject_auth_header)
+
+    def _resolve_token(self) -> str | None:
+        """Resolve the bearer token for a request.
+
+        Explicit token wins verbatim; otherwise mint the app's Databricks
+        OAuth/SP token fresh. Never returns an empty string (falls back to
+        ``None`` so no empty ``Authorization`` header is ever sent).
+        """
+        if self._explicit_token:
+            return self._explicit_token
+        token = self._token_fn()
+        return token or None
+
+    async def _inject_auth_header(self, request: httpx.Request) -> None:
+        """httpx request event hook: set a fresh ``Authorization`` bearer.
+
+        Runs per request on the app-identity path only. When the minter
+        yields no token the header is left unset rather than sent empty.
+        """
+        token = self._resolve_token()
+        if token:
+            request.headers["Authorization"] = f"Bearer {token}"
 
     async def aclose(self) -> None:
         if self._owns_client:

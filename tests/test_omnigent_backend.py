@@ -464,6 +464,55 @@ def test_run_transport_timeout_produces_noop(tmp_path: Path) -> None:
     assert result.turns_used is None
 
 
+def test_run_backend_error_sets_optimizer_error_marker(tmp_path: Path) -> None:
+    """A backend failure carries a DISTINGUISHABLE ``optimizer_error`` marker.
+
+    The transcript still parses to a NoopAction (the loop never crashes),
+    but ``optimizer_error`` must be non-None so the round can surface a
+    401 / SSO redirect / connection error as a failure rather than an
+    indistinguishable "optimized, noop".
+    """
+
+    class _FailingClient(FakeOmnigentClient):
+        async def create_session(self, *a: Any, **kw: Any) -> dict:
+            raise OmnigentError("unauthorized", status_code=401, body="login redirect")
+
+    backend = OmnigentBackend(
+        client=_FailingClient(),  # type: ignore[arg-type]
+        agent_bundle_path=_write_agent_yaml(tmp_path),
+        server_url="http://localhost:6767",
+    )
+    result = asyncio.run(backend.run(prompt="p", scaffold_files={}, max_turns=5, model="m"))
+
+    # Still a noop-producing action (loop never crashes) ...
+    assert result.action.action == "noop"
+    # ... but the failure is DISTINGUISHABLE via the marker.
+    assert result.optimizer_error is not None
+    assert "OmnigentError" in result.optimizer_error
+    assert "login redirect" in result.optimizer_error
+
+
+def test_run_success_leaves_optimizer_error_none(tmp_path: Path) -> None:
+    """A clean run (legit optimizer noop) leaves ``optimizer_error`` None.
+
+    This is the discriminator: a genuine optimizer-chosen noop must NOT be
+    confused with a swallowed backend failure.
+    """
+    stream_events = [
+        ("response.output_text.delta", {"delta": _ACTION_BLOCK}),
+        ("response.completed", {"done": True}),
+    ]
+    backend = OmnigentBackend(
+        client=FakeOmnigentClient(stream_events=stream_events),  # type: ignore[arg-type]
+        agent_bundle_path=_write_agent_yaml(tmp_path),
+        server_url="http://localhost:6767",
+    )
+    result = asyncio.run(backend.run(prompt="p", scaffold_files={}, max_turns=5, model="m"))
+
+    assert result.action.action == "noop"
+    assert result.optimizer_error is None
+
+
 def test_run_skips_none_scaffold_files(tmp_path: Path) -> None:
     """scaffold_files entries with None content (deletions) are not uploaded."""
     stream_events = [("response.output_text.delta", {"delta": _ACTION_BLOCK})]

@@ -59,6 +59,11 @@ resources:
           - --port
           - "8000"
         env:
+          # Required for uvicorn to import ``anvil.orchestrator.app`` — the
+          # package lives under ``src/``. Without it the app crashes at
+          # startup with ModuleNotFoundError.
+          - name: PYTHONPATH
+            value: src
           - name: OMNIGENT_SERVER_URL
             value: ${var.omnigent_server_url}
           - name: OMNIGENT_AUTH_TOKEN
@@ -70,6 +75,11 @@ resources:
           - name: GIT_TOKEN
             value: ${var.git_token}
           - name: ANVIL_AI_GATEWAY_URL
+            value: ${var.ai_gateway_url}
+          # OpenAI-compatible base URL the runtime agent's gateway client
+          # reads (``anvil.runtime.client._gateway_base_url``). Without it
+          # baseline eval fails with 'Connection error'.
+          - name: ANVIL_GATEWAY_BASE_URL
             value: ${var.ai_gateway_url}
           - name: ANVIL_EVAL_ENGINE
             value: ${var.eval_engine}

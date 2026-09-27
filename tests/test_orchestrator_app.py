@@ -1191,6 +1191,43 @@ def test_get_round_not_found(
     assert resp.status_code == 404
 
 
+def test_round_summary_surfaces_optimizer_error(tmp_path: Path) -> None:
+    """A round JSON carrying ``optimizer_error`` surfaces it in the summary.
+
+    This is the end-to-end observability contract for FIX 2: a swallowed
+    optimizer-backend failure must be distinguishable (``infra_fail`` +
+    the error text) from a legitimate optimizer-chosen noop.
+    """
+    runs_dir = tmp_path / "eval" / "runs"
+    runs_dir.mkdir(parents=True)
+    # Round 1: a backend failure — infra_fail decision + error marker.
+    (runs_dir / "round_001.json").write_text(
+        json.dumps(
+            {
+                "round_id": 1,
+                "decision": "infra_fail",
+                "action_kind": "noop",
+                "optimizer_error": "OmnigentError: 401 | login redirect",
+            }
+        ),
+        encoding="utf-8",
+    )
+    # Round 2: a legitimate optimizer noop — no error marker.
+    (runs_dir / "round_002.json").write_text(
+        json.dumps({"round_id": 2, "decision": "noop", "action_kind": "noop"}),
+        encoding="utf-8",
+    )
+
+    summaries = app_module._list_round_summaries(tmp_path)
+
+    assert summaries[0]["round_id"] == 1
+    assert summaries[0]["decision"] == "infra_fail"
+    assert summaries[0]["optimizer_error"] == "OmnigentError: 401 | login redirect"
+    # The legitimate noop is NOT disguised as a failure.
+    assert summaries[1]["decision"] == "noop"
+    assert summaries[1]["optimizer_error"] is None
+
+
 def test_get_baseline(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
 ) -> None:

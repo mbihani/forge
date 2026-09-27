@@ -84,6 +84,12 @@ class OptimizerResult:
     mlflow_trace_url: str | None = None
     turns_used: int | None = None
     duration_s: float | None = None
+    # Set to a human-readable error string ONLY when the optimizer BACKEND
+    # itself failed (auth/401, redirect to SSO, connection error, malformed
+    # response, ...). This is distinct from a legitimate optimizer-chosen
+    # ``NoopAction``: a backend failure must surface as a failure, not be
+    # silently disguised as a clean noop. ``None`` on every success path.
+    optimizer_error: str | None = None
 
 
 class OptimizerBackend(Protocol):
