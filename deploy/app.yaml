@@ -34,3 +34,11 @@ env:
     value: ${var.domain_config}
   - name: ANVIL_OPTIMIZER_BACKEND
     value: omnigent
+  # Belt-and-suspenders with the code-level ``os.environ.setdefault`` in
+  # ``anvil/__init__.py`` and the app/eval entrypoints: force synchronous
+  # MLflow trace export so ``mlflow.genai.evaluate`` cannot crash on a None
+  # per-row trace at link time (MLflow 3.11 async-trace issue). ``app.yaml`` is
+  # the descriptor the Databricks Apps runtime reads, so the flag must be here
+  # too for the deployed app to be mitigated at the env level.
+  - name: MLFLOW_ENABLE_ASYNC_TRACE_LOGGING
+    value: "false"

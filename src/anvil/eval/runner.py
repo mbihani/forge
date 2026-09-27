@@ -43,6 +43,19 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+# Default synchronous MLflow trace export BEFORE ``import mlflow`` below. This is
+# the eval entrypoint; when this module is imported ahead of the app (e.g. a
+# script that imports ``anvil.eval`` directly), setting it here means the v3
+# trace exporter is normally constructed with async disabled, so
+# ``mlflow.genai.evaluate`` does not crash in ``batch_link_traces_to_run`` on a
+# None per-row trace. ``anvil``'s package ``__init__`` sets the same default;
+# repeating it here keeps the mitigation from depending on which module the
+# process imports first. NOTE: ``setdefault`` only sets the var when UNSET — it
+# does NOT override an inherited ``MLFLOW_ENABLE_ASYNC_TRACE_LOGGING=true``. The
+# ``_resilient_eval_harness`` shim below is the guarantee that a missing per-row
+# trace never crashes the run even when async logging stays enabled.
+os.environ.setdefault("MLFLOW_ENABLE_ASYNC_TRACE_LOGGING", "false")
+
 import mlflow
 from mlflow.entities import SpanType
 from mlflow.types.responses import ResponsesAgentRequest
@@ -530,7 +543,7 @@ def _resilient_eval_harness():
       ``AttributeError: 'NoneType' object has no attribute 'info'`` — the
       live ``make_baseline`` crash, typically ~row 2-3 of 8.
 
-    This context manager monkeypatches two harness symbols, scoped to the
+    This context manager monkeypatches three harness symbols, scoped to the
     ``mlflow.genai.evaluate`` call (restored on exit — NOT a global
     import-time patch), so a missing per-row trace never crashes the run:
 
@@ -559,17 +572,34 @@ def _resilient_eval_harness():
        ``construct_eval_result_df`` (``trace_utils.py``:925, caught but
        yields a None DataFrame that breaks ``_aggregate_report``).
 
-    The shim (1) is the direct guard against the confirmed crash; the
-    fallback (2) is the root-cause fix that prevents the crash from
-    relocating. Together they bring the ``predict_fn`` path to the same
-    per-row-trace reliability the production static-dataset path already
-    relies on.
+    3. ``batch_link_traces_to_run`` → a wrapper that drops ONLY eval results
+       whose ``trace`` is still None before delegating to the original (a
+       present-but-malformed trace is passed through, not swallowed). The
+       harness links all traces to the run AFTER scoring via
+       ``batch_link_traces_to_run`` (``harness.py``:699), whose first line is
+       the unguarded list comprehension ``[er.eval_item.trace.info.trace_id
+       for er in eval_results]`` (``trace_utils.py``:1014). If the fallback in
+       (2) could not synthesize a trace for some row (observed live on the
+       Databricks Tracing Server, where the whole scoring pass completes and
+       then this link step raises ``AttributeError: 'NoneType' ... has no
+       attribute 'info'``), that row must not abort the run. Rows with a real
+       trace are still linked; only the trace-less rows are skipped.
+
+    The shim (1) is the direct guard against the mid-scoring crash and the
+    fallback (2) is the root-cause fix that prevents most relocation; guard
+    (3) is the final backstop at the post-scoring link step, the last place a
+    residual None trace can still reach. Together they bring the ``predict_fn``
+    path to the same per-row-trace reliability the production static-dataset
+    path already relies on.
     """
     import mlflow.genai.evaluation.harness as _harness
     from mlflow.genai.utils.trace_utils import create_minimal_trace
 
     _orig_get_new_expectations = _harness._get_new_expectations
     _orig_run_predict = _harness._run_predict
+    # ``batch_link_traces_to_run`` is imported into the harness namespace, so
+    # patch the name the harness call site resolves. Absent on older mlflow.
+    _orig_batch_link = getattr(_harness, "batch_link_traces_to_run", None)
 
     def _get_new_expectations_none_safe(eval_item):
         # mlflow 3.11.x harness.py:936 derefs ``eval_item.trace.info.assessments``
@@ -593,13 +623,31 @@ def _resilient_eval_harness():
         if predict_fn is not None and eval_item.trace is None:
             eval_item.trace = create_minimal_trace(eval_item)
 
+    def _batch_link_traces_to_run_none_safe(run_id, eval_results, *args, **kwargs):
+        # trace_utils.py:1014 does ``[er.eval_item.trace.info.trace_id for er
+        # in eval_results]`` with no None check. A residual None trace that
+        # (1) and (2) did not cover would abort the entire run at this
+        # post-scoring link step. Drop ONLY the rows whose ``trace`` is None
+        # (the documented crash condition); rows with a real trace are still
+        # linked. A present-but-malformed trace (e.g. ``trace.info`` None) is
+        # NOT dropped — it is passed through so MLflow surfaces it as it
+        # normally would, rather than being silently swallowed here.
+        linkable = [
+            er for er in eval_results if getattr(er.eval_item, "trace", None) is not None
+        ]
+        return _orig_batch_link(run_id, linkable, *args, **kwargs)
+
     _harness._get_new_expectations = _get_new_expectations_none_safe
     _harness._run_predict = _run_predict_with_minimal_trace_fallback
+    if _orig_batch_link is not None:
+        _harness.batch_link_traces_to_run = _batch_link_traces_to_run_none_safe
     try:
         yield
     finally:
         _harness._get_new_expectations = _orig_get_new_expectations
         _harness._run_predict = _orig_run_predict
+        if _orig_batch_link is not None:
+            _harness.batch_link_traces_to_run = _orig_batch_link
 
 
 def _run_predictions_parallel(
