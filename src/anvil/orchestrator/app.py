@@ -105,6 +105,7 @@ try:
     from anvil.eval.cache import report_to_baseline, save_baseline
     from anvil.loop.frontier import load_frontier
     from anvil.loop.round import run_round
+    from anvil.optimizer.omnigent_client import resolve_omnigent_server_url
     from anvil.orchestrator.conversion import (
         DEFAULT_TARGET_BRANCH,
         ConversionResult,
@@ -121,14 +122,17 @@ except Exception as exc:  # noqa: BLE001 — capture any import failure
     DEFAULT_TARGET_BRANCH = None  # type: ignore[assignment]
     ConversionResult = None  # type: ignore[assignment]
     _run_conversion_task = None  # type: ignore[assignment]
+    resolve_omnigent_server_url = None  # type: ignore[assignment]
 
 logger = logging.getLogger("anvil.orchestrator")
 
-# Omnigent server connection for the auto-conversion feature. Read at import
-# time so the convert endpoint can return 503 early when the agent server is
-# not configured. ``OMNIGENT_AUTH_TOKEN`` is optional (some deployments run the
-# server without auth); ``OMNIGENT_SERVER_URL`` is required to run a conversion.
-OMNIGENT_SERVER_URL = os.getenv("OMNIGENT_SERVER_URL")
+# Omnigent server connection for the auto-conversion feature. The server base
+# URL is resolved lazily at use time via
+# :func:`anvil.optimizer.omnigent_client.resolve_omnigent_server_url` — an
+# explicit ``OMNIGENT_SERVER_URL`` env wins, otherwise it is derived from the
+# deployed workspace host (``DATABRICKS_HOST`` + ``/omnigent``) — so the app is
+# not pinned to one workspace at import time. ``OMNIGENT_AUTH_TOKEN`` is
+# optional (some deployments run the server without auth).
 OMNIGENT_AUTH_TOKEN = os.getenv("OMNIGENT_AUTH_TOKEN")
 
 # ---------------------------------------------------------------------------
@@ -1625,7 +1629,7 @@ async def _cleanup_omnigent_session(session_id: str) -> None:
         omnigent_sid = sess.conversion.session_id
     if not omnigent_sid:
         return
-    server_url = os.getenv("OMNIGENT_SERVER_URL")
+    server_url = resolve_omnigent_server_url()
     if not server_url:
         return
     auth_token = os.getenv("OMNIGENT_AUTH_TOKEN")
@@ -2178,7 +2182,9 @@ async def start_convert(session_id: str, req: ConvertRequest) -> dict[str, Any]:
 
     Guards:
 
-    * 503 when ``OMNIGENT_SERVER_URL`` is not configured (the agent cannot run).
+    * 503 when the Omnigent server URL cannot be resolved — neither
+      ``OMNIGENT_SERVER_URL`` nor a derivable ``DATABRICKS_HOST`` is set (the
+      agent cannot run).
     * 409 when the repo is not convertible (no alternative structures were
       detected by validation) — the UI hides the button in this case, so a 409
       here means the caller bypassed the UI.
@@ -2186,10 +2192,14 @@ async def start_convert(session_id: str, req: ConvertRequest) -> dict[str, Any]:
     """
     _require_imports()
     sess = _require_session(session_id)
-    if not OMNIGENT_SERVER_URL:
+    if not resolve_omnigent_server_url():
         raise HTTPException(
             status_code=503,
-            detail="OMNIGENT_SERVER_URL is not configured; the conversion agent cannot run.",
+            detail=(
+                "Omnigent server URL could not be resolved (neither "
+                "OMNIGENT_SERVER_URL nor a derivable DATABRICKS_HOST is set); "
+                "the conversion agent cannot run."
+            ),
         )
     target_branch = req.target_branch or DEFAULT_TARGET_BRANCH
     with _session_lock:

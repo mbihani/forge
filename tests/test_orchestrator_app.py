@@ -2040,7 +2040,9 @@ def test_convert_returns_503_when_omnigent_not_configured(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
 ) -> None:
     sid = _create_convertible_session(client, tmp_path, monkeypatch)
-    monkeypatch.setattr(app_module, "OMNIGENT_SERVER_URL", None)
+    # The server URL is resolved lazily; force it to resolve to nothing
+    # (neither OMNIGENT_SERVER_URL nor a derivable DATABRICKS_HOST).
+    monkeypatch.setattr(app_module, "resolve_omnigent_server_url", lambda: None)
     resp = client.post(f"/api/session/{sid}/convert", json={})
     assert resp.status_code == 503
     assert "OMNIGENT_SERVER_URL" in resp.json()["detail"]
@@ -2050,7 +2052,7 @@ def test_convert_starts_task_and_polls_to_completed(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
 ) -> None:
     sid = _create_convertible_session(client, tmp_path, monkeypatch)
-    monkeypatch.setattr(app_module, "OMNIGENT_SERVER_URL", "http://localhost:6767")
+    monkeypatch.setenv("OMNIGENT_SERVER_URL", "http://localhost:6767")
     monkeypatch.setattr(app_module, "_run_conversion_task", _fake_conversion_task)
     resp = client.post(f"/api/session/{sid}/convert", json={})
     assert resp.status_code == 202
@@ -2072,7 +2074,7 @@ def test_convert_custom_target_branch(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
 ) -> None:
     sid = _create_convertible_session(client, tmp_path, monkeypatch)
-    monkeypatch.setattr(app_module, "OMNIGENT_SERVER_URL", "http://localhost:6767")
+    monkeypatch.setenv("OMNIGENT_SERVER_URL", "http://localhost:6767")
     monkeypatch.setattr(app_module, "_run_conversion_task", _fake_conversion_task)
     resp = client.post(f"/api/session/{sid}/convert", json={"target_branch": "my-branch"})
     assert resp.status_code == 202
@@ -2086,7 +2088,7 @@ def test_convert_not_convertible_returns_409(
 ) -> None:
     """A valid repo (convertible: false) cannot be converted → 409."""
     sid = _create_valid_session(client, tmp_path, monkeypatch)
-    monkeypatch.setattr(app_module, "OMNIGENT_SERVER_URL", "http://localhost:6767")
+    monkeypatch.setenv("OMNIGENT_SERVER_URL", "http://localhost:6767")
     resp = client.post(f"/api/session/{sid}/convert", json={})
     assert resp.status_code == 409
     assert "not convertible" in resp.json()["detail"]
@@ -2096,7 +2098,7 @@ def test_convert_already_running_returns_409(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
 ) -> None:
     sid = _create_convertible_session(client, tmp_path, monkeypatch)
-    monkeypatch.setattr(app_module, "OMNIGENT_SERVER_URL", "http://localhost:6767")
+    monkeypatch.setenv("OMNIGENT_SERVER_URL", "http://localhost:6767")
     monkeypatch.setattr(app_module, "_run_conversion_task", _blocking_conversion_task)
     resp1 = client.post(f"/api/session/{sid}/convert", json={})
     assert resp1.status_code == 202
@@ -2119,7 +2121,7 @@ def test_get_convert_returns_progress(
 ) -> None:
     """GET /convert surfaces the progress entries the task appended."""
     sid = _create_convertible_session(client, tmp_path, monkeypatch)
-    monkeypatch.setattr(app_module, "OMNIGENT_SERVER_URL", "http://localhost:6767")
+    monkeypatch.setenv("OMNIGENT_SERVER_URL", "http://localhost:6767")
 
     async def _task_with_progress(session_id: str, target_branch: str) -> None:
         with app_module._session_lock:
@@ -2305,9 +2307,12 @@ def test_cleanup_omnigent_session_skips_when_no_session_id(
 def test_cleanup_omnigent_session_skips_when_server_not_configured(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
 ) -> None:
-    """When OMNIGENT_SERVER_URL is not set, cleanup is a no-op (no server to
-    call). The remote session is simply abandoned."""
+    """When the server URL cannot be resolved, cleanup is a no-op (no server
+    to call). The remote session is simply abandoned."""
+    # Unset both sources so ``resolve_omnigent_server_url`` returns None
+    # (explicit env absent AND no derivable workspace host).
     monkeypatch.delenv("OMNIGENT_SERVER_URL", raising=False)
+    monkeypatch.delenv("DATABRICKS_HOST", raising=False)
     _seed_session_with_conversion("s3", tmp_path)
 
     fake = _FakeOmnigentCleanupClient()

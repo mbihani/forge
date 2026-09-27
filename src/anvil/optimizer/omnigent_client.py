@@ -28,6 +28,7 @@ creation multipart contract at ``POST /v1/sessions`` and the hidden
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
@@ -35,21 +36,92 @@ from typing import Any
 import httpx
 
 
+def resolve_omnigent_server_url() -> str | None:
+    """Resolve the Omnigent control-plane base URL for this deployment.
+
+    Resolution precedence (evaluated lazily, at call time — never frozen at
+    import — so a deployed App picks up its own workspace and local dev with an
+    explicit env still works):
+
+    1. **Explicit override** — if ``OMNIGENT_SERVER_URL`` is set and non-empty,
+       it is returned verbatim (local dev / explicit pin; nothing is appended).
+    2. **Derived from the workspace host** — otherwise ``f"{host}/omnigent"``
+       where ``host`` is ``DATABRICKS_HOST`` normalized: a trailing slash and a
+       trailing ``/omnigent`` or ``/api/2.0/omnigent`` segment are stripped
+       before exactly one ``/omnigent`` is appended, so a host that already
+       carries the suffix does not produce a doubled ``.../omnigent/omnigent``
+       path. When the app runs as a Databricks App in workspace host
+       ``https://<workspace-host>`` the Omnigent server is reachable at
+       ``https://<workspace-host>/omnigent``.
+
+    Returns ``None`` when neither source yields a value (Omnigent unconfigured
+    — callers surface a 503 / skip best-effort work).
+    """
+    explicit = os.getenv("OMNIGENT_SERVER_URL")
+    if explicit:
+        return explicit
+    host = os.getenv("DATABRICKS_HOST")
+    if host:
+        host = host.rstrip("/")
+        # Strip an already-present Omnigent suffix so we never double it up
+        # (mirrors ``build_session_url``'s host recovery). Check the longer
+        # legacy suffix first.
+        for suffix in ("/api/2.0/omnigent", "/omnigent"):
+            if host.endswith(suffix):
+                host = host[: -len(suffix)].rstrip("/")
+                break
+        if host:
+            return f"{host}/omnigent"
+    return None
+
+
+def _sdk_workspace_id() -> str | None:
+    """Best-effort numeric workspace/org id via the Databricks SDK.
+
+    Returns ``None`` on any failure (SDK missing, no auth, network error) so
+    the caller can fall back to the ``DATABRICKS_WORKSPACE_ID`` env — the
+    ``?o=`` UI-link param is optional and the link resolves without it.
+    """
+    try:
+        from databricks.sdk import WorkspaceClient  # noqa: PLC0415 - lazy, optional
+
+        wsid = WorkspaceClient().get_workspace_id()
+    except Exception:  # noqa: BLE001 — best-effort; ?o= is optional
+        return None
+    return str(wsid) if wsid else None
+
+
+def resolve_omnigent_workspace_id() -> str | None:
+    """Resolve the numeric workspace/org id for the Omnigent ``?o=`` UI link.
+
+    Derives the id dynamically via the Databricks SDK where feasible
+    (best-effort), falling back to the ``DATABRICKS_WORKSPACE_ID`` env. No
+    workspace id is ever hard-coded. Returns ``None`` when neither yields a
+    value; the ``?o=`` param is then omitted and the link still resolves.
+    """
+    wsid = _sdk_workspace_id()
+    if wsid:
+        return wsid
+    return os.getenv("DATABRICKS_WORKSPACE_ID") or None
+
+
 def build_session_url(server_url: str, session_id: str, workspace_id: str | None = None) -> str:
     """Build a navigable Databricks UI URL for an Omnigent session.
 
-    ``OMNIGENT_SERVER_URL`` points at the API surface
-    (``…/api/2.0/omnigent``); the navigable UI path is
-    ``<workspace_host>/omnigent/c/<session_id>``. The ``/api/2.0/omnigent``
-    suffix is stripped to recover the workspace host (same derivation as
-    :func:`anvil.orchestrator.app._write_crash_log_to_databricks`). A
-    ``?o=<workspace_id>`` query param is appended when a workspace id is
-    supplied, and omitted otherwise — the link still resolves without it.
+    ``server_url`` may be either the legacy API surface
+    (``…/api/2.0/omnigent``) or the workspace-derived base
+    (``<workspace_host>/omnigent`` — see :func:`resolve_omnigent_server_url`);
+    the navigable UI path is ``<workspace_host>/omnigent/c/<session_id>``. The
+    trailing ``/api/2.0/omnigent`` or ``/omnigent`` suffix is stripped to
+    recover the workspace host. A ``?o=<workspace_id>`` query param is appended
+    when a workspace id is supplied, and omitted otherwise — the link still
+    resolves without it.
     """
     host = server_url.rstrip("/")
-    suffix = "/api/2.0/omnigent"
-    if host.endswith(suffix):
-        host = host[: -len(suffix)]
+    for suffix in ("/api/2.0/omnigent", "/omnigent"):
+        if host.endswith(suffix):
+            host = host[: -len(suffix)]
+            break
     url = f"{host}/omnigent/c/{session_id}"
     if workspace_id:
         url = f"{url}?o={workspace_id}"
