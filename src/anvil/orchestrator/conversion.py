@@ -55,6 +55,8 @@ from anvil.optimizer.omnigent_client import (
     OmnigentError,
     SessionCreateMetadata,
     build_session_url,
+    resolve_omnigent_server_url,
+    resolve_omnigent_workspace_id,
 )
 
 logger = logging.getLogger("anvil.orchestrator.conversion")
@@ -437,7 +439,7 @@ async def _run_conversion_task(session_id: str, target_branch: str) -> None:
 
     from anvil.orchestrator import app as app_module
 
-    server_url = os.getenv("OMNIGENT_SERVER_URL")
+    server_url = resolve_omnigent_server_url()
     auth_token = os.getenv("OMNIGENT_AUTH_TOKEN")
 
     def _progress(step: str, message: str) -> None:
@@ -489,7 +491,9 @@ async def _run_conversion_task(session_id: str, target_branch: str) -> None:
 
         if not server_url:
             raise RuntimeError(
-                "OMNIGENT_SERVER_URL is not set; cannot run the conversion agent."
+                "Omnigent server URL could not be resolved (neither "
+                "OMNIGENT_SERVER_URL nor a derivable DATABRICKS_HOST is set); "
+                "cannot run the conversion agent."
             )
 
         prompt = build_conversion_prompt(
@@ -510,7 +514,7 @@ async def _run_conversion_task(session_id: str, target_branch: str) -> None:
         # so the UI can show a transcript link while the agent is still working.
         def _on_session_created(sid: str) -> None:
             url = build_session_url(
-                server_url, sid, os.getenv("DATABRICKS_WORKSPACE_ID")
+                server_url, sid, resolve_omnigent_workspace_id()
             )
             _set(session_id=sid, session_url=url)
             _progress("agent_session", f"Session link: {url}")

@@ -41,7 +41,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import io
-import os
 import tarfile
 import time
 from dataclasses import dataclass, field
@@ -55,6 +54,7 @@ from anvil.optimizer.omnigent_client import (
     OmnigentError,
     SessionCreateMetadata,
     build_session_url,
+    resolve_omnigent_workspace_id,
 )
 from anvil.optimizer.parser import parse_action
 from anvil.optimizer.session import OptimizerResult
@@ -126,7 +126,7 @@ class OmnigentBackend:
             created = await self.client.create_session(bundle, metadata=self.create_metadata)
             session_id = created["session_id"]
             session_url = build_session_url(
-                self.server_url, session_id, os.getenv("DATABRICKS_WORKSPACE_ID")
+                self.server_url, session_id, resolve_omnigent_workspace_id()
             )
 
             env_id = await self._resolve_environment(session_id)

@@ -48,6 +48,7 @@ from anvil.optimizer import (
     run_optimizer_session,
 )
 from anvil.optimizer.omnigent_backend import OmnigentBackend
+from anvil.optimizer.omnigent_client import resolve_omnigent_server_url
 from anvil.runtime.loader import default_runtime_config_path
 
 
@@ -500,7 +501,7 @@ async def _run_omnigent_session(
     cfg = BackendConfig(
         backend="omnigent",
         server_url=optimizer_cfg.get("server_url")
-        or os.getenv("OMNIGENT_SERVER_URL")
+        or resolve_omnigent_server_url()
         or "http://localhost:6767",
         auth_token=optimizer_cfg.get("auth_token") or os.getenv("OMNIGENT_AUTH_TOKEN") or None,
         agent_bundle_path=str(bundle_path),

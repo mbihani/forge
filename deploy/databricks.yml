@@ -3,8 +3,11 @@ bundle:
 
 variables:
   # CONFIGURE(omnigent_server_url): URL of the Omnigent control-plane server.
+  # Leave blank to derive it from the deployed workspace host at runtime
+  # (``https://<workspace-host>/omnigent``); set only to pin a specific server.
   omnigent_server_url:
-    description: Omnigent server URL
+    description: Omnigent server URL (blank = derive from workspace host)
+    default: ""
   # CONFIGURE(omnigent_auth_token): Authentication token for the Omnigent server.
   omnigent_auth_token:
     description: Omnigent authentication token
