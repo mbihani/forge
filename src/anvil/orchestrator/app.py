@@ -71,6 +71,19 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Literal
 
+# Force MLflow trace export to be synchronous BEFORE mlflow is imported anywhere
+# in this process. This is the app's own entrypoint (uvicorn launches
+# ``anvil.orchestrator.app:app``), so setting it here — before the heavy imports
+# below pull in mlflow via ``anvil.eval`` / ``anvil.data.mlflow_baseline`` —
+# guarantees the v3 trace exporter is constructed with async disabled. When
+# async logging is on, some per-row traces are still None at link time and
+# ``mlflow.genai.evaluate`` crashes in ``batch_link_traces_to_run``
+# (``AttributeError: 'NoneType' object has no attribute 'info'``). ``anvil``'s
+# package ``__init__`` sets the same default, but we repeat it at the entrypoint
+# so the mitigation does not depend on import-ordering reasoning, and it holds
+# regardless of the shell/deploy env. ``setdefault`` honors an explicit override.
+os.environ.setdefault("MLFLOW_ENABLE_ASYNC_TRACE_LOGGING", "false")
+
 import anyio
 import yaml
 from fastapi import FastAPI, HTTPException
@@ -235,6 +248,11 @@ class SessionData:
     error: str | None
     agent_subpath: str | None = None  # subdirectory within the cloned repo
     _clone_root: Path | None = field(default=None, repr=False)  # full clone path for cleanup
+    # True when ``repo_url`` was a local filesystem path (absolute or ``~``):
+    # the repo lives at the user's own directory, NOT a temp clone under
+    # ``_SESSIONS_ROOT``. ``_cleanup_session`` MUST NOT rmtree such a
+    # directory (doing so wipes the user's real repo — see its docstring).
+    _is_local_path: bool = field(default=False, repr=False)
     _optimize_task: Any = field(default=None, repr=False)  # asyncio.Task | None
     # Auto-conversion state. ``conversion`` is the pollable result; ``_findings``
     # is the alternative-structure scan from validation (fed to the converter
@@ -1542,11 +1560,42 @@ def _cleanup_session(session_id: str) -> None:
     When a subdirectory URL was used, ``repo_path`` points at the
     subdirectory but the full clone lives at ``_clone_root`` — clean up
     the clone root so no temp files leak.
+
+    DATA-LOSS GUARD: a local-path session (``repo_url`` was a filesystem
+    path) points ``_clone_root``/``repo_path`` at the user's OWN repo, not
+    a temp clone. rmtree'ing it deletes the user's real repository (this
+    once wiped ``~/forge``). Such sessions are skipped entirely. As
+    defense-in-depth, even for a session we believe is a clone, we refuse
+    to rmtree any path that is not under ``_SESSIONS_ROOT``.
     """
     sess = _sessions.get(session_id)
     if sess is None:
         return
+    # Never touch a directory the user pointed us at via a local path.
+    if sess._is_local_path:
+        logger.debug(
+            "skipping cleanup for local-path session %s (not a clone): %s",
+            session_id,
+            sess._clone_root or sess.repo_path,
+        )
+        return
     root = sess._clone_root or sess.repo_path
+    # Defense-in-depth: only remove clones that live under the sessions root.
+    # A path outside it should never reach here for a non-local session, but
+    # refusing to rmtree it means a mis-set ``_is_local_path`` can never cause
+    # data loss.
+    try:
+        under_root = Path(root).resolve().is_relative_to(_SESSIONS_ROOT.resolve())
+    except (OSError, ValueError):
+        under_root = False
+    if not under_root:
+        logger.warning(
+            "refusing to remove session %s path outside sessions root %s: %s",
+            session_id,
+            _SESSIONS_ROOT,
+            root,
+        )
+        return
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -1834,6 +1883,7 @@ async def create_session(req: CreateSessionRequest) -> dict[str, Any]:
         error=None,
         agent_subpath=subpath,
         _clone_root=dest_path,
+        _is_local_path=is_local_path,
         # Keep the user's GitHub token in memory only — the auto-converter
         # needs it to clone+push a private repo. Never serialized in any API
         # response (see ``_session_to_response`` / ``_redact_secrets``).

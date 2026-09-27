@@ -428,3 +428,40 @@ def test_get_new_expectations_shim_none_safe_and_passthrough(
 
         # Delegates to the original — same expectations, unaffected.
         assert shim_result == baseline
+
+
+def test_batch_link_traces_shim_drops_none_trace_rows(local_mlruns: Path) -> None:
+    """Guard the POST-scoring link step against a residual None per-row trace.
+
+    ``batch_link_traces_to_run`` (called from ``harness.py`` after scoring)
+    derefs ``eval_result.eval_item.trace.info.trace_id`` in an unguarded list
+    comprehension (``trace_utils.py``:1014). This is the live crash the task
+    reproduced: the whole scoring pass completes, then this link step raises
+    ``AttributeError: 'NoneType' object has no attribute 'info'``. Asserts:
+
+    * the ORIGINAL symbol raises ``AttributeError`` on a None-trace row —
+      proving the guard is necessary;
+    * under ``_resilient_eval_harness`` the mixed batch does NOT raise; the
+      None-trace row is dropped and the trace-present row is passed through to
+      the original (which is a no-op against the local FileStore).
+    """
+    from types import SimpleNamespace
+
+    import mlflow.genai.evaluation.harness as harness
+
+    from anvil.eval.runner import _resilient_eval_harness
+
+    def _result(trace: object) -> SimpleNamespace:
+        return SimpleNamespace(eval_item=SimpleNamespace(trace=trace))
+
+    none_row = _result(None)
+    good_row = _result(SimpleNamespace(info=SimpleNamespace(trace_id="tid-1")))
+
+    # 1. Red proof: the raw symbol derefs a None trace and raises.
+    with pytest.raises(AttributeError, match="NoneType"):
+        harness.batch_link_traces_to_run(run_id=None, eval_results=[none_row, good_row])
+
+    # 2. Under the shim, the same mixed batch does NOT raise — the None-trace
+    #    row is filtered out before the original consumes the list.
+    with _resilient_eval_harness():
+        harness.batch_link_traces_to_run(run_id=None, eval_results=[none_row, good_row])

@@ -400,6 +400,81 @@ def test_create_session_uses_local_repo_without_cloning(
     assert list(sessions_root.iterdir()) == []
 
 
+def _register_session(
+    session_id: str,
+    repo_path: Path,
+    *,
+    is_local_path: bool,
+    clone_root: Path | None = None,
+) -> None:
+    """Register a minimal SessionData in the in-memory store for cleanup tests."""
+    app_module._sessions[session_id] = app_module.SessionData(
+        session_id=session_id,
+        repo_url=str(repo_path),
+        repo_path=repo_path,
+        status="validated",
+        validation={"status": "valid", "checks": []},
+        config=None,
+        baseline=None,
+        rounds=[],
+        frontier=None,
+        finalized=None,
+        error=None,
+        _clone_root=clone_root if clone_root is not None else repo_path,
+        _is_local_path=is_local_path,
+    )
+
+
+def test_cleanup_session_preserves_local_path_repo(
+    tmp_path: Path, sessions_root: Path
+) -> None:
+    """DATA-LOSS GUARD: a local-path session's directory must survive cleanup.
+
+    Regression for the bug where ``_cleanup_session`` rmtree'd the user's own
+    repo (it once wiped ``~/forge``): a local filesystem ``repo_url`` points at
+    the user's real directory, not a temp clone.
+    """
+    user_repo = tmp_path / "my-real-repo"
+    user_repo.mkdir()
+    (user_repo / "precious.txt").write_text("do not delete", encoding="utf-8")
+
+    _register_session("local1", user_repo, is_local_path=True)
+    app_module._cleanup_session("local1")
+
+    assert user_repo.exists(), "local-path repo must NOT be removed by cleanup"
+    assert (user_repo / "precious.txt").read_text(encoding="utf-8") == "do not delete"
+
+
+def test_cleanup_session_removes_cloned_tmp_repo(sessions_root: Path) -> None:
+    """A normal cloned session under the sessions root IS removed on cleanup."""
+    clone = sessions_root / "clone1"
+    clone.mkdir()
+    (clone / "file.txt").write_text("temp clone", encoding="utf-8")
+
+    _register_session("clone1", clone, is_local_path=False)
+    app_module._cleanup_session("clone1")
+
+    assert not clone.exists(), "cloned session dir under sessions root must be removed"
+
+
+def test_cleanup_session_refuses_path_outside_sessions_root(
+    tmp_path: Path, sessions_root: Path
+) -> None:
+    """Defense-in-depth: never rmtree a non-local path outside the sessions root.
+
+    Even if ``_is_local_path`` were mis-set to False, a directory that is not
+    under ``_SESSIONS_ROOT`` must not be removed.
+    """
+    stray = tmp_path / "outside-root"
+    stray.mkdir()
+    (stray / "keep.txt").write_text("keep", encoding="utf-8")
+
+    _register_session("stray1", stray, is_local_path=False)
+    app_module._cleanup_session("stray1")
+
+    assert stray.exists(), "path outside sessions root must NOT be removed"
+
+
 def test_create_session_clone_failure_redacts_token(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
 ) -> None:
