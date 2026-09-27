@@ -71,17 +71,21 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Literal
 
-# Force MLflow trace export to be synchronous BEFORE mlflow is imported anywhere
+# Default MLflow trace export to synchronous BEFORE mlflow is imported anywhere
 # in this process. This is the app's own entrypoint (uvicorn launches
 # ``anvil.orchestrator.app:app``), so setting it here — before the heavy imports
 # below pull in mlflow via ``anvil.eval`` / ``anvil.data.mlflow_baseline`` —
-# guarantees the v3 trace exporter is constructed with async disabled. When
+# means the v3 trace exporter is normally constructed with async disabled. When
 # async logging is on, some per-row traces are still None at link time and
 # ``mlflow.genai.evaluate`` crashes in ``batch_link_traces_to_run``
 # (``AttributeError: 'NoneType' object has no attribute 'info'``). ``anvil``'s
 # package ``__init__`` sets the same default, but we repeat it at the entrypoint
-# so the mitigation does not depend on import-ordering reasoning, and it holds
-# regardless of the shell/deploy env. ``setdefault`` honors an explicit override.
+# so the mitigation does not depend on import-ordering reasoning. NOTE:
+# ``setdefault`` only sets the var when it is UNSET — it does NOT override an
+# inherited ``MLFLOW_ENABLE_ASYNC_TRACE_LOGGING=true`` from the shell/deploy env
+# (that is intentional, so an operator can opt back in). The harness-level shim
+# in ``anvil.eval.runner._resilient_eval_harness`` is the actual guarantee that
+# a missing per-row trace never crashes the run even when async stays enabled.
 os.environ.setdefault("MLFLOW_ENABLE_ASYNC_TRACE_LOGGING", "false")
 
 import anyio
@@ -1580,17 +1584,23 @@ def _cleanup_session(session_id: str) -> None:
         )
         return
     root = sess._clone_root or sess.repo_path
-    # Defense-in-depth: only remove clones that live under the sessions root.
-    # A path outside it should never reach here for a non-local session, but
-    # refusing to rmtree it means a mis-set ``_is_local_path`` can never cause
-    # data loss.
+    # Defense-in-depth: only remove clones that live STRICTLY under the
+    # sessions root. A path outside it should never reach here for a non-local
+    # session, but refusing to rmtree it means a mis-set ``_is_local_path`` can
+    # never cause data loss. The path must be a proper descendant — equal to
+    # ``_SESSIONS_ROOT`` is rejected too, so a corrupted session can never
+    # rmtree the entire sessions root.
     try:
-        under_root = Path(root).resolve().is_relative_to(_SESSIONS_ROOT.resolve())
+        resolved_root = Path(root).resolve()
+        sessions_root = _SESSIONS_ROOT.resolve()
+        strict_descendant = (
+            resolved_root != sessions_root and resolved_root.is_relative_to(sessions_root)
+        )
     except (OSError, ValueError):
-        under_root = False
-    if not under_root:
+        strict_descendant = False
+    if not strict_descendant:
         logger.warning(
-            "refusing to remove session %s path outside sessions root %s: %s",
+            "refusing to remove session %s path not strictly under sessions root %s: %s",
             session_id,
             _SESSIONS_ROOT,
             root,

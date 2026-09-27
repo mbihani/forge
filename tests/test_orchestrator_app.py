@@ -475,6 +475,67 @@ def test_cleanup_session_refuses_path_outside_sessions_root(
     assert stray.exists(), "path outside sessions root must NOT be removed"
 
 
+def test_create_session_absolute_path_marks_local_and_survives_cleanup(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    sessions_root: Path,
+) -> None:
+    """End-to-end guard through the REAL create_session prefix detector.
+
+    Unlike the ``_cleanup_session`` unit tests (which set ``_is_local_path``
+    directly), this drives ``POST /api/session`` with an absolute path so a
+    regression in the ``startswith(("/", "~"))`` detector is caught: the
+    session must be flagged local AND cleanup must preserve the directory.
+    """
+    source = _seed_repo(tmp_path / "abs-agent-repo")
+    (source / "precious.txt").write_text("keep me", encoding="utf-8")
+
+    def unexpected_clone(*_args: Any, **_kwargs: Any) -> str | None:
+        pytest.fail("an absolute local path must not be cloned")
+
+    monkeypatch.setattr(app_module, "_clone_repo", unexpected_clone)
+    resp = client.post("/api/session", json={"repo_url": str(source)})
+    assert resp.status_code == 200, resp.text
+
+    sess = app_module._sessions[resp.json()["session_id"]]
+    assert sess._is_local_path is True, "absolute path must be detected as local"
+
+    app_module._cleanup_session(sess.session_id)
+    assert source.exists(), "local-path repo must survive cleanup"
+    assert (source / "precious.txt").read_text(encoding="utf-8") == "keep me"
+
+
+def test_create_session_tilde_path_marks_local_and_survives_cleanup(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    sessions_root: Path,
+) -> None:
+    """Same end-to-end guard for a ``~``-prefixed path (HOME redirected to tmp)."""
+    home = tmp_path / "home"
+    home.mkdir()
+    source = _seed_repo(home / "tilde-agent-repo")
+    (source / "precious.txt").write_text("keep me", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+
+    def unexpected_clone(*_args: Any, **_kwargs: Any) -> str | None:
+        pytest.fail("a ~-prefixed local path must not be cloned")
+
+    monkeypatch.setattr(app_module, "_clone_repo", unexpected_clone)
+    resp = client.post("/api/session", json={"repo_url": "~/tilde-agent-repo"})
+    assert resp.status_code == 200, resp.text
+
+    sess = app_module._sessions[resp.json()["session_id"]]
+    assert sess._is_local_path is True, "~ path must be detected as local"
+    # ``~/tilde-agent-repo`` must have expanded to the redirected HOME.
+    assert sess.repo_path == source
+
+    app_module._cleanup_session(sess.session_id)
+    assert source.exists(), "local-path repo must survive cleanup"
+    assert (source / "precious.txt").read_text(encoding="utf-8") == "keep me"
+
+
 def test_create_session_clone_failure_redacts_token(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
 ) -> None:

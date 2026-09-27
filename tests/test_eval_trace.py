@@ -430,20 +430,25 @@ def test_get_new_expectations_shim_none_safe_and_passthrough(
         assert shim_result == baseline
 
 
-def test_batch_link_traces_shim_drops_none_trace_rows(local_mlruns: Path) -> None:
+def test_batch_link_traces_shim_excludes_only_none_trace_rows() -> None:
     """Guard the POST-scoring link step against a residual None per-row trace.
 
     ``batch_link_traces_to_run`` (called from ``harness.py`` after scoring)
     derefs ``eval_result.eval_item.trace.info.trace_id`` in an unguarded list
-    comprehension (``trace_utils.py``:1014). This is the live crash the task
+    comprehension (``trace_utils.py``:1014) — the live crash the task
     reproduced: the whole scoring pass completes, then this link step raises
-    ``AttributeError: 'NoneType' object has no attribute 'info'``. Asserts:
+    ``AttributeError: 'NoneType' object has no attribute 'info'``.
+
+    Uses a recording SPY installed as the ``batch_link_traces_to_run`` symbol
+    BEFORE entering ``_resilient_eval_harness`` (so the shim captures the spy
+    as its delegate). Asserts the delegate is invoked with EXACTLY the rows the
+    shim should forward, the symbol is restored to the spy on exit, and:
 
     * the ORIGINAL symbol raises ``AttributeError`` on a None-trace row —
       proving the guard is necessary;
-    * under ``_resilient_eval_harness`` the mixed batch does NOT raise; the
-      None-trace row is dropped and the trace-present row is passed through to
-      the original (which is a no-op against the local FileStore).
+    * the shim drops ONLY the ``trace is None`` row — a valid trace AND a
+      present-but-malformed trace (``trace.info`` None) are BOTH forwarded to
+      the delegate, so a real malformed-trace error is surfaced, not swallowed.
     """
     from types import SimpleNamespace
 
@@ -456,12 +461,36 @@ def test_batch_link_traces_shim_drops_none_trace_rows(local_mlruns: Path) -> Non
 
     none_row = _result(None)
     good_row = _result(SimpleNamespace(info=SimpleNamespace(trace_id="tid-1")))
+    malformed_row = _result(SimpleNamespace(info=None))  # present trace, None info
 
-    # 1. Red proof: the raw symbol derefs a None trace and raises.
+    # Red proof: the real symbol derefs a None trace and raises.
     with pytest.raises(AttributeError, match="NoneType"):
         harness.batch_link_traces_to_run(run_id=None, eval_results=[none_row, good_row])
 
-    # 2. Under the shim, the same mixed batch does NOT raise — the None-trace
-    #    row is filtered out before the original consumes the list.
-    with _resilient_eval_harness():
-        harness.batch_link_traces_to_run(run_id=None, eval_results=[none_row, good_row])
+    real = harness.batch_link_traces_to_run
+    calls: list[tuple[object, list[object]]] = []
+
+    def spy(run_id: object, eval_results: list[object], *args: object, **kwargs: object) -> None:
+        # Record what the shim forwards; never touch a real backend.
+        calls.append((run_id, list(eval_results)))
+
+    harness.batch_link_traces_to_run = spy
+    try:
+        with _resilient_eval_harness():
+            # Inside the shim the symbol is the None-safe wrapper, not the spy.
+            assert harness.batch_link_traces_to_run is not spy
+            harness.batch_link_traces_to_run(
+                run_id="run-1",
+                eval_results=[none_row, good_row, malformed_row],
+            )
+        # On exit the symbol is restored to whatever it was on entry (the spy).
+        assert harness.batch_link_traces_to_run is spy
+    finally:
+        harness.batch_link_traces_to_run = real
+
+    # The delegate was called once, with the None-trace row EXCLUDED and both
+    # the valid and the present-but-malformed rows PRESERVED (order intact).
+    assert len(calls) == 1
+    run_id, forwarded = calls[0]
+    assert run_id == "run-1"
+    assert forwarded == [good_row, malformed_row]
