@@ -1193,6 +1193,10 @@ def _list_round_summaries(repo_root: Path) -> list[dict[str, Any]]:
                 "baseline_score": data.get("baseline_score"),
                 "score_delta": data.get("score_delta_vs_parent"),
                 "aggregate": data.get("aggregate"),
+                # Non-None only when the optimizer BACKEND failed (auth/
+                # redirect/connection error) — surfaced so a swallowed
+                # backend error is visible as a failure, not a clean noop.
+                "optimizer_error": data.get("optimizer_error"),
             }
         )
     summaries.sort(key=lambda r: r.get("round_id") or 0)
@@ -2309,6 +2313,8 @@ _DASHBOARD_HTML = """<!doctype html>
   tr.keep { color: var(--keep); }
   tr.revert { color: var(--revert); }
   tr.noop { color: var(--noop); }
+  tr.infra_fail { color: var(--fail); font-weight: 600; }
+  td.opt-error { color: var(--fail); font-size: 0.78rem; }
   .error-box { background: rgba(220,38,38,0.1); border: 1px solid var(--fail);
           border-radius: 6px; padding: 12px; color: var(--fail); }
   .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border);
@@ -2583,6 +2589,10 @@ function renderProgress(data) {
     ['Round','Decision','Score Δ','Aggregate','Action','Files Changed'].forEach(h => {
       hr.appendChild(el('th', h, null));
     });
+    // Only show the backend-error column when at least one round carries one,
+    // so a healthy run's table stays uncluttered.
+    const anyOptError = (data.rounds || []).some(r => r.optimizer_error);
+    if (anyOptError) hr.appendChild(el('th', 'Optimizer Error', null));
     thead.appendChild(hr);
     tbl.appendChild(thead);
     const tbody = el('tbody', null, null);
@@ -2597,6 +2607,11 @@ function renderProgress(data) {
       tr.appendChild(el('td', typeof agg === 'number' ? agg.toFixed(4) : '—', null));
       tr.appendChild(el('td', r.action_kind || '—', null));
       tr.appendChild(el('td', '—', null));
+      if (anyOptError) {
+        const errCell = el('td', r.optimizer_error || '—', r.optimizer_error ? 'opt-error' : null);
+        if (r.optimizer_error) errCell.title = r.optimizer_error;
+        tr.appendChild(errCell);
+      }
       tbody.appendChild(tr);
     });
     tbl.appendChild(tbody);

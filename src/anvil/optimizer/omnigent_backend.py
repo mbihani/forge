@@ -121,6 +121,7 @@ class OmnigentBackend:
         )
         session_id: str | None = None
         session_url: str | None = None
+        optimizer_error: str | None = None
 
         try:
             created = await self.client.create_session(bundle, metadata=self.create_metadata)
@@ -165,6 +166,15 @@ class OmnigentBackend:
             transcript = note
             modified_files = {}
             turns_used = None
+            # Preserve the failure as a DISTINGUISHABLE marker so the round
+            # surfaces it as a backend failure rather than an
+            # indistinguishable "optimized, noop". ``parse_action`` below
+            # will still yield a NoopAction from this transcript, but
+            # ``optimizer_error`` lets the loop tell the two apart. Keep the
+            # marker to a single line so it reads cleanly in round summaries.
+            optimizer_error = f"{type(exc).__name__}: {exc}"
+            if body:
+                optimizer_error += f" | {body}"
 
         parse_result = parse_action(transcript)
         return OptimizerResult(
@@ -176,6 +186,7 @@ class OmnigentBackend:
             mlflow_trace_url=None,
             turns_used=turns_used,
             duration_s=time.monotonic() - start,
+            optimizer_error=optimizer_error,
         )
 
     # ------------------------------------------------------------------

@@ -132,8 +132,12 @@ def run_round(
     # async-tracing pattern is validated. See:
     # https://docs.databricks.com/aws/en/mlflow3/genai/tracing/integrations/claude-code
     optimizer_cfg = _read_optimizer_config(scaffold_root)
+    # ``optimizer_error`` is set only when the optimizer BACKEND itself
+    # failed (auth/401, SSO redirect, connection error, ...). The local
+    # backend raises rather than swallowing, so it is always None there.
+    optimizer_error: str | None = None
     if optimizer_cfg.get("backend") == "omnigent":
-        action, transcript, parse_result = asyncio.run(
+        action, transcript, parse_result, optimizer_error = asyncio.run(
             _run_omnigent_session(
                 prompt=prompt,
                 repo_root=repo_root,
@@ -272,6 +276,17 @@ def run_round(
         parse_status=parse_result.parse_status,
     )
 
+    # 7b. A swallowed optimizer-backend failure must NOT be reported as a
+    # clean noop. When the backend errored, the transcript parsed to a
+    # NoopAction (so ``gate_decision`` returned NOOP with no frontier I/O);
+    # override to INFRA_FAIL and carry the error into the round artifacts so
+    # a 401 / SSO redirect / connection error is visibly a failure, not
+    # "Status: optimized, noop". Distinct from a legitimate optimizer noop,
+    # which leaves ``optimizer_error`` None and keeps the NOOP decision.
+    if optimizer_error:
+        decision = Decision.INFRA_FAIL
+        print(f"[round {round_id}] optimizer backend failure: {optimizer_error}")
+
     # 8. Write critique md.
     critique_path = repo_root / "scaffold" / "memory" / f"round_{round_id:03d}_critique.md"
     critique_path.write_text(
@@ -306,8 +321,9 @@ def run_round(
                 baseline_score=baseline_aggregate,
                 score_delta=score_delta,
                 parse_status=parse_result.parse_status,
-                notes="",
+                notes=(f"optimizer backend failed: {optimizer_error}" if optimizer_error else ""),
                 frontier_best=frontier.best if frontier else None,
+                optimizer_error=optimizer_error,
             ),
             indent=2,
         )
@@ -475,15 +491,16 @@ async def _run_omnigent_session(
     optimizer_cfg: dict[str, Any],
     max_turns: int,
     optimizer_endpoint: str | None,
-) -> tuple[Any, str, Any]:
+) -> tuple[Any, str, Any, str | None]:
     """Run the optimizer on a managed Omnigent server.
 
     Builds the backend from the ``optimizer:`` config section, collects
     the scaffold tree into a flat ``relative_path -> content`` dict, and
-    delegates to :func:`get_backend`. Returns the same 3-tuple
-    ``(action, transcript, parse_result)`` as
-    :func:`run_optimizer_session` so the rest of the round is
-    backend-agnostic.
+    delegates to :func:`get_backend`. Returns a 4-tuple
+    ``(action, transcript, parse_result, optimizer_error)`` — the same
+    three values as :func:`run_optimizer_session` plus the backend-failure
+    marker (``None`` on success) so the round can distinguish a swallowed
+    backend error from a legitimate optimizer-chosen noop.
     """
     scaffold_files = _collect_scaffold_files(repo_root)
     bundle_rel = optimizer_cfg.get("agent_bundle_path", "agents/forge_optimizer.yaml")
@@ -523,7 +540,7 @@ async def _run_omnigent_session(
         # the cleanup omnigent-specific without widening the Protocol.
         if isinstance(backend, OmnigentBackend):
             await backend.client.aclose()
-    return result.action, result.transcript, result.parse_result
+    return result.action, result.transcript, result.parse_result, result.optimizer_error
 
 
 def _collect_scaffold_files(repo_root: Path) -> dict[str, str]:
@@ -612,6 +629,7 @@ def _build_round_json(
     parse_status: str,
     notes: str,
     frontier_best: dict[str, float] | None = None,
+    optimizer_error: str | None = None,
 ) -> dict:
     payload: dict = {
         "round_id": round_id,
@@ -624,6 +642,10 @@ def _build_round_json(
         "baseline_score": baseline_score,
         "score_delta_vs_parent": score_delta,
         "notes": notes,
+        # Non-None ONLY on an optimizer-backend failure (auth/redirect/
+        # connection error). Lets the orchestrator + UI distinguish a
+        # swallowed backend error from a legitimate optimizer-chosen noop.
+        "optimizer_error": optimizer_error,
         # Best-so-far per objective after this round's decision (frontier
         # gate only; None for the legacy delta gate / noop / infra-fail).
         # The decision is driven by this, not by ``score_delta_vs_parent``.
