@@ -205,9 +205,11 @@ class OmnigentClient:
 
     Args:
         base_url: Server origin, e.g. ``http://localhost:6767``.
-        auth_token: Optional explicit Bearer token. When set it wins and
-            is used verbatim; when unset the app-identity token minter is
-            used per-request instead.
+        auth_token: Optional explicit Bearer token. When set (non-empty) it
+            wins and is used verbatim; when ``None`` the app-identity token
+            minter is used per-request instead. An explicitly-provided but
+            empty/blank value raises — it is a misconfiguration, not a
+            request to skip auth (pass ``None`` for app-identity auth).
         client: Injected :class:`httpx.AsyncClient` (or a test fake). When
             omitted a fresh client is created and closed with this wrapper.
         timeout: Default request timeout in seconds.
@@ -229,6 +231,16 @@ class OmnigentClient:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
         self._owns_client = client is None
+        # An explicitly-provided but empty/blank token is a misconfiguration:
+        # fail loudly at construction rather than silently sending an
+        # unauthenticated request or falling through to app-identity minting.
+        # ``None`` is the sentinel for "use the app's own Databricks identity".
+        if auth_token is not None and not str(auth_token).strip():
+            raise OmnigentError(
+                "OmnigentClient received an explicit but empty auth token; pass "
+                "a non-empty token, or pass None to authenticate with the app's "
+                "own Databricks OAuth/SP identity."
+            )
         # An explicit token wins and is sent verbatim. When it is unset we
         # fall back to minting the app's own Databricks OAuth token per
         # request (SP tokens expire ~1h), so we must NOT freeze a header.
@@ -262,27 +274,35 @@ class OmnigentClient:
                 if isinstance(hooks, dict):
                     hooks.setdefault("request", []).append(self._inject_auth_header)
 
-    def _resolve_token(self) -> str | None:
-        """Resolve the bearer token for a request.
+    def _resolve_token(self) -> str:
+        """Resolve the non-empty bearer token for a request, or RAISE.
 
         Explicit token wins verbatim; otherwise mint the app's Databricks
-        OAuth/SP token fresh. Never returns an empty string (falls back to
-        ``None`` so no empty ``Authorization`` header is ever sent).
+        OAuth/SP token fresh. Never returns an empty/None token: an empty
+        resolved/minted token raises :class:`OmnigentError` so we fail
+        loudly and locally rather than sending an unauthenticated request
+        (which the workspace bounces to the SSO front door — the exact
+        failure mode this client exists to prevent).
         """
         if self._explicit_token:
             return self._explicit_token
         token = self._token_fn()
-        return token or None
+        if not token or not str(token).strip():
+            raise OmnigentError(
+                "refusing to send an unauthenticated Omnigent request: the "
+                "Databricks OAuth/SP token minter returned an empty token. "
+                "Check the app's identity / OMNIGENT_AUTH_TOKEN configuration."
+            )
+        return token
 
     async def _inject_auth_header(self, request: httpx.Request) -> None:
         """httpx request event hook: set a fresh ``Authorization`` bearer.
 
-        Runs per request on the app-identity path only. When the minter
-        yields no token the header is left unset rather than sent empty.
+        Runs per request on the app-identity path. :meth:`_resolve_token`
+        guarantees a non-empty token or raises BEFORE the request reaches
+        the transport — a request is never sent without a valid bearer.
         """
-        token = self._resolve_token()
-        if token:
-            request.headers["Authorization"] = f"Bearer {token}"
+        request.headers["Authorization"] = f"Bearer {self._resolve_token()}"
 
     async def aclose(self) -> None:
         if self._owns_client:

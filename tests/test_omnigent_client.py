@@ -646,15 +646,38 @@ def test_empty_token_refreshes_per_request() -> None:
     assert r2.headers["Authorization"] == "Bearer tok-2"
 
 
-def test_empty_token_never_sends_empty_authorization_header() -> None:
-    """When the minter yields an empty token, no Authorization header is set."""
-    c = OmnigentClient(
-        "http://localhost:6767", None, client=FakeAsyncClient({}), token_fn=lambda: ""
-    )
-    assert c._resolve_token() is None
-    req = _FakeRequest()
-    asyncio.run(c._inject_auth_header(req))  # type: ignore[arg-type]
-    assert "Authorization" not in req.headers
+def test_empty_minted_token_raises_not_silent_noauth() -> None:
+    """An empty/None minted token RAISES rather than sending no auth header.
+
+    Sending an unauthenticated request recreates the original failure mode
+    (SSO bounce → silently swallowed noop), so an empty resolved token is a
+    loud, local error — never a header-less request.
+    """
+    for bad in ("", "   ", None):
+        c = OmnigentClient(
+            "http://localhost:6767",
+            None,
+            client=FakeAsyncClient({}),
+            token_fn=lambda b=bad: b,  # type: ignore[return-value]
+        )
+        with pytest.raises(OmnigentError):
+            c._resolve_token()
+        req = _FakeRequest()
+        with pytest.raises(OmnigentError):
+            asyncio.run(c._inject_auth_header(req))  # type: ignore[arg-type]
+        # And crucially the header was never set to an empty bearer.
+        assert "Authorization" not in req.headers
+
+
+def test_explicit_but_empty_token_raises_at_construction() -> None:
+    """An explicitly-provided but empty/blank token raises immediately.
+
+    ``None`` means "use app identity"; an explicit ``""``/whitespace is a
+    misconfiguration, not a request to skip auth.
+    """
+    for bad in ("", "   "):
+        with pytest.raises(OmnigentError):
+            OmnigentClient("http://localhost:6767", bad, client=FakeAsyncClient({}))
 
 
 def test_default_token_fn_reuses_gateway_sp_minter(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -766,3 +789,31 @@ def test_no_request_is_sent_without_a_bearer() -> None:
     for auth in seen:
         assert auth is not None and auth.startswith("Bearer ")
         assert auth.removeprefix("Bearer ").strip() != ""
+
+
+def test_empty_minted_token_raises_before_reaching_transport() -> None:
+    """When the minter returns ""/None, the client RAISES before any request
+    reaches the transport — the transport handler is never invoked."""
+    for bad in ("", None):
+        hit: list[int] = []
+
+        def _handler(request: httpx.Request, _hit: list[int] = hit) -> httpx.Response:
+            _hit.append(1)
+            raise AssertionError("request reached the transport without a Bearer")
+
+        http_client = httpx.AsyncClient(
+            base_url="http://localhost:6767", transport=httpx.MockTransport(_handler)
+        )
+        c = OmnigentClient(
+            "http://localhost:6767",
+            None,
+            client=http_client,
+            token_fn=lambda b=bad: b,  # type: ignore[return-value]
+        )
+        try:
+            with pytest.raises(OmnigentError):
+                asyncio.run(c.get_session("s1"))
+        finally:
+            asyncio.run(http_client.aclose())
+        # The transport handler was never called — the request never went out.
+        assert hit == []
