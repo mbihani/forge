@@ -416,12 +416,15 @@ def test_resolve_server_url_explicit_env_verbatim(monkeypatch: pytest.MonkeyPatc
 
 
 def test_resolve_server_url_derived_from_host(monkeypatch: pytest.MonkeyPatch) -> None:
-    """(b) With the env empty, the URL is derived as ``<host>/omnigent``."""
+    """(b) With the env empty, the URL is derived as the REST API base
+    ``<host>/api/2.0/omnigent`` (the workspace-hosted API service — NOT the
+    ``<host>/omnigent`` browser UI surface, which has no ``/v1/sessions``
+    route and 404s)."""
     monkeypatch.delenv("OMNIGENT_SERVER_URL", raising=False)
     monkeypatch.setenv("DATABRICKS_HOST", "https://foo.cloud.databricks.com")
     assert (
         resolve_omnigent_server_url()
-        == "https://foo.cloud.databricks.com/omnigent"
+        == "https://foo.cloud.databricks.com/api/2.0/omnigent"
     )
 
 
@@ -433,15 +436,17 @@ def test_resolve_server_url_derived_strips_trailing_slash(
     monkeypatch.setenv("DATABRICKS_HOST", "https://foo.cloud.databricks.com/")
     assert (
         resolve_omnigent_server_url()
-        == "https://foo.cloud.databricks.com/omnigent"
+        == "https://foo.cloud.databricks.com/api/2.0/omnigent"
     )
 
 
 def test_resolve_server_url_host_already_has_omnigent_suffix(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """(c) A ``DATABRICKS_HOST`` already ending in ``/omnigent`` is not doubled
-    up into ``.../omnigent/omnigent`` (a trailing slash on it is fine too)."""
+    """(c) A ``DATABRICKS_HOST`` already ending in the UI ``/omnigent`` suffix is
+    de-duped (stripped) before the single ``/api/2.0/omnigent`` REST base is
+    appended — never ``.../omnigent/api/2.0/omnigent`` (a trailing slash on it
+    is fine too)."""
     monkeypatch.delenv("OMNIGENT_SERVER_URL", raising=False)
     for host in (
         "https://foo.cloud.databricks.com/omnigent",
@@ -450,22 +455,24 @@ def test_resolve_server_url_host_already_has_omnigent_suffix(
         monkeypatch.setenv("DATABRICKS_HOST", host)
         assert (
             resolve_omnigent_server_url()
-            == "https://foo.cloud.databricks.com/omnigent"
+            == "https://foo.cloud.databricks.com/api/2.0/omnigent"
         )
 
 
 def test_resolve_server_url_host_has_legacy_api_suffix(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """(d) A ``DATABRICKS_HOST`` ending in the legacy ``/api/2.0/omnigent`` API
-    surface collapses to a single ``/omnigent`` base."""
+    """(d) A ``DATABRICKS_HOST`` already ending in ``/api/2.0/omnigent`` is
+    de-duped (stripped) before the single ``/api/2.0/omnigent`` base is
+    appended — never doubled into
+    ``.../api/2.0/omnigent/api/2.0/omnigent``."""
     monkeypatch.delenv("OMNIGENT_SERVER_URL", raising=False)
     monkeypatch.setenv(
         "DATABRICKS_HOST", "https://foo.cloud.databricks.com/api/2.0/omnigent"
     )
     assert (
         resolve_omnigent_server_url()
-        == "https://foo.cloud.databricks.com/omnigent"
+        == "https://foo.cloud.databricks.com/api/2.0/omnigent"
     )
 
 
@@ -473,20 +480,21 @@ def test_resolve_server_url_bare_host_gets_https_scheme(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """(e) Databricks Apps inject ``DATABRICKS_HOST`` as a BARE hostname with no
-    scheme — the derived URL MUST carry an ``https://`` scheme (and exactly one
-    ``/omnigent``), or the httpx client raises ``UnsupportedProtocol`` at
-    request time. This is the live prod failure this fix targets.
+    scheme — the derived URL MUST carry an ``https://`` scheme AND target the
+    REST API base ``/api/2.0/omnigent`` (the workspace-hosted API service), or
+    the request fails: no scheme raises ``UnsupportedProtocol``, and the
+    ``/omnigent`` UI surface 404s on ``/v1/sessions``. This is the live prod
+    failure this fix targets.
 
-    Regression-bite: reverting the scheme-prepend line in
-    :func:`resolve_omnigent_server_url` makes this assertion fail (the derived
-    value comes back as ``fevm-...databricks.com/omnigent``, missing the
-    scheme)."""
+    Regression-bite: reverting the ``/api/2.0/omnigent`` change makes this
+    assertion fail (the derived value comes back as
+    ``https://fevm-...databricks.com/omnigent``, the UI surface)."""
     monkeypatch.delenv("OMNIGENT_SERVER_URL", raising=False)
     monkeypatch.setenv(
         "DATABRICKS_HOST", "fevm-stable-classic-7ppxjq.cloud.databricks.com"
     )
     assert resolve_omnigent_server_url() == (
-        "https://fevm-stable-classic-7ppxjq.cloud.databricks.com/omnigent"
+        "https://fevm-stable-classic-7ppxjq.cloud.databricks.com/api/2.0/omnigent"
     )
 
 
@@ -497,8 +505,8 @@ def test_resolve_server_url_scheme_host_not_doubled(
     ``http://``) scheme keeps it verbatim — the scheme is never doubled."""
     monkeypatch.delenv("OMNIGENT_SERVER_URL", raising=False)
     for host, expected in (
-        ("https://foo.cloud.databricks.com", "https://foo.cloud.databricks.com/omnigent"),
-        ("http://foo.cloud.databricks.com", "http://foo.cloud.databricks.com/omnigent"),
+        ("https://foo.cloud.databricks.com", "https://foo.cloud.databricks.com/api/2.0/omnigent"),
+        ("http://foo.cloud.databricks.com", "http://foo.cloud.databricks.com/api/2.0/omnigent"),
     ):
         monkeypatch.setenv("DATABRICKS_HOST", host)
         assert resolve_omnigent_server_url() == expected
@@ -514,11 +522,11 @@ def test_resolve_server_url_uppercase_scheme_not_double_prefixed(
 
     Regression-bite: reverting the ``.lower()`` on the scheme check makes the
     uppercase case fail (it double-prefixes to
-    ``https://HTTPS://host/omnigent``)."""
+    ``https://HTTPS://host/api/2.0/omnigent``)."""
     monkeypatch.delenv("OMNIGENT_SERVER_URL", raising=False)
     for host, expected in (
-        ("HTTPS://foo.cloud.databricks.com", "HTTPS://foo.cloud.databricks.com/omnigent"),
-        ("HtTp://foo.cloud.databricks.com", "HtTp://foo.cloud.databricks.com/omnigent"),
+        ("HTTPS://foo.cloud.databricks.com", "HTTPS://foo.cloud.databricks.com/api/2.0/omnigent"),
+        ("HtTp://foo.cloud.databricks.com", "HtTp://foo.cloud.databricks.com/api/2.0/omnigent"),
     ):
         monkeypatch.setenv("DATABRICKS_HOST", host)
         assert resolve_omnigent_server_url() == expected
@@ -528,8 +536,9 @@ def test_resolve_server_url_bare_host_with_suffix_dedup_and_scheme(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """(e) A scheme-less host that ALSO carries a trailing ``/omnigent`` or
-    ``/api/2.0/omnigent`` suffix is both de-duped (single ``/omnigent``) AND
-    scheme-normalized to ``https://`` — the two fixes compose."""
+    ``/api/2.0/omnigent`` suffix is both de-duped (a single ``/api/2.0/omnigent``
+    base, no doubling) AND scheme-normalized to ``https://`` — the fixes
+    compose."""
     monkeypatch.delenv("OMNIGENT_SERVER_URL", raising=False)
     for host in (
         "fevm-stable-classic-7ppxjq.cloud.databricks.com/omnigent",
@@ -537,7 +546,7 @@ def test_resolve_server_url_bare_host_with_suffix_dedup_and_scheme(
     ):
         monkeypatch.setenv("DATABRICKS_HOST", host)
         assert resolve_omnigent_server_url() == (
-            "https://fevm-stable-classic-7ppxjq.cloud.databricks.com/omnigent"
+            "https://fevm-stable-classic-7ppxjq.cloud.databricks.com/api/2.0/omnigent"
         )
 
 
@@ -588,7 +597,7 @@ def test_resolve_server_url_empty_env_treated_as_unset(
     monkeypatch.setenv("DATABRICKS_HOST", "https://bar.cloud.databricks.com")
     assert (
         resolve_omnigent_server_url()
-        == "https://bar.cloud.databricks.com/omnigent"
+        == "https://bar.cloud.databricks.com/api/2.0/omnigent"
     )
 
 
@@ -673,8 +682,12 @@ def test_build_session_url_strips_omnigent_suffix() -> None:
     assert url == "https://foo.cloud.databricks.com/omnigent/c/sid"
 
 
-def test_build_session_url_strips_legacy_api_suffix() -> None:
-    """The legacy ``…/api/2.0/omnigent`` base still recovers the host."""
+def test_build_session_url_strips_api_suffix() -> None:
+    """Cross-check: fed the CURRENT derived REST API base
+    ``…/api/2.0/omnigent`` (what :func:`resolve_omnigent_server_url` now
+    returns), ``build_session_url`` still recovers the workspace host and
+    yields the navigable UI link ``<host>/omnigent/c/<id>`` — NOT
+    ``…/api/2.0/omnigent/c/<id>``."""
     url = build_session_url(
         "https://foo.cloud.databricks.com/api/2.0/omnigent", "sid", "42"
     )
