@@ -143,8 +143,9 @@ def test_derived_url_beats_file_server_url(monkeypatch):
     """Bites round.py ``_resolve_omnigent_backend_url`` ordering.
 
     Backend forced omnigent, OMNIGENT_SERVER_URL unset, DATABRICKS_HOST
-    set -> the resolved URL is the derived ``{host}/omnigent`` NOT the
-    file's ``localhost:6767``. Reverting to the old
+    set -> the resolved URL is the derived REST API base
+    ``{host}/api/2.0/omnigent`` NOT the file's ``localhost:6767``.
+    Reverting to the old
     ``optimizer_cfg.get('server_url') or resolve_omnigent_server_url()``
     order makes this fail (localhost would win).
     """
@@ -154,7 +155,7 @@ def test_derived_url_beats_file_server_url(monkeypatch):
 
     url = _resolve_omnigent_backend_url(optimizer_cfg)
 
-    assert url == "https://myworkspace.cloud.databricks.com/omnigent"
+    assert url == "https://myworkspace.cloud.databricks.com/api/2.0/omnigent"
 
 
 def test_explicit_env_url_wins(monkeypatch):
@@ -204,13 +205,13 @@ def test_round_json_records_selected_backend_and_url():
         parse_status="ok",
         notes="",
         optimizer_backend="omnigent",
-        optimizer_server_url="https://myworkspace.cloud.databricks.com/omnigent",
+        optimizer_server_url="https://myworkspace.cloud.databricks.com/api/2.0/omnigent",
     )
 
     assert payload["optimizer_backend"] == "omnigent"
     assert (
         payload["optimizer_server_url"]
-        == "https://myworkspace.cloud.databricks.com/omnigent"
+        == "https://myworkspace.cloud.databricks.com/api/2.0/omnigent"
     )
 
 

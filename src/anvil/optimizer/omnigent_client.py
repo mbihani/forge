@@ -60,18 +60,22 @@ def resolve_omnigent_server_url() -> str | None:
 
     1. **Explicit override** — if ``OMNIGENT_SERVER_URL`` is set and non-empty,
        it is returned verbatim (local dev / explicit pin; nothing is appended).
-    2. **Derived from the workspace host** — otherwise ``f"{host}/omnigent"``
-       where ``host`` is ``DATABRICKS_HOST`` normalized: a trailing slash and a
-       trailing ``/omnigent`` or ``/api/2.0/omnigent`` segment are stripped
-       before exactly one ``/omnigent`` is appended, so a host that already
-       carries the suffix does not produce a doubled ``.../omnigent/omnigent``
-       path. Databricks Apps inject ``DATABRICKS_HOST`` as a BARE hostname with
-       no scheme (e.g. ``fevm-stable-classic-7ppxjq.cloud.databricks.com``), so
-       a derived value that lacks an ``http://``/``https://`` scheme is
-       normalized to ``https://`` (an httpx request without a scheme raises
+    2. **Derived from the workspace host** — otherwise
+       ``f"{host}/api/2.0/omnigent"`` where ``host`` is ``DATABRICKS_HOST``
+       normalized: a trailing slash and a trailing ``/omnigent`` or
+       ``/api/2.0/omnigent`` segment are stripped before exactly one
+       ``/api/2.0/omnigent`` is appended, so a host that already carries either
+       suffix does not produce a doubled ``.../api/2.0/omnigent/api/2.0/omnigent``
+       or ``.../omnigent/api/2.0/omnigent`` path. Databricks Apps inject
+       ``DATABRICKS_HOST`` as a BARE hostname with no scheme (e.g.
+       ``fevm-stable-classic-7ppxjq.cloud.databricks.com``), so a derived value
+       that lacks an ``http://``/``https://`` scheme is normalized to
+       ``https://`` (an httpx request without a scheme raises
        ``UnsupportedProtocol``). A host that already carries a scheme keeps it,
        untouched — never doubled. When the app runs as a Databricks App the
-       Omnigent server is reachable at ``https://<workspace-host>/omnigent``.
+       Omnigent REST API is mounted at ``https://<workspace-host>/api/2.0/omnigent``
+       (the workspace-hosted API service — NOT ``<host>/omnigent``, which is the
+       interactive browser UI surface and has no ``/v1/sessions`` REST route).
 
     Returns ``None`` when neither source yields a value (Omnigent unconfigured
     — callers surface a 503 / skip best-effort work).
@@ -98,7 +102,7 @@ def resolve_omnigent_server_url() -> str | None:
             # host's original casing is preserved in the returned URL.
             if not host.lower().startswith(("http://", "https://")):
                 host = f"https://{host}"
-            return f"{host}/omnigent"
+            return f"{host}/api/2.0/omnigent"
     return None
 
 
