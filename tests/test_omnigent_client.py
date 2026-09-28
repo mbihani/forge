@@ -98,6 +98,10 @@ class FakeAsyncClient:
         self.calls.append({"method": "PUT", "url": url, **kwargs})
         return self._lookup("PUT", url)
 
+    async def patch(self, url: str, **kwargs: Any) -> FakeResponse:
+        self.calls.append({"method": "PATCH", "url": url, **kwargs})
+        return self._lookup("PATCH", url)
+
     async def delete(self, url: str, **kwargs: Any) -> FakeResponse:
         self.calls.append({"method": "DELETE", "url": url, **kwargs})
         return self._lookup("DELETE", url)
@@ -187,6 +191,61 @@ def test_delete_session() -> None:
     out = asyncio.run(c.delete_session("s1"))
     assert out == {"ok": True}
     assert _last_call(c, "DELETE")["url"] == "/v1/sessions/s1"
+
+
+# ---------------------------------------------------------------------------
+# Runner discovery + binding (managed-flow HTTP 409 fix)
+# ---------------------------------------------------------------------------
+
+
+def test_list_runners_returns_data_list() -> None:
+    """``GET /v1/runners`` returns the pool's ``data`` list of runner dicts."""
+    body = {
+        "data": [
+            {
+                "runner_id": "runner_token_abc",
+                "online": True,
+                "harnesses": ["claude-native", "claude-sdk", "codex"],
+            }
+        ]
+    }
+    c = _client_with({("GET", "/v1/runners"): FakeResponse(_body=body)})
+    runners = asyncio.run(c.list_runners())
+    assert len(runners) == 1
+    assert runners[0]["runner_id"] == "runner_token_abc"
+    assert runners[0]["online"] is True
+    assert "claude-sdk" in runners[0]["harnesses"]
+    assert _last_call(c, "GET")["url"] == "/v1/runners"
+
+
+def test_list_runners_empty_pool() -> None:
+    """An empty pool degrades to an empty list, not a crash."""
+    c = _client_with({("GET", "/v1/runners"): FakeResponse(_body={"data": []})})
+    assert asyncio.run(c.list_runners()) == []
+
+
+def test_bind_runner_patches_session_with_runner_id() -> None:
+    """``bind_runner`` PATCHes /v1/sessions/{id} with a ``{"runner_id": ...}``
+    body and returns the updated SessionResponse snapshot."""
+    resp = FakeResponse(
+        _body={"id": "sess-9", "runner_id": "runner_token_abc", "runner_online": True}
+    )
+    c = _client_with({("PATCH", "/v1/sessions/sess-9"): resp})
+    out = asyncio.run(c.bind_runner("sess-9", "runner_token_abc"))
+    assert out["runner_id"] == "runner_token_abc"
+    call = _last_call(c, "PATCH")
+    assert call["url"] == "/v1/sessions/sess-9"
+    assert call["json"] == {"runner_id": "runner_token_abc"}
+
+
+def test_bind_runner_raises_on_error() -> None:
+    """A non-2xx from the bind PATCH raises OmnigentError with status + body."""
+    c = _client_with(
+        {("PATCH", "/v1/sessions/s1"): FakeResponse(status_code=409, text="not bound")}
+    )
+    with pytest.raises(OmnigentError) as exc_info:
+        asyncio.run(c.bind_runner("s1", "runner-x"))
+    assert exc_info.value.status_code == 409
 
 
 # ---------------------------------------------------------------------------
