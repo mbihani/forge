@@ -136,7 +136,13 @@ def run_round(
     # failed (auth/401, SSO redirect, connection error, ...). The local
     # backend raises rather than swallowing, so it is always None there.
     optimizer_error: str | None = None
-    if optimizer_cfg.get("backend") == "omnigent":
+    # Selected backend + (omnigent only) resolved server URL, recorded into
+    # the round JSON so a 'local noop' is distinguishable from an
+    # 'omnigent noop/INFRA_FAIL' WITHOUT reading the transcript file.
+    selected_backend = optimizer_cfg.get("backend") or "local"
+    resolved_optimizer_server_url: str | None = None
+    if selected_backend == "omnigent":
+        resolved_optimizer_server_url = _resolve_omnigent_backend_url(optimizer_cfg)
         action, transcript, parse_result, optimizer_error = asyncio.run(
             _run_omnigent_session(
                 prompt=prompt,
@@ -144,6 +150,7 @@ def run_round(
                 optimizer_cfg=optimizer_cfg,
                 max_turns=max_turns,
                 optimizer_endpoint=optimizer_endpoint,
+                server_url=resolved_optimizer_server_url,
             )
         )
     else:
@@ -324,6 +331,8 @@ def run_round(
                 notes=(f"optimizer backend failed: {optimizer_error}" if optimizer_error else ""),
                 frontier_best=frontier.best if frontier else None,
                 optimizer_error=optimizer_error,
+                optimizer_backend=selected_backend,
+                optimizer_server_url=resolved_optimizer_server_url,
             ),
             indent=2,
         )
@@ -467,6 +476,17 @@ def _read_optimizer_config(scaffold_root: Path | str) -> dict[str, Any]:
     ``ANVIL_OPTIMIZER_BACKEND`` env var, so a deployment (e.g. a
     Databricks App) can force the omnigent backend without the cloned
     target repo needing an ``optimizer:`` section in its config.yaml.
+
+    Precedence for ``backend``: the ``ANVIL_OPTIMIZER_BACKEND`` env var
+    WINS over the file's value whenever it is set and non-empty. forge is
+    domain-agnostic and clones arbitrary target repos whose
+    ``harness/config.yaml`` we do not control — the optimizer backend is
+    a DEPLOYMENT/INFRA concern, so the deployment env must be
+    authoritative over a file-pinned ``optimizer.backend`` (e.g. a repo
+    that pins ``backend: local`` must still run omnigent when the App
+    sets ``ANVIL_OPTIMIZER_BACKEND=omnigent``). When the env var is
+    unset or empty, the file value is preserved unchanged so local dev
+    keeps whatever ``harness/config.yaml`` pins.
     """
     path = default_runtime_config_path(Path(scaffold_root))
     if not path.is_file():
@@ -475,13 +495,39 @@ def _read_optimizer_config(scaffold_root: Path | str) -> dict[str, Any]:
         raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         optimizer = raw.get("optimizer")
         optimizer_cfg = optimizer if isinstance(optimizer, dict) else {}
-    # Env-var override lets a deployment select the backend without the
-    # cloned repo needing an ``optimizer:`` section.
-    if not optimizer_cfg.get("backend"):
-        env_backend = os.getenv("ANVIL_OPTIMIZER_BACKEND", "")
-        if env_backend:
-            optimizer_cfg["backend"] = env_backend
+    # Env-var override lets a deployment select the backend authoritatively
+    # over the cloned repo's file config. When set and non-empty, the env
+    # var WINS (overriding even a truthy file value); when unset/empty the
+    # file value is preserved.
+    env_backend = os.getenv("ANVIL_OPTIMIZER_BACKEND", "")
+    if env_backend:
+        optimizer_cfg["backend"] = env_backend
     return optimizer_cfg
+
+
+def _resolve_omnigent_backend_url(optimizer_cfg: dict[str, Any]) -> str:
+    """Resolve the Omnigent server URL for the backend, env-authoritative.
+
+    forge clones arbitrary target repos whose ``harness/config.yaml`` may
+    pin an ``optimizer.server_url`` (e.g. ``http://localhost:6767``) that
+    is meaningless in a deployed App. The server URL is a DEPLOYMENT/INFRA
+    concern, so precedence is:
+
+    1. ``OMNIGENT_SERVER_URL`` env (non-empty) — explicit deployment pin;
+    2. derived ``{DATABRICKS_HOST}/omnigent`` when ``DATABRICKS_HOST`` is
+       present — the workspace-native Omnigent surface;
+    3. the file-pinned ``optimizer.server_url`` — local dev fallback only;
+    4. ``http://localhost:6767`` — last-resort default.
+
+    Steps 1 + 2 are exactly what :func:`resolve_omnigent_server_url`
+    returns, so a file ``server_url`` NEVER shadows the env/derived URL
+    when either source yields a value.
+    """
+    return (
+        resolve_omnigent_server_url()
+        or optimizer_cfg.get("server_url")
+        or "http://localhost:6767"
+    )
 
 
 async def _run_omnigent_session(
@@ -491,6 +537,7 @@ async def _run_omnigent_session(
     optimizer_cfg: dict[str, Any],
     max_turns: int,
     optimizer_endpoint: str | None,
+    server_url: str,
 ) -> tuple[Any, str, Any, str | None]:
     """Run the optimizer on a managed Omnigent server.
 
@@ -517,9 +564,10 @@ async def _run_omnigent_session(
             bundle_path = forge_bundle
     cfg = BackendConfig(
         backend="omnigent",
-        server_url=optimizer_cfg.get("server_url")
-        or resolve_omnigent_server_url()
-        or "http://localhost:6767",
+        # Env-authoritative URL resolved by the caller (see
+        # ``_resolve_omnigent_backend_url``): OMNIGENT_SERVER_URL env >
+        # derived {DATABRICKS_HOST}/omnigent > file server_url > localhost.
+        server_url=server_url,
         auth_token=optimizer_cfg.get("auth_token") or os.getenv("OMNIGENT_AUTH_TOKEN") or None,
         agent_bundle_path=str(bundle_path),
         model=optimizer_endpoint,
@@ -630,6 +678,8 @@ def _build_round_json(
     notes: str,
     frontier_best: dict[str, float] | None = None,
     optimizer_error: str | None = None,
+    optimizer_backend: str | None = None,
+    optimizer_server_url: str | None = None,
 ) -> dict:
     payload: dict = {
         "round_id": round_id,
@@ -646,6 +696,14 @@ def _build_round_json(
         # connection error). Lets the orchestrator + UI distinguish a
         # swallowed backend error from a legitimate optimizer-chosen noop.
         "optimizer_error": optimizer_error,
+        # The optimizer backend that ACTUALLY ran this round
+        # ('local' | 'omnigent'), after env-var precedence is applied. Lets
+        # a 'local noop' be told apart from an 'omnigent noop/INFRA_FAIL'
+        # from the round record alone (no transcript needed). When
+        # 'omnigent', ``optimizer_server_url`` carries the resolved URL the
+        # backend was pointed at; None otherwise.
+        "optimizer_backend": optimizer_backend,
+        "optimizer_server_url": optimizer_server_url,
         # Best-so-far per objective after this round's decision (frontier
         # gate only; None for the legacy delta gate / noop / infra-fail).
         # The decision is driven by this, not by ``score_delta_vs_parent``.
