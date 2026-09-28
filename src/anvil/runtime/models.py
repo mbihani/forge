@@ -21,8 +21,6 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from anvil.eval.engines import is_valid_engine_name
-
 
 class SamplingConfig(BaseModel):
     """Sampling parameters for a model call."""
@@ -402,6 +400,13 @@ class EvalConfig(BaseModel):
         in sync with the registry; whether the engine actually exists is
         checked at dispatch time by the registry.
         """
+        # Imported lazily (not at module top) to break an import cycle:
+        # ``anvil.eval.__init__`` → ``anvil.eval.cache`` imports ``ScorerConfig``
+        # from this module, so a top-level ``anvil.eval.engines`` import here
+        # makes the two packages' initialization order-dependent (and it fails
+        # when this module is imported before ``anvil.eval`` is warm).
+        from anvil.eval.engines import is_valid_engine_name
+
         if not is_valid_engine_name(v):
             raise ValueError(
                 f"eval.engine {v!r} must be a lowercase identifier "
