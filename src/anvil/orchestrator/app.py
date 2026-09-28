@@ -1197,6 +1197,12 @@ def _list_round_summaries(repo_root: Path) -> list[dict[str, Any]]:
                 # redirect/connection error) — surfaced so a swallowed
                 # backend error is visible as a failure, not a clean noop.
                 "optimizer_error": data.get("optimizer_error"),
+                # The backend that actually ran ('local' | 'omnigent') and,
+                # for omnigent, the resolved server URL it was pointed at —
+                # so a 'local noop' is distinguishable from an 'omnigent
+                # noop/INFRA_FAIL' from the round summary alone.
+                "optimizer_backend": data.get("optimizer_backend"),
+                "optimizer_server_url": data.get("optimizer_server_url"),
             }
         )
     summaries.sort(key=lambda r: r.get("round_id") or 0)
