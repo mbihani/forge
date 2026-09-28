@@ -469,6 +469,96 @@ def test_resolve_server_url_host_has_legacy_api_suffix(
     )
 
 
+def test_resolve_server_url_bare_host_gets_https_scheme(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(e) Databricks Apps inject ``DATABRICKS_HOST`` as a BARE hostname with no
+    scheme — the derived URL MUST carry an ``https://`` scheme (and exactly one
+    ``/omnigent``), or the httpx client raises ``UnsupportedProtocol`` at
+    request time. This is the live prod failure this fix targets.
+
+    Regression-bite: reverting the scheme-prepend line in
+    :func:`resolve_omnigent_server_url` makes this assertion fail (the derived
+    value comes back as ``fevm-...databricks.com/omnigent``, missing the
+    scheme)."""
+    monkeypatch.delenv("OMNIGENT_SERVER_URL", raising=False)
+    monkeypatch.setenv(
+        "DATABRICKS_HOST", "fevm-stable-classic-7ppxjq.cloud.databricks.com"
+    )
+    assert resolve_omnigent_server_url() == (
+        "https://fevm-stable-classic-7ppxjq.cloud.databricks.com/omnigent"
+    )
+
+
+def test_resolve_server_url_scheme_host_not_doubled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(e) A ``DATABRICKS_HOST`` that ALREADY carries an ``https://`` (or
+    ``http://``) scheme keeps it verbatim — the scheme is never doubled."""
+    monkeypatch.delenv("OMNIGENT_SERVER_URL", raising=False)
+    for host, expected in (
+        ("https://foo.cloud.databricks.com", "https://foo.cloud.databricks.com/omnigent"),
+        ("http://foo.cloud.databricks.com", "http://foo.cloud.databricks.com/omnigent"),
+    ):
+        monkeypatch.setenv("DATABRICKS_HOST", host)
+        assert resolve_omnigent_server_url() == expected
+
+
+def test_resolve_server_url_bare_host_with_suffix_dedup_and_scheme(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(e) A scheme-less host that ALSO carries a trailing ``/omnigent`` or
+    ``/api/2.0/omnigent`` suffix is both de-duped (single ``/omnigent``) AND
+    scheme-normalized to ``https://`` — the two fixes compose."""
+    monkeypatch.delenv("OMNIGENT_SERVER_URL", raising=False)
+    for host in (
+        "fevm-stable-classic-7ppxjq.cloud.databricks.com/omnigent",
+        "fevm-stable-classic-7ppxjq.cloud.databricks.com/api/2.0/omnigent",
+    ):
+        monkeypatch.setenv("DATABRICKS_HOST", host)
+        assert resolve_omnigent_server_url() == (
+            "https://fevm-stable-classic-7ppxjq.cloud.databricks.com/omnigent"
+        )
+
+
+def test_resolve_server_url_explicit_override_scheme_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(e) The explicit ``OMNIGENT_SERVER_URL`` override is returned VERBATIM —
+    the scheme-normalization applies only to the DERIVED value, so a local-dev
+    ``http://localhost:6767`` is never forced to ``https://`` and nothing is
+    appended."""
+    monkeypatch.setenv("OMNIGENT_SERVER_URL", "http://localhost:6767")
+    monkeypatch.setenv(
+        "DATABRICKS_HOST", "fevm-stable-classic-7ppxjq.cloud.databricks.com"
+    )
+    assert resolve_omnigent_server_url() == "http://localhost:6767"
+
+
+def test_build_session_url_from_derived_bare_host_is_navigable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(e) End-to-end: a BARE (scheme-less) ``DATABRICKS_HOST`` flows through
+    the resolver → :func:`build_session_url` and yields a valid, scheme-ful
+    ``https://.../omnigent/c/<id>`` navigable link (with ``?o=`` when a
+    workspace id resolves)."""
+    monkeypatch.delenv("OMNIGENT_SERVER_URL", raising=False)
+    monkeypatch.setenv(
+        "DATABRICKS_HOST", "fevm-stable-classic-7ppxjq.cloud.databricks.com"
+    )
+    monkeypatch.setattr(
+        "anvil.optimizer.omnigent_client._sdk_workspace_id", lambda: None
+    )
+    monkeypatch.setenv("DATABRICKS_WORKSPACE_ID", "7474660648944264")
+    server_url = resolve_omnigent_server_url()
+    wsid = resolve_omnigent_workspace_id()
+    url = build_session_url(server_url, "sess-123", wsid)
+    assert url == (
+        "https://fevm-stable-classic-7ppxjq.cloud.databricks.com"
+        "/omnigent/c/sess-123?o=7474660648944264"
+    )
+
+
 def test_resolve_server_url_empty_env_treated_as_unset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
