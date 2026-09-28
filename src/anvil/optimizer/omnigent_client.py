@@ -391,9 +391,45 @@ class OmnigentClient:
         return resp.json()
 
     async def get_session(self, session_id: str) -> dict[str, Any]:
-        """``GET /v1/sessions/{id}`` — the full session snapshot."""
+        """``GET /v1/sessions/{id}`` — the full session snapshot.
+
+        The ``SessionResponse`` carries the runner-affinity fields the
+        managed flow needs: ``runner_id`` (null on an unbound conversation),
+        ``runner_online``, ``host_id``, ``host_online``, ``host_resumable``.
+        """
         resp = await self._client.get(f"/v1/sessions/{session_id}")
         self._raise_for_status(resp, "get_session")
+        return resp.json()
+
+    async def list_runners(self) -> list[dict[str, Any]]:
+        """``GET /v1/runners`` — the registered runner pool.
+
+        Returns the ``data`` list of runner dicts, each carrying
+        ``runner_id``, ``online`` (bool), and ``harnesses`` (the list of
+        harnesses that runner can execute, e.g. ``["claude-native",
+        "claude-sdk", ...]``). Used to discover the currently-registered
+        online runner a managed conversation must be bound to.
+        """
+        resp = await self._client.get("/v1/runners")
+        self._raise_for_status(resp, "list_runners")
+        body = resp.json()
+        return list(body.get("data", []))
+
+    async def bind_runner(self, session_id: str, runner_id: str) -> dict[str, Any]:
+        """``PATCH /v1/sessions/{id}`` with ``{"runner_id": ...}`` — bind a runner.
+
+        This is the mutable affinity primitive (``UpdateSessionRequest`` with
+        ``runner_id``): create-bind, resume-bind, and recover-bind all send
+        the currently-registered runner id, and the server atomically replaces
+        ``conversations.runner_id`` with that value (last-write-wins). It is
+        the "resume the session to bind a registered runner" the HTTP 409
+        error on an unbound managed conversation demands. Returns the updated
+        ``SessionResponse`` snapshot.
+        """
+        resp = await self._client.patch(
+            f"/v1/sessions/{session_id}", json={"runner_id": runner_id}
+        )
+        self._raise_for_status(resp, "bind_runner")
         return resp.json()
 
     async def delete_session(self, session_id: str) -> dict[str, Any]:

@@ -69,6 +69,7 @@ class FakeOmnigentClient:
         hang_after: bool = False,
         runner_online: bool = True,
         get_session_returns: list[dict] | None = None,
+        runners: list[dict] | None = None,
     ) -> None:
         self.calls: list[tuple[str, ...]] = []
         self._stream_events = stream_events or []
@@ -78,8 +79,29 @@ class FakeOmnigentClient:
         self._file_contents = file_contents or {}
         self._hang_after = hang_after
         self._runner_online = runner_online
-        # Successive get_session snapshots for the _wait_for_runner poll loop.
-        self._get_session_returns = get_session_returns or [{"runner_online": True}]
+        # Explicit successive get_session snapshots for the _wait_for_runner
+        # poll loop. When None, get_session DERIVES the snapshot from the bound
+        # state (runner_online True + the bound runner_id) so the happy path's
+        # bind→poll succeeds without every test pre-scripting snapshots.
+        self._get_session_returns = get_session_returns
+        # The registered runner pool returned by list_runners(). One ONLINE
+        # runner advertising the optimizer's harnesses by default.
+        self._runners = (
+            runners
+            if runners is not None
+            else [
+                {
+                    "runner_id": "runner-fake-1",
+                    "online": True,
+                    "harnesses": ["claude-native", "claude-sdk", "codex"],
+                }
+            ]
+        )
+        # The runner id the conversation is bound to (None == unbound). The
+        # managed session starts UNBOUND (models the live 409 bug); bind_runner
+        # flips it. list_environments RAISES 409 while still unbound so a
+        # regression that skips the bind FAILS the test.
+        self._bound_runner_id: str | None = None
         self.deleted_sessions: list[str] = []
         # The EXACT bundle bytes submitted to create_session (the multipart
         # register). Captured so tests can assert what run() actually baked
@@ -107,14 +129,33 @@ class FakeOmnigentClient:
         **kw: Any,
     ) -> dict[str, Any]:
         self.calls.append(("create_session_from_agent", agent_id, host_type, model_override))
-        return {"id": _MANAGED_SESSION_ID, "runner_online": self._runner_online}
+        # Opening the managed session provisions a runner in the pool but does
+        # NOT bind it — runner_id is null until the explicit bind_runner call.
+        return {
+            "id": _MANAGED_SESSION_ID,
+            "runner_online": self._runner_online,
+            "runner_id": None,
+        }
+
+    async def list_runners(self) -> list[dict]:
+        self.calls.append(("list_runners",))
+        return self._runners
+
+    async def bind_runner(self, session_id: str, runner_id: str) -> dict:
+        self.calls.append(("bind_runner", session_id, runner_id))
+        self._bound_runner_id = runner_id
+        return {"id": session_id, "runner_id": runner_id, "runner_online": True}
 
     async def get_session(self, session_id: str) -> dict[str, Any]:
         self.calls.append(("get_session", session_id))
-        # Pop successive snapshots; hold the last once exhausted.
-        if len(self._get_session_returns) > 1:
-            return self._get_session_returns.pop(0)
-        return self._get_session_returns[0]
+        if self._get_session_returns is not None:
+            # Pop successive scripted snapshots; hold the last once exhausted.
+            if len(self._get_session_returns) > 1:
+                return self._get_session_returns.pop(0)
+            return self._get_session_returns[0]
+        # Derived snapshot: online + reflecting the bound runner id, so the
+        # happy-path bind→poll (expected_runner_id) succeeds.
+        return {"runner_online": True, "runner_id": self._bound_runner_id}
 
     async def delete_session(self, session_id: str) -> dict[str, Any]:
         self.calls.append(("delete_session", session_id))
@@ -123,6 +164,15 @@ class FakeOmnigentClient:
 
     async def list_environments(self, session_id: str) -> list[dict]:
         self.calls.append(("list_environments", session_id))
+        # An unbound managed conversation rejects the first resource read with
+        # HTTP 409 — this is the live bug the explicit bind fixes. A regression
+        # that skips bind_runner leaves the session unbound and fails here.
+        if self._bound_runner_id is None:
+            raise OmnigentError(
+                f"conversation '{session_id}' is not bound to a runner; "
+                "resume the session to bind a registered runner",
+                status_code=409,
+            )
         return self._environments
 
     async def upload_file(
@@ -381,6 +431,182 @@ def test_run_full_flow_creates_uploads_sends_drains_parses(
     assert result.turns_used == 1  # one response.completed event
     # A clean run leaves no backend-failure marker.
     assert result.optimizer_error is None
+
+
+# ---------------------------------------------------------------------------
+# Explicit runner bind (managed-flow HTTP 409 fix)
+# ---------------------------------------------------------------------------
+
+
+def _bind_backend(tmp_path: Path, fake: FakeOmnigentClient) -> OmnigentBackend:
+    return OmnigentBackend(
+        client=fake,  # type: ignore[arg-type]
+        agent_bundle_path=_write_agent_yaml(tmp_path),
+        server_url="http://localhost:6767",
+    )
+
+
+def test_run_binds_discovered_runner_before_first_resource_read(tmp_path: Path) -> None:
+    """The conversation is EXPLICITLY bound (bind_runner) with the managed id
+    and the discovered online runner id BEFORE the first resource read
+    (list_environments) — the fix for the persistent HTTP 409."""
+    stream_events = [
+        ("response.output_text.delta", {"delta": _ACTION_BLOCK}),
+        ("response.completed", {"done": True}),
+    ]
+    fake = FakeOmnigentClient(stream_events=stream_events)
+    result = asyncio.run(
+        _bind_backend(tmp_path, fake).run(
+            prompt="p", scaffold_files={}, max_turns=5, model="m"
+        )
+    )
+
+    names = [c[0] for c in fake.calls]
+    # list_runners discovered the pool; bind_runner bound the managed session.
+    assert "list_runners" in names
+    bind_calls = [c for c in fake.calls if c[0] == "bind_runner"]
+    assert len(bind_calls) == 1
+    # Bound with the MANAGED session id and the discovered online runner id.
+    assert bind_calls[0] == ("bind_runner", _MANAGED_SESSION_ID, "runner-fake-1")
+
+    # ORDERING: bind_runner strictly precedes the first list_environments.
+    bind_idx = names.index("bind_runner")
+    env_idx = names.index("list_environments")
+    assert bind_idx < env_idx
+
+    # list_environments succeeded only because the bind ran first (else the
+    # fake raises 409) — a clean, backend-failure-free run.
+    assert ("list_environments", _MANAGED_SESSION_ID) in fake.calls
+    assert result.action.action == "noop"
+    assert result.optimizer_error is None
+
+
+def test_run_prefers_runner_advertising_needed_harness(tmp_path: Path) -> None:
+    """When several runners are online, the bind PREFERS one whose harnesses
+    include the harness the agent needs (``claude-sdk`` in the test bundle)."""
+    stream_events = [("response.output_text.delta", {"delta": _ACTION_BLOCK})]
+    runners = [
+        {"runner_id": "runner-codex", "online": True, "harnesses": ["codex"]},
+        {"runner_id": "runner-offline", "online": False, "harnesses": ["claude-sdk"]},
+        {"runner_id": "runner-sdk", "online": True, "harnesses": ["claude-sdk"]},
+    ]
+    fake = FakeOmnigentClient(stream_events=stream_events, runners=runners)
+    asyncio.run(
+        _bind_backend(tmp_path, fake).run(prompt="p", scaffold_files={}, max_turns=5, model="m")
+    )
+    bind_calls = [c for c in fake.calls if c[0] == "bind_runner"]
+    # Bound the ONLINE runner advertising claude-sdk, not the codex-only one
+    # and not the offline claude-sdk one.
+    assert bind_calls[0][2] == "runner-sdk"
+
+
+def test_run_binds_first_online_runner_when_no_harness_match(tmp_path: Path) -> None:
+    """No online runner advertises the needed harness → the first online
+    runner is bound (never a silent skip)."""
+    stream_events = [("response.output_text.delta", {"delta": _ACTION_BLOCK})]
+    runners = [
+        {"runner_id": "runner-a", "online": True, "harnesses": ["openai-agents"]},
+        {"runner_id": "runner-b", "online": True, "harnesses": ["pi"]},
+    ]
+    fake = FakeOmnigentClient(stream_events=stream_events, runners=runners)
+    asyncio.run(
+        _bind_backend(tmp_path, fake).run(prompt="p", scaffold_files={}, max_turns=5, model="m")
+    )
+    bind_calls = [c for c in fake.calls if c[0] == "bind_runner"]
+    assert bind_calls[0][2] == "runner-a"
+
+
+def test_run_uses_managed_snapshot_runner_id_when_already_bound(tmp_path: Path) -> None:
+    """When the managed snapshot ALREADY carries a non-null runner_id, that id
+    is bound (resume-bind) without consulting list_runners."""
+    stream_events = [("response.output_text.delta", {"delta": _ACTION_BLOCK})]
+
+    class _PreBoundClient(FakeOmnigentClient):
+        async def create_session_from_agent(self, *a: Any, **kw: Any) -> dict:
+            self.calls.append(("create_session_from_agent",))
+            return {"id": _MANAGED_SESSION_ID, "runner_online": True, "runner_id": "pre-bound-x"}
+
+    fake = _PreBoundClient(stream_events=stream_events)
+    asyncio.run(
+        _bind_backend(tmp_path, fake).run(prompt="p", scaffold_files={}, max_turns=5, model="m")
+    )
+    # list_runners was NOT needed — the snapshot's runner_id was used directly.
+    assert not any(c[0] == "list_runners" for c in fake.calls)
+    bind_calls = [c for c in fake.calls if c[0] == "bind_runner"]
+    assert bind_calls[0] == ("bind_runner", _MANAGED_SESSION_ID, "pre-bound-x")
+
+
+def test_run_no_online_runner_surfaces_infra_fail(tmp_path: Path) -> None:
+    """No ONLINE runner in the pool → the round surfaces INFRA_FAIL (never a
+    silent noop), and no resource read is attempted."""
+    stream_events = [("response.output_text.delta", {"delta": _ACTION_BLOCK})]
+    runners = [{"runner_id": "runner-x", "online": False, "harnesses": ["claude-sdk"]}]
+    fake = FakeOmnigentClient(stream_events=stream_events, runners=runners)
+    result = asyncio.run(
+        _bind_backend(tmp_path, fake).run(prompt="p", scaffold_files={}, max_turns=5, model="m")
+    )
+
+    # No bind, no resource read — we bailed at runner discovery.
+    assert not any(c[0] == "bind_runner" for c in fake.calls)
+    assert not any(c[0] == "list_environments" for c in fake.calls)
+    # Distinguishable backend failure → INFRA_FAIL, not a silent noop.
+    assert result.action.action == "noop"
+    assert result.optimizer_error is not None
+    assert "no online" in result.optimizer_error.lower()
+    assert apply_optimizer_error(Decision.NOOP, result.optimizer_error) == Decision.INFRA_FAIL
+
+
+def test_run_bind_failure_surfaces_infra_fail(tmp_path: Path) -> None:
+    """A failed bind_runner (e.g. server rejects the PATCH) surfaces as
+    INFRA_FAIL, never a silent noop — and no resource read runs."""
+    stream_events = [("response.output_text.delta", {"delta": _ACTION_BLOCK})]
+
+    class _BindFailsClient(FakeOmnigentClient):
+        async def bind_runner(self, session_id: str, runner_id: str) -> dict:
+            self.calls.append(("bind_runner", session_id, runner_id))
+            raise OmnigentError("bind rejected", status_code=500, body="host gone")
+
+    fake = _BindFailsClient(stream_events=stream_events)
+    result = asyncio.run(
+        _bind_backend(tmp_path, fake).run(prompt="p", scaffold_files={}, max_turns=5, model="m")
+    )
+
+    # The bind was attempted but failed; no resource read ran (still unbound).
+    assert any(c[0] == "bind_runner" for c in fake.calls)
+    assert not any(c[0] == "list_environments" for c in fake.calls)
+    assert result.action.action == "noop"
+    assert result.optimizer_error is not None
+    assert apply_optimizer_error(Decision.NOOP, result.optimizer_error) == Decision.INFRA_FAIL
+
+
+def test_run_bind_never_reflected_surfaces_infra_fail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """bind_runner succeeds but the poll never sees the runner online+bound →
+    INFRA_FAIL (the bounded _wait_for_runner raise_on_timeout path)."""
+    import anvil.optimizer.omnigent_backend as backend_mod
+
+    async def _instant(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr(backend_mod.anyio, "sleep", _instant)
+
+    stream_events = [("response.output_text.delta", {"delta": _ACTION_BLOCK})]
+    # Scripted snapshots: runner never comes online (and never reflects the id).
+    fake = FakeOmnigentClient(
+        stream_events=stream_events,
+        get_session_returns=[{"runner_online": False, "runner_id": None}],
+    )
+    result = asyncio.run(
+        _bind_backend(tmp_path, fake).run(prompt="p", scaffold_files={}, max_turns=5, model="m")
+    )
+
+    # Bind ran, but the confirmation poll timed out → no resource read.
+    assert any(c[0] == "bind_runner" for c in fake.calls)
+    assert not any(c[0] == "list_environments" for c in fake.calls)
+    assert result.optimizer_error is not None
+    assert "never came online" in result.optimizer_error
+    assert apply_optimizer_error(Decision.NOOP, result.optimizer_error) == Decision.INFRA_FAIL
 
 
 def test_drain_stream_max_duration_breaks_during_read(tmp_path: Path) -> None:
@@ -673,6 +899,7 @@ def test_run_parses_add_skill_action_from_stream(tmp_path: Path) -> None:
 
 _WIRE_REG_ID = "reg-wire-1"
 _WIRE_MANAGED_ID = "managed-wire-1"
+_WIRE_RUNNER_ID = "runner_token_wire-1"
 _WIRE_ACTION_SSE = (
     "event: response.output_text.delta\n"
     f"data: {json.dumps({'delta': _ACTION_BLOCK})}\n"
@@ -733,12 +960,47 @@ def _managed_transport(
                         "agent_name": "forge_optimizer",
                     },
                 )
-            # JSON create_session_from_agent — the managed runner-binding step.
+            # JSON create_session_from_agent — opens the managed session. It
+            # provisions a runner in the pool but leaves the conversation
+            # UNBOUND (runner_id null); the explicit PATCH bind follows.
             return httpx.Response(
-                200, json={"id": _WIRE_MANAGED_ID, "runner_online": _next_runner()}
+                200,
+                json={
+                    "id": _WIRE_MANAGED_ID,
+                    "runner_online": _next_runner(),
+                    "runner_id": None,
+                },
+            )
+        if request.method == "GET" and path == "/v1/runners":
+            # One ONLINE runner advertising the optimizer's harnesses.
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "runner_id": _WIRE_RUNNER_ID,
+                            "online": True,
+                            "harnesses": ["claude-native", "claude-sdk", "codex"],
+                        }
+                    ]
+                },
+            )
+        if request.method == "PATCH" and path == f"/v1/sessions/{_WIRE_MANAGED_ID}":
+            # The explicit bind (resume-bind) — atomically sets runner_id.
+            return httpx.Response(
+                200,
+                json={
+                    "id": _WIRE_MANAGED_ID,
+                    "runner_id": _WIRE_RUNNER_ID,
+                    "runner_online": True,
+                },
             )
         if request.method == "GET" and path == f"/v1/sessions/{_WIRE_MANAGED_ID}":
-            return httpx.Response(200, json={"runner_online": _next_runner()})
+            # Snapshot reflects the bound runner id (last-write-wins); its
+            # online flag is driven by runner_online_seq.
+            return httpx.Response(
+                200, json={"runner_online": _next_runner(), "runner_id": _WIRE_RUNNER_ID}
+            )
         if path.endswith("/resources/environments"):
             status = env_seq.pop(0) if len(env_seq) > 1 else env_seq[0]
             if status != 200:

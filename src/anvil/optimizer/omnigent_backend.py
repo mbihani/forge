@@ -8,15 +8,22 @@ one ephemeral Omnigent session:
    tar.gz whose root ``config.yaml`` is the agent spec. The ``model`` and
    ``max_turns`` args are substituted into the spec so each round can pin
    them without editing the file on disk.
-2. **Register + bind a runner (two-step managed flow)** — ``POST
+2. **Register, open, and EXPLICITLY bind a runner (managed flow)** — ``POST
    /v1/sessions`` (multipart: metadata + bundle) only *registers* the
    agent and returns its ``agent_id``; that registration session has no
-   runner bound (calling ``list_environments`` on it fails HTTP 409:
-   "not bound to a runner"). So we immediately open a SECOND session via
-   ``create_session_from_agent(agent_id, host_type="managed", ...)`` — the
-   managed host auto-provisions a runner. All subsequent calls use the
-   managed session id (``managed["id"]``); the throwaway registration
-   session is deleted. The round's model pin rides through
+   runner bound. So we open a SECOND session via
+   ``create_session_from_agent(agent_id, host_type="managed", ...)``. Opening
+   the managed session PROVISIONS a runner in the pool but does NOT bind the
+   conversation to it — ``conversations.runner_id`` stays null, and the first
+   resource read (``list_environments``) on an unbound conversation is
+   rejected HTTP 409 "not bound to a runner; resume the session to bind a
+   registered runner". So we EXPLICITLY bind before any resource read:
+   discover the online runner from ``GET /v1/runners`` (preferring the
+   harness the agent needs) and ``PATCH /v1/sessions/{id}`` with its
+   ``runner_id`` (the resume-bind), then poll ``get_session`` until the
+   snapshot reports the runner online AND bound to that id. All subsequent
+   calls use the managed session id (``managed["id"]``); the throwaway
+   registration session is deleted. The round's model pin rides through
    ``model_override``; ``max_turns`` rides through the baked bundle.
 3. **Upload the scaffold** — the round's ``scaffold_files`` dict is written
    to the session's ``default`` environment filesystem so the agent can
@@ -166,15 +173,37 @@ class OmnigentBackend:
                 self.server_url, session_id, resolve_omnigent_workspace_id()
             )
 
-            # Step 3: wait for the runner to come online if the managed host
-            # provisioned it asynchronously (usually synchronous in the create
-            # response, but a brief async window is possible). A runner that
-            # never comes online within the bounded poll is a genuine infra
-            # failure — ``raise_on_timeout=True`` surfaces it as
+            # Step 3: EXPLICITLY BIND a runner (the resume-bind). Opening the
+            # managed session only PROVISIONS a runner in the pool — it does
+            # NOT bind the conversation to it (``conversations.runner_id``
+            # stays null). The FIRST resource read on an unbound conversation
+            # (``list_environments`` below) is rejected HTTP 409 "not bound to
+            # a runner; resume the session to bind a registered runner". So we
+            # bind BEFORE any resource read: use the managed snapshot's
+            # ``runner_id`` when it already carries one, else discover the
+            # currently-registered online runner from ``/v1/runners``. A
+            # missing online runner or a failed bind raises → caught below →
+            # ``optimizer_error`` → ``Decision.INFRA_FAIL`` (never a silent
+            # noop). The bind is wrapped in the bounded 503-retry (the runner
+            # may still be provisioning).
+            runner_id = managed.get("runner_id")
+            if not runner_id:
+                runner_id = await _retry_on_503(self._resolve_runner_id)
+            await _retry_on_503(lambda: self.client.bind_runner(session_id, runner_id))
+
+            # Confirm the bind took effect: poll ``get_session`` until the
+            # snapshot reports the runner ONLINE and its ``runner_id`` equals
+            # the id we bound (the server applies the bind last-write-wins).
+            # A bind that never reflects within the bounded poll is a genuine
+            # infra failure — ``raise_on_timeout=True`` surfaces it as
             # ``optimizer_error`` → ``Decision.INFRA_FAIL``, never a silent
             # success/noop.
-            if not managed.get("runner_online"):
-                await _wait_for_runner(self.client, session_id, raise_on_timeout=True)
+            await _wait_for_runner(
+                self.client,
+                session_id,
+                raise_on_timeout=True,
+                expected_runner_id=runner_id,
+            )
 
             # Steps 4+: EVERY post-bind call targets the MANAGED session id and
             # is retried on transient 503 — the runner may still be
@@ -255,6 +284,43 @@ class OmnigentBackend:
     # ------------------------------------------------------------------
     # Steps
     # ------------------------------------------------------------------
+
+    async def _resolve_runner_id(self) -> str:
+        """Discover a currently-registered ONLINE runner to bind, or RAISE.
+
+        Reads the runner pool (``GET /v1/runners``) and picks an online
+        runner, PREFERRING one whose ``harnesses`` includes the harness the
+        optimizer agent needs (``executor.config.harness`` in the bundle spec
+        — ``claude-sdk`` / ``claude-native``). When the needed harness cannot
+        be determined, or no online runner advertises it, the first online
+        runner is used.
+
+        Raises :class:`OmnigentError` when NO online runner is available (or
+        none carries a ``runner_id``) so the backend surfaces it as an
+        infrastructure failure (``optimizer_error`` → ``Decision.INFRA_FAIL``)
+        rather than a silent noop.
+        """
+        runners = await self.client.list_runners()
+        online = [r for r in runners if r.get("online")]
+        if not online:
+            raise OmnigentError(
+                "no online Omnigent runner available to bind the managed session "
+                f"(pool size {len(runners)}); cannot resume the conversation",
+                status_code=None,
+            )
+        needed = _needed_harness(self.agent_bundle_path)
+        if needed:
+            for runner in online:
+                if needed in (runner.get("harnesses") or []) and runner.get("runner_id"):
+                    return runner["runner_id"]
+        for runner in online:
+            if runner.get("runner_id"):
+                return runner["runner_id"]
+        raise OmnigentError(
+            "online Omnigent runner(s) present but none carry a runner_id; "
+            "cannot bind the managed session",
+            status_code=None,
+        )
 
     async def _resolve_environment(self, session_id: str) -> str:
         envs = await self.client.list_environments(session_id)
@@ -443,20 +509,29 @@ async def _wait_for_runner(
     max_attempts: int = 6,
     delay: float = 2.0,
     raise_on_timeout: bool = False,
+    expected_runner_id: str | None = None,
 ) -> None:
-    """Poll ``get_session`` until ``runner_online`` is True (or give up).
+    """Poll ``get_session`` until the runner is online (or give up).
 
     The managed host usually provisions the runner synchronously in the
     create response, but a brief async window is possible. This polls
     rather than blocking indefinitely (bounded by ``max_attempts``) so a
     stuck host surfaces promptly instead of hanging.
 
+    The poll succeeds when the snapshot reports ``runner_online`` True and,
+    when ``expected_runner_id`` is given, the snapshot's ``runner_id``
+    equals it — i.e. the explicit bind (resume-bind) has been applied by the
+    server. When ``expected_runner_id`` is None the poll only checks
+    ``runner_online`` — this preserves the converter's
+    (:mod:`anvil.orchestrator.conversion`) existing behavior, which does not
+    bind explicitly.
+
     On exhaustion (the runner never came online within ``max_attempts``):
 
     * ``raise_on_timeout=True`` — raise :class:`OmnigentError` so a
-      permanently-offline runner becomes a DISTINGUISHABLE backend failure
-      (the optimizer backend maps this to ``optimizer_error`` →
-      ``Decision.INFRA_FAIL`` rather than a silent success/noop).
+      permanently-offline (or never-bound) runner becomes a DISTINGUISHABLE
+      backend failure (the optimizer backend maps this to ``optimizer_error``
+      → ``Decision.INFRA_FAIL`` rather than a silent success/noop).
     * ``raise_on_timeout=False`` (default) — log and return, letting the
       caller attempt the message anyway (the ``runner_online`` snapshot can
       be stale; the send's own 503-retry is the safety net). This preserves
@@ -466,7 +541,10 @@ async def _wait_for_runner(
     for attempt in range(1, max_attempts + 1):
         with contextlib.suppress(OmnigentError):
             snapshot = await client.get_session(session_id)
-            if snapshot.get("runner_online"):
+            if snapshot.get("runner_online") and (
+                expected_runner_id is None
+                or snapshot.get("runner_id") == expected_runner_id
+            ):
                 return
         if attempt < max_attempts:
             progress("agent_session", f"Waiting for runner… ({attempt}/{max_attempts})")
@@ -538,6 +616,22 @@ async def _retry_on_503(
 # ---------------------------------------------------------------------------
 # Bundle builder
 # ---------------------------------------------------------------------------
+
+
+def _needed_harness(agent_yaml_path: Path) -> str | None:
+    """The harness the optimizer agent needs (``executor.config.harness``).
+
+    Read best-effort from the agent spec so the runner-bind can PREFER a
+    runner whose ``harnesses`` advertises it (e.g. ``claude-sdk``). Returns
+    ``None`` on any read/parse failure or when the field is absent/blank —
+    the caller then binds the first online runner regardless of harness.
+    """
+    try:
+        raw = yaml.safe_load(Path(agent_yaml_path).read_text(encoding="utf-8")) or {}
+        harness = (raw.get("executor", {}) or {}).get("config", {}).get("harness")
+    except Exception:  # noqa: BLE001 — best-effort; harness preference is optional
+        return None
+    return harness if isinstance(harness, str) and harness else None
 
 
 def _build_agent_bundle(agent_yaml_path: Path, *, model: str, max_turns: int) -> bytes:
