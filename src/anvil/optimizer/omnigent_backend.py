@@ -168,20 +168,26 @@ class OmnigentBackend:
 
             # Step 3: wait for the runner to come online if the managed host
             # provisioned it asynchronously (usually synchronous in the create
-            # response, but a brief async window is possible).
+            # response, but a brief async window is possible). A runner that
+            # never comes online within the bounded poll is a genuine infra
+            # failure — ``raise_on_timeout=True`` surfaces it as
+            # ``optimizer_error`` → ``Decision.INFRA_FAIL``, never a silent
+            # success/noop.
             if not managed.get("runner_online"):
-                await _wait_for_runner(self.client, session_id)
+                await _wait_for_runner(self.client, session_id, raise_on_timeout=True)
 
-            # Steps 4+: all post-bind calls target the MANAGED session id and
-            # are retried on transient 503 (the runner may still be
-            # provisioning for a short window after it reports online).
+            # Steps 4+: EVERY post-bind call targets the MANAGED session id and
+            # is retried on transient 503 — the runner may still be
+            # provisioning for a short window even after it reports online, so
+            # the entire post-bind path (env resolve, upload, send, stream
+            # drain, items fallback, changes/file reads) is 503-resilient.
             env_id = await _retry_on_503(lambda: self._resolve_environment(session_id))
             await _retry_on_503(
                 lambda: self._upload_scaffold(session_id, env_id, scaffold_files)
             )
             await _send_with_retry(self.client, session_id, prompt)
-            stream_text, turns_used = await self._drain_stream(
-                session_id, max_turns=effective_max_turns
+            stream_text, turns_used = await _retry_on_503(
+                lambda: self._drain_stream(session_id, max_turns=effective_max_turns)
             )
 
             # The stream is the primary transcript source; fall back to the
@@ -194,7 +200,9 @@ class OmnigentBackend:
             transcript = stream_text
             stream_parse = parse_action(transcript)
             if stream_parse.parse_status not in ("ok", "ok_last_of_many"):
-                items_text = await self._transcript_from_items(session_id)
+                items_text = await _retry_on_503(
+                    lambda: self._transcript_from_items(session_id)
+                )
                 if items_text:
                     transcript = items_text
 
@@ -378,10 +386,16 @@ class OmnigentBackend:
         ``status`` of ``created`` / ``modified`` / ``deleted``). Only paths
         under the scaffold prefixes are kept — the environment holds many
         unrelated files (logs, caches) we must not surface as mutations.
+
+        Both post-bind reads (``list_changes`` and each ``read_file``) go
+        through :func:`_retry_on_503` so a runner still provisioning is
+        retried before a persistent failure is swallowed — the ``changes``
+        listing degrades to empty and an unreadable file is skipped rather
+        than crashing the round.
         """
         modified: dict[str, str | None] = {}
         try:
-            changes = await self.client.list_changes(session_id, env_id)
+            changes = await _retry_on_503(lambda: self.client.list_changes(session_id, env_id))
         except OmnigentError:
             changes = []
         for entry in changes:
@@ -393,7 +407,9 @@ class OmnigentBackend:
                 modified[path] = None
             else:  # created / modified
                 with contextlib.suppress(OmnigentError):
-                    content = await self.client.read_file(session_id, env_id, path)
+                    content = await _retry_on_503(
+                        lambda p=path: self.client.read_file(session_id, env_id, p)
+                    )
                     text = content.get("content")
                     if isinstance(text, str):
                         modified[path] = text
@@ -426,13 +442,25 @@ async def _wait_for_runner(
     *,
     max_attempts: int = 6,
     delay: float = 2.0,
+    raise_on_timeout: bool = False,
 ) -> None:
     """Poll ``get_session`` until ``runner_online`` is True (or give up).
 
     The managed host usually provisions the runner synchronously in the
     create response, but a brief async window is possible. This polls
-    rather than blocking indefinitely so a stuck host surfaces as a clear
-    ``send_message`` error instead of a hang.
+    rather than blocking indefinitely (bounded by ``max_attempts``) so a
+    stuck host surfaces promptly instead of hanging.
+
+    On exhaustion (the runner never came online within ``max_attempts``):
+
+    * ``raise_on_timeout=True`` — raise :class:`OmnigentError` so a
+      permanently-offline runner becomes a DISTINGUISHABLE backend failure
+      (the optimizer backend maps this to ``optimizer_error`` →
+      ``Decision.INFRA_FAIL`` rather than a silent success/noop).
+    * ``raise_on_timeout=False`` (default) — log and return, letting the
+      caller attempt the message anyway (the ``runner_online`` snapshot can
+      be stale; the send's own 503-retry is the safety net). This preserves
+      the converter's (:mod:`anvil.orchestrator.conversion`) existing flow.
     """
     progress = progress or _noop_progress
     for attempt in range(1, max_attempts + 1):
@@ -443,6 +471,12 @@ async def _wait_for_runner(
         if attempt < max_attempts:
             progress("agent_session", f"Waiting for runner… ({attempt}/{max_attempts})")
             await anyio.sleep(delay)
+    if raise_on_timeout:
+        raise OmnigentError(
+            f"managed runner for session {session_id} never came online after "
+            f"{max_attempts} attempts",
+            status_code=None,
+        )
     progress("agent_session", "Runner not yet online; attempting message anyway.")
 
 

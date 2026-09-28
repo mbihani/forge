@@ -24,7 +24,7 @@ import yaml
 
 from anvil.eval import evaluate_branch, load_baseline
 from anvil.loop.builder import build_round_prompt
-from anvil.loop.decision import Decision
+from anvil.loop.decision import Decision, apply_optimizer_error
 from anvil.loop.frontier import (
     gate_decision,
     load_gate_config,
@@ -290,8 +290,8 @@ def run_round(
     # a 401 / SSO redirect / connection error is visibly a failure, not
     # "Status: optimized, noop". Distinct from a legitimate optimizer noop,
     # which leaves ``optimizer_error`` None and keeps the NOOP decision.
+    decision = apply_optimizer_error(decision, optimizer_error)
     if optimizer_error:
-        decision = Decision.INFRA_FAIL
         print(f"[round {round_id}] optimizer backend failure: {optimizer_error}")
 
     # 8. Write critique md.

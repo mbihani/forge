@@ -43,3 +43,18 @@ def decide(
     if score_delta > 0:
         return Decision.KEEP
     return Decision.REVERT
+
+
+def apply_optimizer_error(decision: Decision, optimizer_error: str | None) -> Decision:
+    """Override any decision to ``INFRA_FAIL`` when the optimizer BACKEND failed.
+
+    A swallowed backend failure (401 / SSO redirect / connection error /
+    managed runner never online) parses to a ``NoopAction``, so
+    :func:`decide` would return ``NOOP`` — indistinguishable from a
+    legitimate optimizer-chosen noop. When ``optimizer_error`` is set, force
+    ``INFRA_FAIL`` so the round surfaces the failure. A genuine optimizer
+    noop leaves ``optimizer_error`` None and keeps its decision unchanged.
+    """
+    if optimizer_error:
+        return Decision.INFRA_FAIL
+    return decision

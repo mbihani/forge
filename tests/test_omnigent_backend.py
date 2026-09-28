@@ -27,6 +27,7 @@ import httpx
 import pytest
 import yaml
 
+from anvil.loop.decision import Decision, apply_optimizer_error
 from anvil.optimizer.omnigent_backend import (
     OmnigentBackend,
     _build_agent_bundle,
@@ -80,10 +81,15 @@ class FakeOmnigentClient:
         # Successive get_session snapshots for the _wait_for_runner poll loop.
         self._get_session_returns = get_session_returns or [{"runner_online": True}]
         self.deleted_sessions: list[str] = []
+        # The EXACT bundle bytes submitted to create_session (the multipart
+        # register). Captured so tests can assert what run() actually baked
+        # (model + max_turns) rather than re-deriving a separate bundle.
+        self.submitted_bundle: bytes | None = None
 
     async def create_session(
         self, bundle_bytes: bytes, metadata: SessionCreateMetadata | None = None, **kw: Any
     ) -> dict[str, Any]:
+        self.submitted_bundle = bundle_bytes
         self.calls.append(("create_session", len(bundle_bytes)))
         return {
             "session_id": _REG_SESSION_ID,
@@ -693,6 +699,7 @@ def _managed_transport(
     *,
     runner_online_seq: list[bool] | None = None,
     env_status_seq: list[int] | None = None,
+    stream_status_seq: list[int] | None = None,
 ) -> httpx.MockTransport:
     """A MockTransport modeling the managed Omnigent server.
 
@@ -700,11 +707,13 @@ def _managed_transport(
     agent (throwaway ``_WIRE_REG_ID`` + an ``agent_id``); JSON opens the
     managed session (``_WIRE_MANAGED_ID``). ``runner_online_seq`` drives the
     ``runner_online`` flag returned by the JSON create and successive
-    ``get_session`` polls; ``env_status_seq`` drives successive HTTP statuses
-    for the environments call (e.g. ``[503, 200]`` to exercise the retry).
+    ``get_session`` polls; ``env_status_seq`` / ``stream_status_seq`` drive
+    successive HTTP statuses for the environments / stream calls (e.g.
+    ``[503, 200]`` to exercise a retry, or ``[503]`` to exercise exhaustion).
     """
     runner_seq = list(runner_online_seq if runner_online_seq is not None else [True])
     env_seq = list(env_status_seq if env_status_seq is not None else [200])
+    stream_seq = list(stream_status_seq if stream_status_seq is not None else [200])
 
     def _next_runner() -> bool:
         return runner_seq.pop(0) if len(runner_seq) > 1 else runner_seq[0]
@@ -736,6 +745,9 @@ def _managed_transport(
                 return httpx.Response(status, json={"error": "runner provisioning"})
             return httpx.Response(200, json={"data": [{"id": "default"}]})
         if path.endswith("/stream"):
+            status = stream_seq.pop(0) if len(stream_seq) > 1 else stream_seq[0]
+            if status != 200:
+                return httpx.Response(status, json={"error": "runner provisioning"})
             return httpx.Response(200, text=_WIRE_ACTION_SSE)
         if path.endswith("/changes"):
             return httpx.Response(200, json={"data": []})
@@ -758,10 +770,14 @@ def _managed_backend(
     *,
     runner_online_seq: list[bool] | None = None,
     env_status_seq: list[int] | None = None,
+    stream_status_seq: list[int] | None = None,
     model: str = "databricks-claude-opus-4-7",
 ) -> OmnigentBackend:
     transport = _managed_transport(
-        recorded, runner_online_seq=runner_online_seq, env_status_seq=env_status_seq
+        recorded,
+        runner_online_seq=runner_online_seq,
+        env_status_seq=env_status_seq,
+        stream_status_seq=stream_status_seq,
     )
     http_client = httpx.AsyncClient(base_url="http://localhost:6767", transport=transport)
     client = OmnigentClient("http://localhost:6767", "test-token", client=http_client)
@@ -889,7 +905,7 @@ def test_wire_retries_environments_on_transient_503(
 
 def test_wire_model_pin_carries_through_model_override(tmp_path: Path) -> None:
     """(model pin) The round's model reaches the managed session via
-    model_override, and max_turns rides through the baked bundle."""
+    model_override on the JSON create_session_from_agent request."""
     recorded: list[_Recorded] = []
     backend = _managed_backend(tmp_path, recorded)
     asyncio.run(
@@ -909,15 +925,56 @@ def test_wire_model_pin_carries_through_model_override(tmp_path: Path) -> None:
     # The round's model pin is carried on the managed create (model_override).
     assert body["model_override"] == "databricks-claude-opus-4-8"
 
-    # max_turns has no create_session_from_agent parameter; it rides through
-    # the registered agent bundle. Verify the bundle-baking contract directly.
-    bundle = _build_agent_bundle(
-        _write_agent_yaml(tmp_path), model="databricks-claude-opus-4-8", max_turns=37
+
+def test_run_bakes_round_model_and_max_turns_into_submitted_bundle(tmp_path: Path) -> None:
+    """(max_turns pin) The round's model AND max_turns are baked into the
+    bundle that run() ACTUALLY submits to create_session.
+
+    Inspects the exact ``bundle_bytes`` the fake received (not a
+    separately-reconstructed bundle) — so a regression where run() baked the
+    wrong max_turns into the submitted bundle would fail here.
+    """
+    stream_events = [("response.output_text.delta", {"delta": _ACTION_BLOCK})]
+    fake = FakeOmnigentClient(stream_events=stream_events)
+    backend = OmnigentBackend(
+        client=fake,  # type: ignore[arg-type]
+        agent_bundle_path=_write_agent_yaml(tmp_path),
+        server_url="http://localhost:6767",
     )
-    with tarfile.open(fileobj=io.BytesIO(bundle), mode="r:gz") as tar:
+    asyncio.run(
+        backend.run(
+            prompt="p", scaffold_files={}, max_turns=37, model="databricks-claude-opus-4-8"
+        )
+    )
+
+    assert fake.submitted_bundle is not None  # captured the real submitted bytes
+    with tarfile.open(fileobj=io.BytesIO(fake.submitted_bundle), mode="r:gz") as tar:
+        assert tar.getnames() == ["config.yaml"]
         config = yaml.safe_load(tar.extractfile("config.yaml").read())  # type: ignore[union-attr]
+    # The round's pins are in the bundle run() actually uploaded.
     assert config["executor"]["model"] == "databricks-claude-opus-4-8"
     assert config["executor"]["config"]["max_turns"] == 37
+
+
+def test_run_bakes_default_max_turns_when_arg_is_zero(tmp_path: Path) -> None:
+    """When max_turns=0, run() bakes ``default_max_turns`` into the SUBMITTED
+    bundle (the round's turn cap, resolved by run(), is what ships)."""
+    stream_events = [("response.output_text.delta", {"delta": _ACTION_BLOCK})]
+    fake = FakeOmnigentClient(stream_events=stream_events)
+    backend = OmnigentBackend(
+        client=fake,  # type: ignore[arg-type]
+        agent_bundle_path=_write_agent_yaml(tmp_path),
+        server_url="http://localhost:6767",
+        default_model="my-default-model",
+        default_max_turns=88,
+    )
+    asyncio.run(backend.run(prompt="p", scaffold_files={}, max_turns=0, model=None))
+
+    assert fake.submitted_bundle is not None
+    with tarfile.open(fileobj=io.BytesIO(fake.submitted_bundle), mode="r:gz") as tar:
+        config = yaml.safe_load(tar.extractfile("config.yaml").read())  # type: ignore[union-attr]
+    assert config["executor"]["model"] == "my-default-model"
+    assert config["executor"]["config"]["max_turns"] == 88
 
 
 def test_wire_managed_create_failure_surfaces_optimizer_error(tmp_path: Path) -> None:
@@ -957,3 +1014,89 @@ def test_wire_managed_create_failure_surfaces_optimizer_error(tmp_path: Path) ->
     assert result.action.action == "noop"
     assert result.optimizer_error is not None
     assert "500" in result.optimizer_error
+    # Contract item 4: the round's decision mapping turns this marker into
+    # INFRA_FAIL (not a silent noop). Exercise the exact mapping round.py runs.
+    assert apply_optimizer_error(Decision.NOOP, result.optimizer_error) == Decision.INFRA_FAIL
+
+
+def test_wire_runner_never_online_surfaces_infra_fail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """(fix 2) A managed runner that never comes online within the bounded
+    poll is surfaced as a backend failure → INFRA_FAIL, never a silent noop.
+
+    The poll is bounded (no infinite loop): after ``max_attempts`` with the
+    runner still offline, _wait_for_runner(raise_on_timeout=True) raises,
+    run() catches it and sets optimizer_error.
+    """
+    import anvil.optimizer.omnigent_backend as backend_mod
+
+    async def _instant(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr(backend_mod.anyio, "sleep", _instant)
+
+    recorded: list[_Recorded] = []
+    # create → offline; every get_session poll → offline (never flips).
+    backend = _managed_backend(tmp_path, recorded, runner_online_seq=[False])
+    result = asyncio.run(backend.run(prompt="p", scaffold_files={}, max_turns=5, model="m"))
+
+    # The poll was bounded (a finite number of get_session calls) ...
+    poll_calls = [
+        r for r in recorded if r.method == "GET" and r.path == f"/v1/sessions/{_WIRE_MANAGED_ID}"
+    ]
+    assert 1 <= len(poll_calls) <= 6
+    # ... no post-bind work ran (we never reached environments/stream) ...
+    assert not any(r.path.endswith("/resources/environments") for r in recorded)
+    assert not any(r.path.endswith("/stream") for r in recorded)
+    # ... and the failure is DISTINGUISHABLE → INFRA_FAIL, not a silent noop.
+    assert result.action.action == "noop"
+    assert result.optimizer_error is not None
+    assert "never came online" in result.optimizer_error
+    assert apply_optimizer_error(Decision.NOOP, result.optimizer_error) == Decision.INFRA_FAIL
+
+
+def test_wire_stream_503_retries_then_succeeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """(suggestion) A transient 503 on the stream open (runner still
+    provisioning) is retried, and the drain then succeeds."""
+    import anvil.optimizer.omnigent_backend as backend_mod
+
+    async def _instant(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr(backend_mod.anyio, "sleep", _instant)
+
+    recorded: list[_Recorded] = []
+    backend = _managed_backend(tmp_path, recorded, stream_status_seq=[503, 200])
+    result = asyncio.run(backend.run(prompt="p", scaffold_files={}, max_turns=5, model="m"))
+
+    stream_calls = [r for r in recorded if r.path.endswith("/stream")]
+    assert len(stream_calls) == 2  # first 503, retried to 200
+    assert result.action.action == "noop"
+    assert result.optimizer_error is None
+
+
+def test_wire_stream_503_exhaustion_surfaces_infra_fail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """(suggestion) A persistent 503 on the stream open exhausts the bounded
+    retry and surfaces as a backend failure → INFRA_FAIL."""
+    import anvil.optimizer.omnigent_backend as backend_mod
+
+    async def _instant(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr(backend_mod.anyio, "sleep", _instant)
+
+    recorded: list[_Recorded] = []
+    backend = _managed_backend(tmp_path, recorded, stream_status_seq=[503])
+    result = asyncio.run(backend.run(prompt="p", scaffold_files={}, max_turns=5, model="m"))
+
+    # Bounded retry: the stream open was attempted _retry_on_503's max (3x).
+    stream_calls = [r for r in recorded if r.path.endswith("/stream")]
+    assert len(stream_calls) == 3
+    assert result.action.action == "noop"
+    assert result.optimizer_error is not None
+    assert apply_optimizer_error(Decision.NOOP, result.optimizer_error) == Decision.INFRA_FAIL
