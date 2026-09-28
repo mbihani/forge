@@ -588,6 +588,37 @@ def test_build_session_url_from_derived_bare_host_is_navigable(
     )
 
 
+def test_derived_api_base_composes_to_ui_link(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(6) End-to-end COMPOSE proof — the exact string
+    :func:`resolve_omnigent_server_url` DERIVES is one
+    :func:`build_session_url` can strip back to the correct navigable UI link.
+
+    Unlike ``test_build_session_url_strips_api_suffix`` (which feeds a
+    hard-coded base), this chains the resolver's REAL output — so it proves the
+    two functions interlock: the derived REST API base
+    ``.../api/2.0/omnigent`` round-trips to ``.../omnigent/c/<id>`` and NEVER
+    leaks the API suffix into the UI link as ``.../api/2.0/omnigent/c/<id>``.
+
+    Regression-bite: reverting the production ``/api/2.0/omnigent`` append back
+    to ``/omnigent`` makes the ``derived ==`` assertion fail (the resolver would
+    return the UI surface), while the UI-link assertion still holds — which
+    documents the coupling between the two functions.
+    """
+    monkeypatch.delenv("OMNIGENT_SERVER_URL", raising=False)
+    monkeypatch.setenv(
+        "DATABRICKS_HOST", "fevm-stable-classic-7ppxjq.cloud.databricks.com"
+    )
+    derived = resolve_omnigent_server_url()
+    assert derived == (
+        "https://fevm-stable-classic-7ppxjq.cloud.databricks.com/api/2.0/omnigent"
+    )
+    assert build_session_url(derived, "sid", "42") == (
+        "https://fevm-stable-classic-7ppxjq.cloud.databricks.com/omnigent/c/sid?o=42"
+    )
+
+
 def test_resolve_server_url_empty_env_treated_as_unset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
