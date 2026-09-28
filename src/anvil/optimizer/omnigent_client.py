@@ -65,9 +65,13 @@ def resolve_omnigent_server_url() -> str | None:
        trailing ``/omnigent`` or ``/api/2.0/omnigent`` segment are stripped
        before exactly one ``/omnigent`` is appended, so a host that already
        carries the suffix does not produce a doubled ``.../omnigent/omnigent``
-       path. When the app runs as a Databricks App in workspace host
-       ``https://<workspace-host>`` the Omnigent server is reachable at
-       ``https://<workspace-host>/omnigent``.
+       path. Databricks Apps inject ``DATABRICKS_HOST`` as a BARE hostname with
+       no scheme (e.g. ``fevm-stable-classic-7ppxjq.cloud.databricks.com``), so
+       a derived value that lacks an ``http://``/``https://`` scheme is
+       normalized to ``https://`` (an httpx request without a scheme raises
+       ``UnsupportedProtocol``). A host that already carries a scheme keeps it,
+       untouched — never doubled. When the app runs as a Databricks App the
+       Omnigent server is reachable at ``https://<workspace-host>/omnigent``.
 
     Returns ``None`` when neither source yields a value (Omnigent unconfigured
     — callers surface a 503 / skip best-effort work).
@@ -86,6 +90,14 @@ def resolve_omnigent_server_url() -> str | None:
                 host = host[: -len(suffix)].rstrip("/")
                 break
         if host:
+            # Databricks Apps inject a scheme-less bare hostname; guarantee an
+            # http(s):// scheme on the DERIVED value so the httpx client never
+            # raises ``UnsupportedProtocol``. A host that already carries a
+            # scheme is left untouched (never doubled). URI schemes are
+            # case-insensitive (RFC 3986), so lowercase only the CHECK — the
+            # host's original casing is preserved in the returned URL.
+            if not host.lower().startswith(("http://", "https://")):
+                host = f"https://{host}"
             return f"{host}/omnigent"
     return None
 
