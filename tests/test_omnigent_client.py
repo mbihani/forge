@@ -504,6 +504,26 @@ def test_resolve_server_url_scheme_host_not_doubled(
         assert resolve_omnigent_server_url() == expected
 
 
+def test_resolve_server_url_uppercase_scheme_not_double_prefixed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(e) URI schemes are case-insensitive (RFC 3986): a ``DATABRICKS_HOST``
+    with an UPPERCASE or mixed-case scheme is detected as already-scheme-ful and
+    NOT double-prefixed into ``https://HTTPS://...``. The host's ORIGINAL casing
+    is preserved verbatim in the returned URL (only the CHECK is lowercased).
+
+    Regression-bite: reverting the ``.lower()`` on the scheme check makes the
+    uppercase case fail (it double-prefixes to
+    ``https://HTTPS://host/omnigent``)."""
+    monkeypatch.delenv("OMNIGENT_SERVER_URL", raising=False)
+    for host, expected in (
+        ("HTTPS://foo.cloud.databricks.com", "HTTPS://foo.cloud.databricks.com/omnigent"),
+        ("HtTp://foo.cloud.databricks.com", "HtTp://foo.cloud.databricks.com/omnigent"),
+    ):
+        monkeypatch.setenv("DATABRICKS_HOST", host)
+        assert resolve_omnigent_server_url() == expected
+
+
 def test_resolve_server_url_bare_host_with_suffix_dedup_and_scheme(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

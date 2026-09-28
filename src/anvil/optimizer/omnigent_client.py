@@ -93,8 +93,10 @@ def resolve_omnigent_server_url() -> str | None:
             # Databricks Apps inject a scheme-less bare hostname; guarantee an
             # http(s):// scheme on the DERIVED value so the httpx client never
             # raises ``UnsupportedProtocol``. A host that already carries a
-            # scheme is left untouched (never doubled).
-            if not host.startswith(("http://", "https://")):
+            # scheme is left untouched (never doubled). URI schemes are
+            # case-insensitive (RFC 3986), so lowercase only the CHECK — the
+            # host's original casing is preserved in the returned URL.
+            if not host.lower().startswith(("http://", "https://")):
                 host = f"https://{host}"
             return f"{host}/omnigent"
     return None
