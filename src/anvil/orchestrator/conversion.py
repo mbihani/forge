@@ -49,7 +49,11 @@ from typing import Any
 
 import anyio
 
-from anvil.optimizer.omnigent_backend import _build_agent_bundle
+from anvil.optimizer.omnigent_backend import (
+    _build_agent_bundle,
+    _send_with_retry,
+    _wait_for_runner,
+)
 from anvil.optimizer.omnigent_client import (
     OmnigentClient,
     OmnigentError,
@@ -770,47 +774,11 @@ async def _run_managed_session(
             await client.aclose()
 
 
-async def _wait_for_runner(
-    client: OmnigentClient, session_id: str, progress: Any,
-    *, max_attempts: int = 6, delay: float = 2.0,
-) -> None:
-    """Poll get_session until runner_online is True (or give up).
-
-    The managed host usually provisions the runner synchronously in the
-    create response, but a brief async window is possible. This polls
-    rather than blocking indefinitely so a stuck host surfaces as a
-    clear send_message error instead of a hang.
-    """
-    for attempt in range(1, max_attempts + 1):
-        with suppress(OmnigentError):
-            snapshot = await client.get_session(session_id)
-            if snapshot.get("runner_online"):
-                return
-        if attempt < max_attempts:
-            progress("agent_session", f"Waiting for runner… ({attempt}/{max_attempts})")
-            await anyio.sleep(delay)
-    progress("agent_session", "Runner not yet online; attempting message anyway.")
-
-
-async def _send_with_retry(
-    client: OmnigentClient, session_id: str, text: str, progress: Any,
-    *, max_attempts: int = 3, delay: float = 3.0,
-) -> None:
-    """Send a message, retrying on transient 503 (runner still provisioning)."""
-    last_err: OmnigentError | None = None
-    for attempt in range(1, max_attempts + 1):
-        try:
-            await client.send_message(session_id, text)
-            return
-        except OmnigentError as exc:
-            last_err = exc
-            if exc.status_code == 503 and attempt < max_attempts:
-                progress("agent_session", f"Runner busy, retrying… ({attempt}/{max_attempts})")
-                await anyio.sleep(delay)
-                continue
-            raise
-    assert last_err is not None
-    raise last_err
+# ``_wait_for_runner`` and ``_send_with_retry`` are the shared managed-host
+# helpers, now defined in :mod:`anvil.optimizer.omnigent_backend` and imported
+# above (re-exported here so callers/tests keep importing them from this
+# module). Behavior is unchanged — this module passes its ``progress`` feed
+# through; the optimizer backend calls them with the default no-op.
 
 
 async def _drain_conversion_stream(

@@ -8,8 +8,16 @@ one ephemeral Omnigent session:
    tar.gz whose root ``config.yaml`` is the agent spec. The ``model`` and
    ``max_turns`` args are substituted into the spec so each round can pin
    them without editing the file on disk.
-2. **Create the session** — ``POST /v1/sessions`` (multipart: metadata +
-   bundle) returns a session-scoped agent id.
+2. **Register + bind a runner (two-step managed flow)** — ``POST
+   /v1/sessions`` (multipart: metadata + bundle) only *registers* the
+   agent and returns its ``agent_id``; that registration session has no
+   runner bound (calling ``list_environments`` on it fails HTTP 409:
+   "not bound to a runner"). So we immediately open a SECOND session via
+   ``create_session_from_agent(agent_id, host_type="managed", ...)`` — the
+   managed host auto-provisions a runner. All subsequent calls use the
+   managed session id (``managed["id"]``); the throwaway registration
+   session is deleted. The round's model pin rides through
+   ``model_override``; ``max_turns`` rides through the baked bundle.
 3. **Upload the scaffold** — the round's ``scaffold_files`` dict is written
    to the session's ``default`` environment filesystem so the agent can
    ``Read`` the same tree the local backend reads from ``cwd``.
@@ -43,10 +51,12 @@ import contextlib
 import io
 import tarfile
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import anyio
 import yaml
 
 from anvil.optimizer.omnigent_client import (
@@ -122,17 +132,54 @@ class OmnigentBackend:
         session_id: str | None = None
         session_url: str | None = None
         optimizer_error: str | None = None
+        registration_session_id: str | None = None
 
         try:
+            # Step 1: register the agent via the multipart bundle upload. This
+            # session has NO runner bound — it only yields the ``agent_id``.
+            # Capture the registration session id FIRST so a response missing
+            # ``agent_id`` (KeyError) still lets the ``finally`` tombstone the
+            # throwaway registration session (no leak).
             created = await self.client.create_session(bundle, metadata=self.create_metadata)
-            session_id = created["session_id"]
+            registration_session_id = created["session_id"]
+            agent_id = created["agent_id"]
+
+            # Step 2: open a MANAGED session bound to the registered agent —
+            # ``host_type="managed"`` triggers the managed host to
+            # auto-provision a runner. Without this the registration session's
+            # ``list_environments`` fails HTTP 409 "not bound to a runner".
+            # The round's model pin rides through ``model_override`` (the
+            # managed-session level override); ``max_turns`` has no
+            # create_session_from_agent parameter, so it rides through the
+            # bundle baked in step 1 (``_build_agent_bundle`` set
+            # ``executor.config.max_turns`` on the registered agent spec).
+            managed = await self.client.create_session_from_agent(
+                agent_id,
+                host_type="managed",
+                model_override=model or self.default_model,
+                title=self.create_metadata.title,
+            )
+            # The managed session id is ``managed["id"]`` — NOT
+            # ``created["session_id"]``. ALL subsequent calls target it.
+            session_id = managed["id"]
             session_url = build_session_url(
                 self.server_url, session_id, resolve_omnigent_workspace_id()
             )
 
-            env_id = await self._resolve_environment(session_id)
-            await self._upload_scaffold(session_id, env_id, scaffold_files)
-            await self.client.send_message(session_id, prompt)
+            # Step 3: wait for the runner to come online if the managed host
+            # provisioned it asynchronously (usually synchronous in the create
+            # response, but a brief async window is possible).
+            if not managed.get("runner_online"):
+                await _wait_for_runner(self.client, session_id)
+
+            # Steps 4+: all post-bind calls target the MANAGED session id and
+            # are retried on transient 503 (the runner may still be
+            # provisioning for a short window after it reports online).
+            env_id = await _retry_on_503(lambda: self._resolve_environment(session_id))
+            await _retry_on_503(
+                lambda: self._upload_scaffold(session_id, env_id, scaffold_files)
+            )
+            await _send_with_retry(self.client, session_id, prompt)
             stream_text, turns_used = await self._drain_stream(
                 session_id, max_turns=effective_max_turns
             )
@@ -175,6 +222,14 @@ class OmnigentBackend:
             optimizer_error = f"{type(exc).__name__}: {exc}"
             if body:
                 optimizer_error += f" | {body}"
+        finally:
+            # Clean up ONLY the throwaway registration session; the managed
+            # conversation session is KEPT alive so ``session_url`` stays
+            # inspectable. Best-effort — a failed delete must never mask the
+            # round result or overwrite ``optimizer_error``.
+            if registration_session_id is not None:
+                with contextlib.suppress(Exception):
+                    await self.client.delete_session(registration_session_id)
 
         parse_result = parse_action(transcript)
         return OptimizerResult(
@@ -343,6 +398,107 @@ class OmnigentBackend:
                     if isinstance(text, str):
                         modified[path] = text
         return modified
+
+
+# ---------------------------------------------------------------------------
+# Managed-host session helpers
+#
+# The managed Omnigent server requires a two-step flow: the multipart bundle
+# upload only REGISTERS the agent; a runner is bound only when a session is
+# opened with ``host_type="managed"``. During the brief provisioning window
+# post-bind calls can transiently return 503, so they are retried. These
+# helpers are shared with :mod:`anvil.orchestrator.conversion` (the converter
+# runs the identical managed flow) — extracted here, the lower-level module,
+# to avoid a circular import (conversion already imports from this module).
+# ``progress`` is optional so the optimizer backend (no live progress feed)
+# can call them with the default no-op while conversion passes its UI feed.
+# ---------------------------------------------------------------------------
+
+
+def _noop_progress(*_args: Any, **_kwargs: Any) -> None:
+    """A progress callback that does nothing (the backend has no UI feed)."""
+
+
+async def _wait_for_runner(
+    client: Any,
+    session_id: str,
+    progress: Callable[..., None] | None = None,
+    *,
+    max_attempts: int = 6,
+    delay: float = 2.0,
+) -> None:
+    """Poll ``get_session`` until ``runner_online`` is True (or give up).
+
+    The managed host usually provisions the runner synchronously in the
+    create response, but a brief async window is possible. This polls
+    rather than blocking indefinitely so a stuck host surfaces as a clear
+    ``send_message`` error instead of a hang.
+    """
+    progress = progress or _noop_progress
+    for attempt in range(1, max_attempts + 1):
+        with contextlib.suppress(OmnigentError):
+            snapshot = await client.get_session(session_id)
+            if snapshot.get("runner_online"):
+                return
+        if attempt < max_attempts:
+            progress("agent_session", f"Waiting for runner… ({attempt}/{max_attempts})")
+            await anyio.sleep(delay)
+    progress("agent_session", "Runner not yet online; attempting message anyway.")
+
+
+async def _send_with_retry(
+    client: Any,
+    session_id: str,
+    text: str,
+    progress: Callable[..., None] | None = None,
+    *,
+    max_attempts: int = 3,
+    delay: float = 3.0,
+) -> None:
+    """Send a message, retrying on transient 503 (runner still provisioning)."""
+    progress = progress or _noop_progress
+    last_err: OmnigentError | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            await client.send_message(session_id, text)
+            return
+        except OmnigentError as exc:
+            last_err = exc
+            if exc.status_code == 503 and attempt < max_attempts:
+                progress("agent_session", f"Runner busy, retrying… ({attempt}/{max_attempts})")
+                await anyio.sleep(delay)
+                continue
+            raise
+    assert last_err is not None
+    raise last_err
+
+
+async def _retry_on_503(
+    op: Callable[[], Awaitable[Any]],
+    *,
+    max_attempts: int = 3,
+    delay: float = 3.0,
+) -> Any:
+    """Await ``op()``, retrying on transient HTTP 503 (runner provisioning).
+
+    Generic sibling of :func:`_send_with_retry` for the other post-bind
+    calls (``list_environments`` / scaffold upload) whose 503-during-
+    provisioning must retry rather than hard-fail. A non-503
+    :class:`OmnigentError` (or any other exception) propagates immediately
+    so a genuine backend failure still surfaces as an ``optimizer_error``.
+    """
+    last_err: OmnigentError | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return await op()
+        except OmnigentError as exc:
+            last_err = exc
+            if exc.status_code == 503 and attempt < max_attempts:
+                await anyio.sleep(delay)
+                continue
+            raise
+    assert last_err is not None
+    raise last_err
 
 
 # ---------------------------------------------------------------------------

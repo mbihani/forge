@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import tarfile
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +32,7 @@ from anvil.optimizer.omnigent_backend import (
     _build_agent_bundle,
     _is_scaffold_path,
 )
-from anvil.optimizer.omnigent_client import OmnigentError, SessionCreateMetadata
+from anvil.optimizer.omnigent_client import OmnigentClient, OmnigentError, SessionCreateMetadata
 from anvil.optimizer.parser import parse_action
 
 # ---------------------------------------------------------------------------
@@ -38,8 +40,22 @@ from anvil.optimizer.parser import parse_action
 # ---------------------------------------------------------------------------
 
 
+# The registration session id (throwaway) and the managed session id are
+# DELIBERATELY different so tests can prove every post-bind call targets the
+# managed id (``managed["id"]``), never the registration ``session_id``.
+_REG_SESSION_ID = "reg-sess-1"
+_MANAGED_SESSION_ID = "managed-sess-1"
+
+
 class FakeOmnigentClient:
-    """Records calls and returns canned responses for the backend flow."""
+    """Records calls and returns canned responses for the backend flow.
+
+    Models the TWO-STEP managed flow: ``create_session`` registers the agent
+    (throwaway session ``_REG_SESSION_ID``) and returns an ``agent_id``;
+    ``create_session_from_agent`` opens the managed session
+    (``_MANAGED_SESSION_ID``) that binds a runner. All post-bind calls run
+    against the managed id.
+    """
 
     def __init__(
         self,
@@ -50,6 +66,8 @@ class FakeOmnigentClient:
         items: dict | None = None,
         file_contents: dict[str, str] | None = None,
         hang_after: bool = False,
+        runner_online: bool = True,
+        get_session_returns: list[dict] | None = None,
     ) -> None:
         self.calls: list[tuple[str, ...]] = []
         self._stream_events = stream_events or []
@@ -58,12 +76,44 @@ class FakeOmnigentClient:
         self._items = items
         self._file_contents = file_contents or {}
         self._hang_after = hang_after
+        self._runner_online = runner_online
+        # Successive get_session snapshots for the _wait_for_runner poll loop.
+        self._get_session_returns = get_session_returns or [{"runner_online": True}]
+        self.deleted_sessions: list[str] = []
 
     async def create_session(
         self, bundle_bytes: bytes, metadata: SessionCreateMetadata | None = None, **kw: Any
     ) -> dict[str, Any]:
         self.calls.append(("create_session", len(bundle_bytes)))
-        return {"session_id": "sess-1", "agent_id": "ag-1", "agent_name": "forge_optimizer"}
+        return {
+            "session_id": _REG_SESSION_ID,
+            "agent_id": "ag-1",
+            "agent_name": "forge_optimizer",
+        }
+
+    async def create_session_from_agent(
+        self,
+        agent_id: str,
+        *,
+        title: str | None = None,
+        host_type: str | None = None,
+        model_override: str | None = None,
+        **kw: Any,
+    ) -> dict[str, Any]:
+        self.calls.append(("create_session_from_agent", agent_id, host_type, model_override))
+        return {"id": _MANAGED_SESSION_ID, "runner_online": self._runner_online}
+
+    async def get_session(self, session_id: str) -> dict[str, Any]:
+        self.calls.append(("get_session", session_id))
+        # Pop successive snapshots; hold the last once exhausted.
+        if len(self._get_session_returns) > 1:
+            return self._get_session_returns.pop(0)
+        return self._get_session_returns[0]
+
+    async def delete_session(self, session_id: str) -> dict[str, Any]:
+        self.calls.append(("delete_session", session_id))
+        self.deleted_sessions.append(session_id)
+        return {"ok": True}
 
     async def list_environments(self, session_id: str) -> list[dict]:
         self.calls.append(("list_environments", session_id))
@@ -278,34 +328,53 @@ def test_run_full_flow_creates_uploads_sends_drains_parses(
         )
     )
 
-    # 1. Session created with a real bundle.
+    # 1. Step 1 registers the agent via a real (multipart) bundle upload.
     assert fake.calls[0][0] == "create_session"
     assert fake.calls[0][1] > 0  # bundle bytes are non-empty
 
-    # 2. Environment resolved.
-    assert ("list_environments", "sess-1") in fake.calls
+    # 2. Step 2 opens the MANAGED session bound to the registered agent —
+    #    host_type="managed" (the runner-binding step) with the round's
+    #    model carried through model_override.
+    bind_calls = [c for c in fake.calls if c[0] == "create_session_from_agent"]
+    assert len(bind_calls) == 1
+    _, agent_id, host_type, model_override = bind_calls[0]
+    assert agent_id == "ag-1"
+    assert host_type == "managed"
+    assert model_override == "databricks-claude-opus-4-7"
 
-    # 3. Every scaffold file uploaded.
+    # 3. Environment resolved AGAINST THE MANAGED session id (managed["id"]),
+    #    never the throwaway registration session_id.
+    assert ("list_environments", _MANAGED_SESSION_ID) in fake.calls
+    assert ("list_environments", _REG_SESSION_ID) not in fake.calls
+
+    # 4. Every scaffold file uploaded.
     uploaded = [c[1] for c in fake.calls if c[0] == "upload_file"]
     assert set(uploaded) == {"scaffold/harness.yaml", "scaffold/rules/x.md"}
 
-    # 4. Prompt sent.
+    # 5. Prompt sent.
     send_calls = [c for c in fake.calls if c[0] == "send_message"]
     assert len(send_calls) == 1
     assert "worst bucket" in send_calls[0][1]
 
-    # 5. Stream drained.
-    assert ("stream_session", "sess-1") in fake.calls
+    # 6. Stream drained against the managed session id.
+    assert ("stream_session", _MANAGED_SESSION_ID) in fake.calls
 
-    # 6. Action parsed from the transcript.
+    # 7. The throwaway registration session is deleted; the managed session
+    #    is KEPT (so session_url stays inspectable).
+    assert _REG_SESSION_ID in fake.deleted_sessions
+    assert _MANAGED_SESSION_ID not in fake.deleted_sessions
+
+    # 8. Action parsed from the transcript.
     assert result.action.action == "noop"
     assert result.action.rationale == "no actionable failure"
     assert result.parse_result.parse_status == "ok"
     assert "json-action" in result.transcript
 
-    # 7. Session URL is populated.
-    assert result.session_url == "http://localhost:6767/omnigent/c/sess-1"
+    # 9. Session URL points at the MANAGED session.
+    assert result.session_url == f"http://localhost:6767/omnigent/c/{_MANAGED_SESSION_ID}"
     assert result.turns_used == 1  # one response.completed event
+    # A clean run leaves no backend-failure marker.
+    assert result.optimizer_error is None
 
 
 def test_drain_stream_max_duration_breaks_during_read(tmp_path: Path) -> None:
@@ -582,3 +651,309 @@ def test_run_parses_add_skill_action_from_stream(tmp_path: Path) -> None:
     assert result.parse_result.parse_status == "ok"
     # The transcript matches what the parser sees locally.
     assert parse_action(result.transcript).action.action == "add_rule"
+
+
+# ---------------------------------------------------------------------------
+# Request-level managed-flow tests (real OmnigentClient + httpx.MockTransport)
+#
+# The FakeOmnigentClient above proves the backend CALLS the right client
+# methods; these prove the actual HTTP REQUESTS on the wire — the multipart
+# register followed by the JSON create_session_from_agent(host_type="managed"),
+# and that every post-bind request targets the managed session id. This is the
+# regression bite: revert the two-step flow to the old single create_session
+# and these fail (post-bind requests would carry the registration id, and no
+# JSON host_type="managed" request would be sent).
+# ---------------------------------------------------------------------------
+
+_WIRE_REG_ID = "reg-wire-1"
+_WIRE_MANAGED_ID = "managed-wire-1"
+_WIRE_ACTION_SSE = (
+    "event: response.output_text.delta\n"
+    f"data: {json.dumps({'delta': _ACTION_BLOCK})}\n"
+    "\n"
+    "event: response.completed\n"
+    'data: {"done": true}\n'
+    "\n"
+    "data: [DONE]\n"
+)
+
+
+@dataclass
+class _Recorded:
+    """One HTTP request the MockTransport handler saw."""
+
+    method: str
+    path: str
+    content_type: str
+    body: bytes
+
+
+def _managed_transport(
+    recorded: list[_Recorded],
+    *,
+    runner_online_seq: list[bool] | None = None,
+    env_status_seq: list[int] | None = None,
+) -> httpx.MockTransport:
+    """A MockTransport modeling the managed Omnigent server.
+
+    ``POST /v1/sessions`` dispatches on content type: multipart registers the
+    agent (throwaway ``_WIRE_REG_ID`` + an ``agent_id``); JSON opens the
+    managed session (``_WIRE_MANAGED_ID``). ``runner_online_seq`` drives the
+    ``runner_online`` flag returned by the JSON create and successive
+    ``get_session`` polls; ``env_status_seq`` drives successive HTTP statuses
+    for the environments call (e.g. ``[503, 200]`` to exercise the retry).
+    """
+    runner_seq = list(runner_online_seq if runner_online_seq is not None else [True])
+    env_seq = list(env_status_seq if env_status_seq is not None else [200])
+
+    def _next_runner() -> bool:
+        return runner_seq.pop(0) if len(runner_seq) > 1 else runner_seq[0]
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        ct = request.headers.get("content-type", "")
+        recorded.append(_Recorded(request.method, request.url.path, ct, request.content))
+        path = request.url.path
+
+        if request.method == "POST" and path == "/v1/sessions":
+            if ct.startswith("multipart/form-data"):
+                return httpx.Response(
+                    200,
+                    json={
+                        "session_id": _WIRE_REG_ID,
+                        "agent_id": "ag-wire-1",
+                        "agent_name": "forge_optimizer",
+                    },
+                )
+            # JSON create_session_from_agent — the managed runner-binding step.
+            return httpx.Response(
+                200, json={"id": _WIRE_MANAGED_ID, "runner_online": _next_runner()}
+            )
+        if request.method == "GET" and path == f"/v1/sessions/{_WIRE_MANAGED_ID}":
+            return httpx.Response(200, json={"runner_online": _next_runner()})
+        if path.endswith("/resources/environments"):
+            status = env_seq.pop(0) if len(env_seq) > 1 else env_seq[0]
+            if status != 200:
+                return httpx.Response(status, json={"error": "runner provisioning"})
+            return httpx.Response(200, json={"data": [{"id": "default"}]})
+        if path.endswith("/stream"):
+            return httpx.Response(200, text=_WIRE_ACTION_SSE)
+        if path.endswith("/changes"):
+            return httpx.Response(200, json={"data": []})
+        if path.endswith("/items"):
+            return httpx.Response(200, json={"data": [], "has_more": False})
+        if request.method == "PUT":  # filesystem upload
+            return httpx.Response(200, json={"ok": True})
+        if request.method == "POST" and path.endswith("/events"):
+            return httpx.Response(200, json={"queued": True})
+        if request.method == "DELETE":
+            return httpx.Response(200, json={"ok": True})
+        return httpx.Response(404, json={"error": f"unhandled {request.method} {path}"})
+
+    return httpx.MockTransport(_handler)
+
+
+def _managed_backend(
+    tmp_path: Path,
+    recorded: list[_Recorded],
+    *,
+    runner_online_seq: list[bool] | None = None,
+    env_status_seq: list[int] | None = None,
+    model: str = "databricks-claude-opus-4-7",
+) -> OmnigentBackend:
+    transport = _managed_transport(
+        recorded, runner_online_seq=runner_online_seq, env_status_seq=env_status_seq
+    )
+    http_client = httpx.AsyncClient(base_url="http://localhost:6767", transport=transport)
+    client = OmnigentClient("http://localhost:6767", "test-token", client=http_client)
+    return OmnigentBackend(
+        client=client,
+        agent_bundle_path=_write_agent_yaml(tmp_path),
+        server_url="http://localhost:6767",
+        default_model=model,
+    )
+
+
+def test_wire_register_then_managed_create_are_sent(tmp_path: Path) -> None:
+    """(a)+(e) On the wire: a multipart POST /v1/sessions (register) is
+    followed by a JSON POST /v1/sessions carrying host_type="managed"."""
+    recorded: list[_Recorded] = []
+    backend = _managed_backend(tmp_path, recorded)
+    result = asyncio.run(
+        backend.run(prompt="p", scaffold_files={"scaffold/a.md": "x"}, max_turns=5, model="m")
+    )
+
+    creates = [r for r in recorded if r.method == "POST" and r.path == "/v1/sessions"]
+    assert len(creates) == 2
+    # First create is the multipart register.
+    assert creates[0].content_type.startswith("multipart/form-data")
+    # Second create is the JSON managed bind carrying host_type="managed".
+    assert creates[1].content_type.startswith("application/json")
+    bind_body = json.loads(creates[1].body)
+    assert bind_body["host_type"] == "managed"
+    assert bind_body["agent_id"] == "ag-wire-1"
+    # A clean managed run parses the action and flags no backend failure.
+    assert result.action.action == "noop"
+    assert result.optimizer_error is None
+
+
+def test_wire_post_bind_calls_target_managed_id(tmp_path: Path) -> None:
+    """(b) Every post-bind request targets the managed session id, never the
+    throwaway registration id."""
+    recorded: list[_Recorded] = []
+    backend = _managed_backend(tmp_path, recorded)
+    asyncio.run(
+        backend.run(prompt="p", scaffold_files={"scaffold/a.md": "x"}, max_turns=5, model="m")
+    )
+
+    # The registration id appears ONLY on its own DELETE (throwaway cleanup);
+    # it is never used for environments / filesystem / events / stream.
+    reg_paths = [r.path for r in recorded if _WIRE_REG_ID in r.path]
+    assert reg_paths == [f"/v1/sessions/{_WIRE_REG_ID}"]
+    assert [r.method for r in recorded if _WIRE_REG_ID in r.path] == ["DELETE"]
+
+    # Post-bind traffic (environments, filesystem, events, stream) all carry
+    # the managed id.
+    managed_ops = {
+        (r.method, r.path.split(_WIRE_MANAGED_ID, 1)[1])
+        for r in recorded
+        if _WIRE_MANAGED_ID in r.path
+    }
+    assert ("GET", "/resources/environments") in managed_ops
+    assert ("POST", "/events") in managed_ops
+    assert ("GET", "/stream") in managed_ops
+    assert any(m == "PUT" and p.startswith("/resources/environments") for m, p in managed_ops)
+    # The managed session is NOT deleted (kept inspectable).
+    assert (
+        "DELETE",
+        "",
+    ) not in {(r.method, r.path.split(_WIRE_MANAGED_ID, 1)[1]) for r in recorded if _WIRE_MANAGED_ID in r.path}
+
+
+def test_wire_waits_for_runner_then_proceeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """(c) When the managed create reports runner_online=False, the backend
+    polls get_session until it flips True, THEN runs the post-bind calls."""
+    import anvil.optimizer.omnigent_backend as backend_mod
+
+    async def _instant(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr(backend_mod.anyio, "sleep", _instant)
+
+    recorded: list[_Recorded] = []
+    # create → offline; first poll → offline; second poll → online.
+    backend = _managed_backend(tmp_path, recorded, runner_online_seq=[False, False, True])
+    result = asyncio.run(backend.run(prompt="p", scaffold_files={}, max_turns=5, model="m"))
+
+    get_session_calls = [
+        r for r in recorded if r.method == "GET" and r.path == f"/v1/sessions/{_WIRE_MANAGED_ID}"
+    ]
+    assert len(get_session_calls) >= 2  # polled until runner_online
+    # Only AFTER the runner is online do post-bind calls run.
+    first_env_idx = next(
+        i for i, r in enumerate(recorded) if r.path.endswith("/resources/environments")
+    )
+    last_poll_idx = max(
+        i
+        for i, r in enumerate(recorded)
+        if r.method == "GET" and r.path == f"/v1/sessions/{_WIRE_MANAGED_ID}"
+    )
+    assert last_poll_idx < first_env_idx
+    assert result.action.action == "noop"
+    assert result.optimizer_error is None
+
+
+def test_wire_retries_environments_on_transient_503(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """(d) A 503 on the first post-bind environments call (runner still
+    provisioning) is retried, and the run then succeeds."""
+    import anvil.optimizer.omnigent_backend as backend_mod
+
+    async def _instant(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr(backend_mod.anyio, "sleep", _instant)
+
+    recorded: list[_Recorded] = []
+    backend = _managed_backend(tmp_path, recorded, env_status_seq=[503, 200])
+    result = asyncio.run(backend.run(prompt="p", scaffold_files={}, max_turns=5, model="m"))
+
+    env_calls = [r for r in recorded if r.path.endswith("/resources/environments")]
+    assert len(env_calls) == 2  # first 503, retried to 200
+    # The retry made the run succeed (no backend-failure marker).
+    assert result.action.action == "noop"
+    assert result.optimizer_error is None
+
+
+def test_wire_model_pin_carries_through_model_override(tmp_path: Path) -> None:
+    """(model pin) The round's model reaches the managed session via
+    model_override, and max_turns rides through the baked bundle."""
+    recorded: list[_Recorded] = []
+    backend = _managed_backend(tmp_path, recorded)
+    asyncio.run(
+        backend.run(
+            prompt="p", scaffold_files={}, max_turns=37, model="databricks-claude-opus-4-8"
+        )
+    )
+
+    bind = next(
+        r
+        for r in recorded
+        if r.method == "POST"
+        and r.path == "/v1/sessions"
+        and r.content_type.startswith("application/json")
+    )
+    body = json.loads(bind.body)
+    # The round's model pin is carried on the managed create (model_override).
+    assert body["model_override"] == "databricks-claude-opus-4-8"
+
+    # max_turns has no create_session_from_agent parameter; it rides through
+    # the registered agent bundle. Verify the bundle-baking contract directly.
+    bundle = _build_agent_bundle(
+        _write_agent_yaml(tmp_path), model="databricks-claude-opus-4-8", max_turns=37
+    )
+    with tarfile.open(fileobj=io.BytesIO(bundle), mode="r:gz") as tar:
+        config = yaml.safe_load(tar.extractfile("config.yaml").read())  # type: ignore[union-attr]
+    assert config["executor"]["model"] == "databricks-claude-opus-4-8"
+    assert config["executor"]["config"]["max_turns"] == 37
+
+
+def test_wire_managed_create_failure_surfaces_optimizer_error(tmp_path: Path) -> None:
+    """A genuine failure at the managed-bind step surfaces as an
+    optimizer_error marker (→ INFRA_FAIL), not a silent noop."""
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path == "/v1/sessions":
+            ct = request.headers.get("content-type", "")
+            if ct.startswith("multipart/form-data"):
+                return httpx.Response(
+                    200,
+                    json={
+                        "session_id": _WIRE_REG_ID,
+                        "agent_id": "ag-wire-1",
+                        "agent_name": "x",
+                    },
+                )
+            # The managed bind fails hard (e.g. host has no capacity).
+            return httpx.Response(500, json={"error": "no managed host"})
+        if request.method == "DELETE":
+            return httpx.Response(200, json={"ok": True})
+        return httpx.Response(404, json={})
+
+    http_client = httpx.AsyncClient(
+        base_url="http://localhost:6767", transport=httpx.MockTransport(_handler)
+    )
+    client = OmnigentClient("http://localhost:6767", "test-token", client=http_client)
+    backend = OmnigentBackend(
+        client=client,
+        agent_bundle_path=_write_agent_yaml(tmp_path),
+        server_url="http://localhost:6767",
+    )
+    result = asyncio.run(backend.run(prompt="p", scaffold_files={}, max_turns=5, model="m"))
+
+    # Loop never crashes (noop action) BUT the failure is distinguishable.
+    assert result.action.action == "noop"
+    assert result.optimizer_error is not None
+    assert "500" in result.optimizer_error
