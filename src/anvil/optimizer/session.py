@@ -193,7 +193,13 @@ class LocalBackend:
             setup_anthropic_env(profile=self.profile, optimizer_endpoint=self.optimizer_endpoint)
 
         if self.experiment_name:
-            if self.profile:
+            # ``"DEFAULT"`` is the sentinel default threaded down from
+            # ``run_round`` (loop/round.py) via ``run_optimizer_session``; it
+            # is not a real ~/.databrickscfg profile. Binding
+            # ``databricks://DEFAULT`` would break MLflow's fallback to
+            # ambient DATABRICKS_HOST/DATABRICKS_TOKEN auth, so skip it and
+            # let native auth apply — matching ``evaluate_branch``.
+            if self.profile and self.profile != "DEFAULT":
                 mlflow.set_tracking_uri(f"databricks://{self.profile}")
             mlflow.set_experiment(self.experiment_name)
             # Turn on Anthropic autolog so each LLM call inside the Claude

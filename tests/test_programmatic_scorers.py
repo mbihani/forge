@@ -947,3 +947,173 @@ def test_build_dataset_without_extension_fields_omits_them() -> None:
     rows = _build_dataset(examples)
     assert "json_schema" not in rows[0]["expectations"]
     assert "expected_fields" not in rows[0]["expectations"]
+
+
+# ---------------------------------------------------------------------------
+# 9. Regression: the "DEFAULT" profile sentinel must NOT bind a tracking URI
+#    (round path) and a None result_df must NOT crash _aggregate_report.
+# ---------------------------------------------------------------------------
+
+
+def _run_evaluate_branch_with_profile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    profile: str | None,
+    result_df=None,
+):
+    """Drive ``evaluate_branch`` with everything external mocked, recording
+    every ``mlflow.set_tracking_uri`` call. Returns
+    ``(report, tracking_uri_calls, config_profile_env)`` where
+    ``config_profile_env`` is the value of ``DATABRICKS_CONFIG_PROFILE`` after
+    the call. ``result_df`` defaults to a valid 2-row frame; pass ``None`` to
+    exercise the all-scorers-failed path."""
+    from anvil.eval import runner
+    from anvil.runtime.models import (
+        EvalConfig,
+        EvalModeConfig,
+        ExperimentsConfig,
+        HarnessConfig,
+    )
+
+    eval_cfg = EvalConfig(
+        default_mode="quick",
+        scorers=["correctness", "retrieval_groundedness"],
+        modes={"quick": EvalModeConfig(rows=2, buckets={"direct": 2})},
+    )
+    config = HarnessConfig(
+        runtime_endpoint="rt",
+        optimizer_endpoint="op",
+        judge_endpoint="j",
+        experiments=ExperimentsConfig(runtime="r", eval="e", optimizer="o"),
+        eval=eval_cfg,
+    )
+    monkeypatch.setattr(runner, "load_harness", lambda *a, **kw: SimpleNamespace(config=config))
+    monkeypatch.setattr(runner, "load_golden_set", lambda _p: [_gold("g1", "a"), _gold("g2", "b")])
+    monkeypatch.setattr(runner, "select_subset", lambda exs, **_k: exs)
+    monkeypatch.setattr(runner, "make_kb_executor", lambda *a, **kw: SimpleNamespace())
+    monkeypatch.setattr(runner, "AnvilAgent", lambda *a, **kw: SimpleNamespace())
+    monkeypatch.setattr(runner, "enable_runtime_tracing", lambda *a, **kw: None)
+    monkeypatch.setattr(runner.mlflow, "set_experiment", lambda *a, **kw: None)
+    monkeypatch.setattr(runner.mlflow, "get_experiment_by_name", lambda *a, **kw: None)
+
+    tracking_uri_calls: list[str] = []
+    monkeypatch.setattr(
+        runner.mlflow, "set_tracking_uri", lambda uri, *a, **kw: tracking_uri_calls.append(uri)
+    )
+
+    monkeypatch.setattr(
+        runner.mlflow.genai,
+        "evaluate",
+        lambda **kw: SimpleNamespace(result_df=result_df, metrics={}, run_id="run-1"),
+    )
+
+    # ``evaluate_branch`` mutates ``os.environ["DATABRICKS_CONFIG_PROFILE"]``
+    # directly (not via monkeypatch), so snapshot + restore around the call.
+    import os
+
+    _prev = os.environ.get("DATABRICKS_CONFIG_PROFILE")
+    os.environ.pop("DATABRICKS_CONFIG_PROFILE", None)
+    try:
+        report = runner.evaluate_branch(
+            scaffold_root=tmp_path / "scaffold",
+            runtime_config_path=tmp_path / "config.yaml",
+            profile=profile,
+            runtime_client=SimpleNamespace(),
+            judge_client=SimpleNamespace(),
+        )
+        config_profile_env = os.environ.get("DATABRICKS_CONFIG_PROFILE")
+    finally:
+        if _prev is None:
+            os.environ.pop("DATABRICKS_CONFIG_PROFILE", None)
+        else:
+            os.environ["DATABRICKS_CONFIG_PROFILE"] = _prev
+
+    return report, tracking_uri_calls, config_profile_env
+
+
+def test_evaluate_branch_default_profile_uses_ambient_auth(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BUG A regression: ``profile="DEFAULT"`` (run_round's sentinel) must
+    NOT bind ``databricks://DEFAULT`` and must NOT set
+    ``DATABRICKS_CONFIG_PROFILE`` — it means "use ambient/native auth", the
+    same as the baseline path that passes no profile. Reverting the guard to
+    ``if profile:`` makes this test fail (the URI gets bound)."""
+    df = pd.DataFrame(
+        {
+            "correctness/value": [1.0, 0.0],
+            "retrieval_groundedness/value": [0.8, 0.8],
+            "trace_id": ["t0", "t1"],
+        }
+    )
+    report, tracking_uri_calls, config_profile_env = _run_evaluate_branch_with_profile(
+        tmp_path, monkeypatch, profile="DEFAULT", result_df=df
+    )
+    assert "databricks://DEFAULT" not in tracking_uri_calls
+    assert tracking_uri_calls == []
+    assert config_profile_env is None
+    # Eval still runs and aggregates normally.
+    assert report.aggregate == pytest.approx(0.65)
+
+
+def test_evaluate_branch_named_profile_still_binds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A real named profile MUST still bind ``databricks://<profile>`` and
+    set ``DATABRICKS_CONFIG_PROFILE`` — the guard only special-cases the
+    "DEFAULT" sentinel, not profile binding in general."""
+    df = pd.DataFrame(
+        {
+            "correctness/value": [1.0, 0.0],
+            "retrieval_groundedness/value": [0.8, 0.8],
+            "trace_id": ["t0", "t1"],
+        }
+    )
+    report, tracking_uri_calls, config_profile_env = _run_evaluate_branch_with_profile(
+        tmp_path, monkeypatch, profile="myprofile", result_df=df
+    )
+    assert "databricks://myprofile" in tracking_uri_calls
+    assert config_profile_env == "myprofile"
+    assert report.aggregate == pytest.approx(0.65)
+
+
+def test_aggregate_report_none_result_df_degrades_to_zero() -> None:
+    """BUG B regression: when every scorer fails on every row,
+    ``mlflow.genai.evaluate`` returns a None ``result_df``. ``_aggregate_report``
+    must degrade to a valid zero-row report (aggregate 0.0, n_rows 0) instead
+    of raising ``TypeError: object of type 'NoneType' has no len()``. Reverting
+    the ``result_df is None`` guard makes this test raise TypeError."""
+    from anvil.eval.runner import _aggregate_report
+
+    report = _aggregate_report(
+        result_df=None,
+        metrics={},
+        scorer_names=["correctness", "retrieval_groundedness"],
+        aggregate_scorer_names=["correctness", "retrieval_groundedness"],
+        weights={"correctness": 1.0, "retrieval_groundedness": 1.0},
+        examples=[_gold("g1", "a"), _gold("g2", "b")],
+        run_id="run-1",
+        experiment_id="exp-1",
+        mode="quick",
+    )
+    assert report.aggregate == 0.0
+    assert report.n_rows == 0
+    assert report.per_judge == {"correctness": 0.0, "retrieval_groundedness": 0.0}
+    assert report.per_bucket == {}
+    assert report.failures == []
+    assert report.trace_ids == []
+    assert report.cost_metrics["n_rows"] == 0.0
+
+
+def test_evaluate_branch_none_result_df_degrades_to_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BUG B end-to-end: ``evaluate_branch`` whose mocked
+    ``mlflow.genai.evaluate`` returns ``result_df=None`` yields an
+    ``EvalReport`` with aggregate 0.0 rather than crashing the session."""
+    report, _tracking, _env = _run_evaluate_branch_with_profile(
+        tmp_path, monkeypatch, profile=None, result_df=None
+    )
+    assert report.aggregate == 0.0
+    assert report.n_rows == 0
