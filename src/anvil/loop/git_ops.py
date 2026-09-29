@@ -8,9 +8,33 @@ modes explicit.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+
+# Committer identity injected into every ``git`` invocation. Round-artifact
+# commits run in a freshly-cloned /tmp working repo that has NO configured
+# ``user.name`` / ``user.email``, so a bare ``git commit`` fails exit 128
+# ("unable to auto-detect email address"). We inject a SAFE BOT identity via
+# ``git -c ...`` (per-invocation only — global/user git config is never
+# mutated), overridable through the environment for a project that wants its
+# own automation identity. A ``users.noreply.github.com`` address is a valid,
+# non-personal default that GitHub accepts.
+_DEFAULT_COMMITTER_NAME = "anvil-bot"
+_DEFAULT_COMMITTER_EMAIL = "anvil-bot@users.noreply.github.com"
+
+
+def _committer_identity_args() -> list[str]:
+    """``-c user.name=… -c user.email=…`` for the committer identity.
+
+    Read from ``ANVIL_GIT_COMMITTER_NAME`` / ``ANVIL_GIT_COMMITTER_EMAIL`` when
+    set (and non-empty), else the safe bot default. Passed as per-invocation
+    ``-c`` overrides so no global/user/repo git config is written.
+    """
+    name = os.environ.get("ANVIL_GIT_COMMITTER_NAME") or _DEFAULT_COMMITTER_NAME
+    email = os.environ.get("ANVIL_GIT_COMMITTER_EMAIL") or _DEFAULT_COMMITTER_EMAIL
+    return ["-c", f"user.name={name}", "-c", f"user.email={email}"]
 
 
 class GitError(RuntimeError):
@@ -25,8 +49,13 @@ class GitResult:
 
 
 def _run(repo_root: Path | str, args: list[str], *, check: bool = True) -> GitResult:
+    # Inject the committer identity as per-invocation ``-c`` overrides at this
+    # single choke point so a freshly-cloned repo with no configured identity
+    # can still ``git commit`` (the round-artifact commits). ``-c`` is a
+    # top-level option accepted by every subcommand and is a no-op for
+    # non-commit calls, so it is safe to prepend unconditionally.
     proc = subprocess.run(
-        ["git", "-C", str(repo_root), *args],
+        ["git", "-C", str(repo_root), *_committer_identity_args(), *args],
         capture_output=True,
         text=True,
         check=False,
