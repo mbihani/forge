@@ -629,7 +629,7 @@ def test_drain_stream_max_duration_breaks_during_read(tmp_path: Path) -> None:
     )
 
     start = time.monotonic()
-    transcript, turns_used, stream_incomplete = asyncio.run(
+    transcript, turns_used, stream_drop = asyncio.run(
         backend._drain_stream(
             "sess-1",
             inactivity_timeout=10,
@@ -642,7 +642,7 @@ def test_drain_stream_max_duration_breaks_during_read(tmp_path: Path) -> None:
     assert "before-hang" in transcript
     assert turns_used is None
     # A duration-bounded break is a CLEAN stop, not a mid-stream disconnect.
-    assert stream_incomplete is False
+    assert stream_drop is None
 
 
 def test_run_falls_back_to_items_when_stream_has_no_fenced_block(tmp_path: Path) -> None:
@@ -681,42 +681,99 @@ def test_run_falls_back_to_items_when_stream_has_no_fenced_block(tmp_path: Path)
 # ---------------------------------------------------------------------------
 
 
-def test_drain_stream_reports_incomplete_on_remote_protocol_error(tmp_path: Path) -> None:
+def test_drain_stream_reports_drop_on_remote_protocol_error(tmp_path: Path) -> None:
     """_drain_stream CATCHES a mid-stream httpx disconnect, returns the partial
-    transcript, and flags ``stream_incomplete=True`` — it does NOT propagate."""
+    transcript, and hands back the CAUGHT EXCEPTION — it does NOT propagate."""
+    err = httpx.RemoteProtocolError("peer closed connection")
     fake = FakeOmnigentClient(
         stream_events=[("response.output_text.delta", {"delta": "partial "})],
-        stream_error=httpx.RemoteProtocolError("peer closed connection"),
+        stream_error=err,
     )
     backend = OmnigentBackend(
         client=fake,  # type: ignore[arg-type]
         agent_bundle_path=_write_agent_yaml(tmp_path),
         server_url="http://localhost:6767",
     )
-    transcript, turns_used, stream_incomplete = asyncio.run(backend._drain_stream("s1"))
+    transcript, turns_used, stream_drop = asyncio.run(backend._drain_stream("s1"))
     assert "partial" in transcript
-    assert stream_incomplete is True
+    # The actual exception is returned (so run() can reflect its real type).
+    assert stream_drop is err
+    assert isinstance(stream_drop, httpx.RemoteProtocolError)
 
 
-def test_run_recovers_transcript_from_items_on_mid_stream_disconnect(tmp_path: Path) -> None:
-    """A mid-stream ``RemoteProtocolError`` is RECOVERED from persisted items.
+def test_drain_stream_reports_drop_on_read_error(tmp_path: Path) -> None:
+    """The disconnect family also covers ``httpx.ReadError`` (not just
+    RemoteProtocolError)."""
+    err = httpx.ReadError("connection reset")
+    fake = FakeOmnigentClient(
+        stream_events=[("response.output_text.delta", {"delta": "partial "})],
+        stream_error=err,
+    )
+    backend = OmnigentBackend(
+        client=fake,  # type: ignore[arg-type]
+        agent_bundle_path=_write_agent_yaml(tmp_path),
+        server_url="http://localhost:6767",
+    )
+    _transcript, _turns, stream_drop = asyncio.run(backend._drain_stream("s1"))
+    assert stream_drop is err
 
-    Simulates the live failure: the SSE stream emits a few frames then the
-    front-door proxy cuts it BEFORE the fenced action is streamed; the turn
-    completes server-side (``get_session`` → status idle, runner online); and
-    ``list_items`` returns the completed assistant message carrying a valid
-    ``json-action`` block. The backend must wait for the turn to go terminal,
-    reconstruct the transcript from items, parse the action, and NOT surface
-    INFRA_FAIL.
 
-    REGRESSION BITE: reverting the disconnect-catch in ``_drain_stream`` (or
-    the items recovery in ``run``) lets the ``RemoteProtocolError`` propagate
-    to ``run()``'s broad ``except`` → ``optimizer_error`` set → INFRA_FAIL,
-    which fails the ``optimizer_error is None`` / recovered-action assertions
-    below.
+_STALE_STREAM_ACTION = (
+    '```json-action\n{"action": "noop", "rationale": "STALE-partial-stream"}\n```'
+)
+_FINAL_ITEMS_ACTION = (
+    '```json-action\n{"action": "noop", "rationale": "FINAL-persisted-terminal"}\n```'
+)
+
+
+class _TerminalGatingClient(FakeOmnigentClient):
+    """A fake whose ``get_session`` walks a scripted snapshot sequence.
+
+    Lets a test drive the runner-bind poll AND the post-disconnect terminal
+    wait off ONE ordered script: the ``running`` snapshots satisfy the bind
+    poll (``runner_online`` + matching ``runner_id``) but are NOT terminal
+    (``status != "idle"``), so the terminal wait must poll PAST them before it
+    observes ``idle`` — which is what gates the items read.
     """
+
+    def __init__(self, *, snapshots: list[dict], **kw: Any) -> None:
+        super().__init__(**kw)
+        self._snapshots = list(snapshots)
+
+    async def get_session(self, session_id: str) -> dict[str, Any]:
+        self.calls.append(("get_session", session_id))
+        if len(self._snapshots) > 1:
+            return self._snapshots.pop(0)
+        return self._snapshots[0]
+
+
+def test_run_recovery_gates_items_read_on_terminal_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On a mid-stream disconnect, the persisted-items read is GATED on the
+    turn actually reaching terminal — it must NOT read a still-running turn.
+
+    ``get_session`` returns a RUNNING snapshot first (satisfies the bind poll
+    but is not terminal), then ``idle`` + runner online. The test asserts (a)
+    ``list_items`` is called strictly AFTER all terminal polling, and (b) the
+    poll went PAST a non-terminal snapshot (≥3 ``get_session`` calls: 1 bind +
+    the running→idle terminal poll), and (c) recovery succeeds (not
+    INFRA_FAIL).
+
+    REGRESSION BITE: if the items read is not gated on a confirmed terminal
+    (e.g. run() ignores ``_wait_for_turn_terminal``'s result and reads items
+    immediately), only the single bind poll runs → the ≥3 ``get_session``
+    assertion fails.
+    """
+    import anvil.optimizer.omnigent_backend as backend_mod
+
+    async def _instant(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr(backend_mod.anyio, "sleep", _instant)
+
     stream_events = [
-        ("response.output_text.delta", {"delta": "Analyzing the worst bucket...\n"}),
+        ("response.output_text.delta", {"delta": "Analyzing...\n"}),
         ("response.output_text.delta", {"delta": "```json-acti"}),  # cut mid-fence
     ]
     items = {
@@ -729,12 +786,62 @@ def test_run_recovers_transcript_from_items_on_mid_stream_disconnect(tmp_path: P
         ],
         "has_more": False,
     }
+    running = {"runner_online": True, "runner_id": "runner-fake-1", "status": "running"}
+    idle = {"runner_online": True, "runner_id": "runner-fake-1", "status": "idle"}
+    fake = _TerminalGatingClient(
+        snapshots=[running, running, idle],  # bind(running) → terminal poll: running → idle
+        stream_events=stream_events,
+        stream_error=httpx.RemoteProtocolError("peer closed connection"),
+        items=items,
+    )
+    result = asyncio.run(
+        _bind_backend(tmp_path, fake).run(prompt="p", scaffold_files={}, max_turns=5, model="m")
+    )
+
+    names = [c[0] for c in fake.calls]
+    getsession_idxs = [i for i, n in enumerate(names) if n == "get_session"]
+    items_idxs = [i for i, n in enumerate(names) if n == "list_items"]
+    assert items_idxs, "items must be read on recovery"
+    # (a) items read STRICTLY AFTER all terminal polling.
+    assert max(getsession_idxs) < min(items_idxs)
+    # (b) polled PAST a non-terminal snapshot: 1 bind + running→idle terminal.
+    assert len(getsession_idxs) >= 3
+    # (c) recovery succeeded → NOT INFRA_FAIL.
+    assert result.action.action == "noop"
+    assert result.parse_result.parse_status == "ok"
+    assert result.optimizer_error is None
+    assert apply_optimizer_error(Decision.NOOP, result.optimizer_error) == Decision.NOOP
+
+
+def test_run_persisted_terminal_transcript_wins_over_partial_stream_action(
+    tmp_path: Path,
+) -> None:
+    """When the dropped partial stream CONTAINS a parseable (but stale/truncated)
+    action A, the recovered action is the PERSISTED terminal action B — the
+    partial stream's parse is never trusted on an incomplete stream.
+
+    REGRESSION BITE: the pre-hardening logic only reconstructed from items when
+    the partial stream FAILED to parse, so it would surface stale action A;
+    this asserts B wins.
+    """
+    stream_events = [
+        # A FULLY-FORMED but stale action streamed before the drop.
+        ("response.output_text.delta", {"delta": _STALE_STREAM_ACTION}),
+    ]
+    items = {
+        "data": [
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": _FINAL_ITEMS_ACTION}],
+            }
+        ],
+        "has_more": False,
+    }
     fake = FakeOmnigentClient(
         stream_events=stream_events,
         stream_error=httpx.RemoteProtocolError("peer closed connection"),
         items=items,
-        # One snapshot satisfies BOTH the bind-confirm poll (online + bound
-        # runner id) AND the terminal-wait (status idle + online).
         get_session_returns=[
             {"runner_online": True, "runner_id": "runner-fake-1", "status": "idle"}
         ],
@@ -743,16 +850,11 @@ def test_run_recovers_transcript_from_items_on_mid_stream_disconnect(tmp_path: P
         _bind_backend(tmp_path, fake).run(prompt="p", scaffold_files={}, max_turns=5, model="m")
     )
 
-    # The turn was polled to terminal, THEN items were read for recovery.
-    assert any(c[0] == "get_session" for c in fake.calls)
+    # The PERSISTED terminal action wins over the stale partial-stream action.
     assert any(c[0] == "list_items" for c in fake.calls)
-    # The action parsed from the RECOVERED items transcript.
-    assert result.action.action == "noop"
-    assert result.action.rationale == "no actionable failure"
-    assert result.parse_result.parse_status == "ok"
-    # Recovered cleanly → NOT a backend failure → NOT INFRA_FAIL.
+    assert result.action.rationale == "FINAL-persisted-terminal"
+    assert "STALE-partial-stream" not in result.transcript
     assert result.optimizer_error is None
-    assert apply_optimizer_error(Decision.NOOP, result.optimizer_error) == Decision.NOOP
 
 
 def test_run_mid_stream_disconnect_no_recoverable_action_surfaces_infra_fail(
@@ -789,9 +891,62 @@ def test_run_mid_stream_disconnect_no_recoverable_action_surfaces_infra_fail(
 
     # Recovery WAS attempted (items read) but yielded no action.
     assert any(c[0] == "list_items" for c in fake.calls)
-    # Distinguishable backend failure → INFRA_FAIL.
+    # Distinguishable backend failure → INFRA_FAIL, reflecting the real error.
     assert result.optimizer_error is not None
     assert "disconnected mid-turn" in result.optimizer_error
+    assert "RemoteProtocolError" in result.optimizer_error
+    assert apply_optimizer_error(Decision.NOOP, result.optimizer_error) == Decision.INFRA_FAIL
+
+
+def test_run_mid_stream_disconnect_never_terminal_skips_items_and_infra_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the bounded terminal-wait NEVER observes a terminal turn, items are
+    NOT read (they could capture a still-running turn) and the round becomes
+    INFRA_FAIL.
+
+    ``get_session`` always returns a RUNNING snapshot: it satisfies the bind
+    poll (online + matching id) but never goes ``idle``, so
+    ``_wait_for_turn_terminal`` exhausts its budget and returns False.
+    """
+    import anvil.optimizer.omnigent_backend as backend_mod
+
+    async def _instant(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr(backend_mod.anyio, "sleep", _instant)
+
+    stream_events = [
+        ("response.output_text.delta", {"delta": "partial, cut off before done"}),
+    ]
+    # If items WERE (wrongly) read, they'd carry a valid action — so the test
+    # fails loudly if the gate is bypassed.
+    items = {
+        "data": [
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": _ACTION_BLOCK}],
+            }
+        ],
+        "has_more": False,
+    }
+    running = {"runner_online": True, "runner_id": "runner-fake-1", "status": "running"}
+    fake = _TerminalGatingClient(
+        snapshots=[running],  # bind ok, but NEVER terminal
+        stream_events=stream_events,
+        stream_error=httpx.RemoteProtocolError("peer closed connection"),
+        items=items,
+    )
+    result = asyncio.run(
+        _bind_backend(tmp_path, fake).run(prompt="p", scaffold_files={}, max_turns=5, model="m")
+    )
+
+    # Items were NOT read — the still-running turn was never trusted.
+    assert not any(c[0] == "list_items" for c in fake.calls)
+    # Non-terminal within budget → INFRA_FAIL with a clear message.
+    assert result.optimizer_error is not None
+    assert "did not reach a terminal state" in result.optimizer_error
     assert apply_optimizer_error(Decision.NOOP, result.optimizer_error) == Decision.INFRA_FAIL
 
 

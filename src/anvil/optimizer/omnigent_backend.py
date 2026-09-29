@@ -216,50 +216,66 @@ class OmnigentBackend:
                 lambda: self._upload_scaffold(session_id, env_id, scaffold_files)
             )
             await _send_with_retry(self.client, session_id, prompt)
-            stream_text, turns_used, stream_incomplete = await _retry_on_503(
+            stream_text, turns_used, stream_drop = await _retry_on_503(
                 lambda: self._drain_stream(session_id, max_turns=effective_max_turns)
             )
 
-            # The stream is the primary transcript source; fall back to the
-            # persisted conversation items only if the stream text did NOT
-            # yield a parseable action. Checking ``parse_action`` (not a raw
-            # triple-backtick scan) avoids letting an unrelated or malformed
-            # fence in the stream suppress a valid items fallback — a
-            # ``bad_json`` / ``schema_mismatch`` fence is just as much a
-            # non-success as no fence at all.
-            transcript = stream_text
-            stream_parse = parse_action(transcript)
-            if stream_parse.parse_status not in ("ok", "ok_last_of_many"):
-                # A mid-stream disconnect (front-door proxy cutting our
-                # long-lived SSE read) usually leaves the partial stream text
-                # missing its closing fence. The turn very likely COMPLETED
-                # server-side after the drop, so FIRST wait for it to go
-                # terminal (status idle + runner online) — bounded so it can
-                # never hang — then reconstruct from the durably-persisted
-                # items, exactly as the parse-quality fallback does.
-                if stream_incomplete:
-                    await self._wait_for_turn_terminal(session_id)
-                items_text = await _retry_on_503(
-                    lambda: self._transcript_from_items(session_id)
-                )
-                if items_text:
-                    transcript = items_text
-
-                # A mid-stream disconnect whose items recovery ALSO fails to
-                # yield a parseable action is a GENUINE failure — mark it so
-                # the round surfaces INFRA_FAIL rather than an
-                # indistinguishable "optimized, noop". (A parse-quality miss
-                # on a CLEANLY-ended stream is NOT marked — that is the
-                # agent's own output, handled as a normal noop.)
-                if stream_incomplete and parse_action(transcript).parse_status not in (
-                    "ok",
-                    "ok_last_of_many",
-                ):
-                    optimizer_error = (
-                        "optimizer SSE stream disconnected mid-turn "
-                        "(RemoteProtocolError) and no parseable action could be "
-                        "recovered from the persisted conversation items"
+            if stream_drop is not None:
+                # The SSE read was cut MID-STREAM (the front-door proxy kills a
+                # long-lived stream after ~5-6 min). The partial stream text is
+                # NOT trustworthy even when it happens to contain a parseable
+                # fence — that action may be stale or truncated by the drop. The
+                # durably-persisted TERMINAL transcript is authoritative, so on
+                # ANY incomplete stream we IGNORE the partial parse and instead
+                # (a) wait for the turn to reach terminal, then (b) reconstruct
+                # from persisted items and (c) parse THAT. The surfaced note
+                # reflects the ACTUAL caught exception (RemoteProtocolError /
+                # ReadError / StreamError), not a hard-coded type.
+                drop_desc = f"{type(stream_drop).__name__}: {stream_drop}"
+                if await self._wait_for_turn_terminal(session_id):
+                    transcript = await _retry_on_503(
+                        lambda: self._transcript_from_items(session_id)
                     )
+                    # Terminal reached but no parseable action recovered from
+                    # the persisted items → a GENUINE failure, surfaced as
+                    # INFRA_FAIL rather than an indistinguishable "optimized,
+                    # noop".
+                    if parse_action(transcript).parse_status not in (
+                        "ok",
+                        "ok_last_of_many",
+                    ):
+                        optimizer_error = (
+                            f"optimizer SSE stream disconnected mid-turn ({drop_desc}); "
+                            "turn reached terminal but no parseable action could be "
+                            "recovered from the persisted conversation items"
+                        )
+                else:
+                    # The bounded terminal-wait NEVER observed a terminal turn
+                    # within budget. Reading items now could capture a
+                    # STILL-RUNNING turn's partial state, so we do NOT read
+                    # them; keep the partial stream text for the record and
+                    # surface INFRA_FAIL.
+                    transcript = stream_text
+                    optimizer_error = (
+                        f"optimizer SSE stream disconnected mid-turn ({drop_desc}); "
+                        "turn did not reach a terminal state within the bounded "
+                        "recovery budget"
+                    )
+            else:
+                # Clean stream end. The stream is the primary transcript source;
+                # fall back to the persisted conversation items only if the
+                # stream text did NOT yield a parseable action. Checking
+                # ``parse_action`` (not a raw triple-backtick scan) avoids
+                # letting an unrelated or malformed fence in the stream suppress
+                # a valid items fallback — a ``bad_json`` / ``schema_mismatch``
+                # fence is just as much a non-success as no fence at all.
+                transcript = stream_text
+                if parse_action(transcript).parse_status not in ("ok", "ok_last_of_many"):
+                    items_text = await _retry_on_503(
+                        lambda: self._transcript_from_items(session_id)
+                    )
+                    if items_text:
+                        transcript = items_text
 
             modified_files = await self._collect_modified_files(session_id, env_id)
         except Exception as exc:
@@ -377,8 +393,8 @@ class OmnigentBackend:
         max_turns: int = 70,
         inactivity_timeout: float = _STREAM_INACTIVITY_TIMEOUT,
         max_duration: float = _STREAM_MAX_DURATION,
-    ) -> tuple[str, int | None, bool]:
-        """Drain the SSE stream; return (text, turns_used, stream_incomplete).
+    ) -> tuple[str, int | None, BaseException | None]:
+        """Drain the SSE stream; return (text, turns_used, stream_drop).
 
         Collects ``response.output_text.delta`` fragments and the text of
         completed assistant messages (``response.output_item.done``).
@@ -399,20 +415,21 @@ class OmnigentBackend:
         drain stops on: ``[DONE]`` / EOF, the inactivity timeout, the
         max-duration deadline, or the turn cap.
 
-        ``stream_incomplete`` is True when the SSE read was cut MID-STREAM by
-        the transport — the Databricks front-door proxy kills a long-lived
-        stream after ~5-6 min, surfacing ``httpx.RemoteProtocolError`` (and,
-        pragmatically, ``httpx.ReadError`` / ``httpx.StreamError``) from
-        ``stream.__anext__()``. The turn has very likely COMPLETED
-        server-side by then, so instead of letting the disconnect propagate
-        to ``run()`` (→ ``INFRA_FAIL``) we break, return the partial
-        transcript, and signal the caller to recover the full transcript from
-        the durably-persisted conversation items. A clean end (``[DONE]`` /
-        EOF / a bounded timeout / the turn cap) returns False.
+        ``stream_drop`` is the caught exception when the SSE read was cut
+        MID-STREAM by the transport — the Databricks front-door proxy kills a
+        long-lived stream after ~5-6 min, surfacing ``httpx.RemoteProtocolError``
+        (and, pragmatically, ``httpx.ReadError`` / ``httpx.StreamError``) from
+        ``stream.__anext__()``. The turn has very likely COMPLETED server-side
+        by then, so instead of letting the disconnect propagate to ``run()``
+        (→ ``INFRA_FAIL``) we break, return the partial transcript, and hand
+        the caller the exception so it can (a) recover the full transcript from
+        the durably-persisted conversation items and (b) surface the ACTUAL
+        exception type/message if recovery fails. A clean end (``[DONE]`` /
+        EOF / a bounded timeout / the turn cap) returns ``None``.
         """
         parts: list[str] = []
         turns = 0
-        stream_incomplete = False
+        stream_drop: BaseException | None = None
         start = time.monotonic()
         last_event = start
         stream = self.client.stream_session(session_id)
@@ -435,13 +452,14 @@ class OmnigentBackend:
                         event_type, data = await stream.__anext__()
                 except (TimeoutError, StopAsyncIteration):
                     break
-                except (httpx.RemoteProtocolError, httpx.ReadError, httpx.StreamError):
+                except (httpx.RemoteProtocolError, httpx.ReadError, httpx.StreamError) as exc:
                     # Mid-stream disconnect: the front-door proxy cut our
-                    # long-lived SSE read. The turn is very likely already
-                    # terminal server-side; break with the partial transcript
-                    # and signal the caller to recover the completed transcript
-                    # from persisted items (rather than raising → INFRA_FAIL).
-                    stream_incomplete = True
+                    # long-lived SSE read. Capture the exception (its type +
+                    # message flow into the caller's recovery note) and break
+                    # with the partial transcript so run() can recover the
+                    # completed transcript from persisted items (rather than
+                    # raising → INFRA_FAIL).
+                    stream_drop = exc
                     break
                 last_event = time.monotonic()
                 if event_type == _DELTA_TYPE:
@@ -464,7 +482,7 @@ class OmnigentBackend:
             with contextlib.suppress(Exception):
                 await stream.aclose()
         transcript = "".join(parts).strip()
-        return transcript, (turns or None), stream_incomplete
+        return transcript, (turns or None), stream_drop
 
     async def _wait_for_turn_terminal(
         self,
