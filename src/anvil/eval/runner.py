@@ -320,7 +320,14 @@ def _aggregate_report(
     mode: str,
     scorer_fingerprint: str = "",
 ) -> EvalReport:
-    n_rows = len(result_df)
+    # ``mlflow.genai.evaluate``'s ``construct_eval_result_df`` returns None
+    # when every scorer failed on every row (transient gateway/judge
+    # throttling; see ``_resilient_eval_harness``'s docstring). ``len(None)``
+    # would raise TypeError and abort the whole session, so a None frame
+    # degrades to a valid zero-row report (aggregate 0.0) instead — a
+    # recorded low score the loop can act on rather than a crash. Every use
+    # of ``result_df`` below is guarded by ``n_rows``, which is 0 here.
+    n_rows = 0 if result_df is None else len(result_df)
 
     per_judge_rows: dict[str, list[float | None]] = {
         name: [_row_score(result_df.iloc[i], name) for i in range(n_rows)] for name in scorer_names
@@ -766,7 +773,14 @@ def evaluate_branch(
         raise ValueError(
             f"mode {selected_mode!r} not in harness/config.yaml > eval.modes ({list(cfg.modes)})"
         )
-    if profile:
+    # ``"DEFAULT"`` is the sentinel default of ``run_round`` (loop/round.py),
+    # not a profile that actually exists in ~/.databrickscfg here. Binding
+    # ``databricks://DEFAULT`` forces MLflow to read a [DEFAULT] config
+    # section and disables its fallback to DATABRICKS_HOST/DATABRICKS_TOKEN,
+    # so the round path fails where the baseline path (which passes no
+    # profile) succeeds. Treat the sentinel as "use ambient/native auth" so
+    # both paths behave identically, locally and on the deployed App.
+    if profile and profile != "DEFAULT":
         mlflow.set_tracking_uri(f"databricks://{profile}")
         os.environ["DATABRICKS_CONFIG_PROFILE"] = profile
     mlflow.set_experiment(snapshot.config.experiments.eval)
