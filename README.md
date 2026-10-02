@@ -25,15 +25,24 @@ from git. The loop is the only orchestrator.
 uv venv --python 3.12
 uv sync --extra dev --extra optimizer
 
-# Smoke runtime (~30s)
-uv run python scripts/run_round.py --smoke
-
-# Quick eval (8 rows, 3 scorers, ~3-5 min)
+# Quick eval, no mutation — sanity-check the runtime + scorers (~3-5 min)
 uv run python scripts/evaluate.py --mode quick
 
-# One round end-to-end (~15-20 min)
-uv run python scripts/run_round.py --rounds 1
+# Prime the baseline (required once before rounds) → eval/runs/baseline.json
+uv run python scripts/make_baseline.py --mode quick
+
+# One optimization round end-to-end
+uv run python scripts/run_round.py --rounds 1 --eval-mode quick --parent-branch anvil/exp
 ```
+
+> Row-set size is `--mode` in `evaluate.py` / `make_baseline.py` but
+> `--eval-mode` in `run_round.py`.
+
+Prefer a guided, step-by-step flow? Open the orchestrator **web wizard** (the
+`forge-orchestrator` Databricks App) and click through: select repo →
+compatibility check → configure → **Start** → watch progress → **Finalize**.
+To onboard **your own** agent, see [`docs/onboarding.md`](docs/onboarding.md),
+or run the `forge-onboarding` skill from Claude Code in this repo.
 
 ## Storage
 
