@@ -1,0 +1,19 @@
+{
+  "round_id": 20,
+  "branch": "anvil/exp-round-20",
+  "scaffold_commit_sha": "4ebf1d41de69152a7f26c2048c380e504ac4d674",
+  "parent_commit_sha": "4ebf1d41de69152a7f26c2048c380e504ac4d674",
+  "decision": "noop",
+  "action_kind": "noop",
+  "parse_status": "ok_last_of_many",
+  "baseline_score": 0.9671875,
+  "score_delta_vs_parent": 0.0,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "Parent 0.9672; R4 frontier 0.9688 already baked into scaffold. Only summary_quality (0.934) has 0.034 headroom; schema_adherence/output_json_valid at 1.0 carry only downside (R9 cosmetic output_schema edit \u22120.047 dropped 1 row to 0/0/0 on both perfect judges). All four summary_quality sub-criteria exhaustively mined: conciseness R4 KEEP +0.0016 (in scaffold); completeness R1 REVERT \u22120.106 (32k truncation finra_5210/5310); faithfulness R6 REVERT \u22120.105 (same cascade finra_4512/5210); schema brevity R9 REVERT \u22120.047. Only unmined sub-criterion is accuracy, but every content path for it (normative-modality phrasing, defined-term capitalization, additional verbatim-quoting) either overlaps section_summary.md's existing 'preserves key legal terms, rule cross-references, dates, thresholds, and party names verbatim' bullet or adds length pressure that reliably reproduces the R1/R6 32k truncation cascade on the same two rows. Sampling exhausted: R3 T=0.0 noop; lowering max_tokens reinvites truncation; top_p at T=0.1 has no mechanism; max_tool_calls=0 with empty tools has no mechanism. Deleting no_repeat_failed_mutations.md (applies_to: optimizer) is zero runtime effect but removes an optimizer guardrail. Adding a new skill/rule reproduces the legacy R6 clash pattern (\u22120.194). EV: 1 kept gain +0.0016 vs 3 content reverts avg \u22120.086 (54\u00d7 asymmetric downside). R7\u2013R19 (13 consecutive rounds) converged on the same conclusion. Noop preserves the R4 frontier and a clean parent for a future round when per-example sub-criterion telemetry becomes available to localize the accuracy leak on the 14/20 examples sitting at 0.8125\u20130.9375.",
+  "optimizer_run": null,
+  "optimizer_session_url": null,
+  "frontier_best": null
+}

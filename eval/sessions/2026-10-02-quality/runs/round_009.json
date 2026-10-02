@@ -1,0 +1,225 @@
+{
+  "round_id": 9,
+  "branch": "anvil/exp-round-9",
+  "scaffold_commit_sha": "ece4fe58f04a4c505bcd6236e55762d876bfb080",
+  "parent_commit_sha": "4ebf1d41de69152a7f26c2048c380e504ac4d674",
+  "decision": "revert",
+  "action_kind": "edit_skill",
+  "parse_status": "ok_last_of_many",
+  "baseline_score": 0.9671875,
+  "score_delta_vs_parent": -0.046875,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "Baseline 0.9672; only summary_quality (0.934) imperfect; 4 sub-criteria (accuracy, completeness, faithfulness, conciseness). R4 added a brevity nudge to section_summary.md (+0.0016 KEPT) \u2014 the only content lever that empirically moved. R1 (-0.106) and R6 (-0.105) each pushed length/coverage/no-add and 32k-truncated 2 rows. The two skills that describe summary length are now INCONSISTENT: section_summary.md says 'prefer 1 or 2 sentences' but output_schema.md's inline schema sketch still shows '(1-3 sentences)'. Since the schema sketch is the model's output template, it anchors generation and partially cancels R4's prose-level brevity signal. This edit aligns the schema sketch's parenthetical with R4's exact brevity language: '(1-2 sentences; a 3rd only if a numeric threshold, exception, or cross-reference would otherwise be omitted)'. No key, field name, type, order, or structural element changes \u2014 schema_adherence and output_json_valid stay 1.0. Materially different from R1/R6: strictly length-REDUCING (both reverts were triggered by content/length additions pushing 2 rows past max_tokens); the edit only tightens an already-allowed sentence budget. Materially different from R4: different file (output_schema.md vs section_summary.md), different surface (template vs prose). No clash: identity.md 'faithful short summary' (aligned); section_summary.md identical brevity (reinforced, not contradicted); hierarchy/citations/exclusions structural. Predicted \u0394: +0.000 to +0.005 on summary_quality via 1-2 examples flipping conciseness 4->5 when the schema-anchored writer previously defaulted to the full 3-sentence budget. Downside bounded: strictly shorter output cannot truncate; worst case is a true noop if R4 already captured the full conciseness signal.",
+  "optimizer_run": null,
+  "optimizer_session_url": null,
+  "frontier_best": {
+    "summary_quality": 0.9375,
+    "schema_adherence": 1.0,
+    "output_json_valid": 1.0,
+    "aggregate": 0.96875
+  },
+  "evaluated_at": "2026-10-02T18:06:53+00:00",
+  "n_examples": 20,
+  "mode": "full",
+  "scorers": [
+    "output_json_valid",
+    "schema_adherence",
+    "summary_quality"
+  ],
+  "aggregate": 0.9203125,
+  "per_judge": {
+    "summary_quality": 0.890625,
+    "schema_adherence": 0.95,
+    "output_json_valid": 0.95
+  },
+  "per_bucket": {
+    "finra": {
+      "summary_quality": 0.890625,
+      "schema_adherence": 0.95,
+      "output_json_valid": 0.95,
+      "aggregate": 0.9203125
+    }
+  },
+  "cost_metrics": {
+    "n_rows": 20.0
+  },
+  "failures": [
+    {
+      "example_id": "finra_1210",
+      "query": "1210. Registration Requirements",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_1220",
+      "query": "1220. Registration Categories",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.8125
+      }
+    },
+    {
+      "example_id": "finra_2111",
+      "query": "2111. Suitability",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_2210",
+      "query": "2210. Communications with the Public",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.875
+      }
+    },
+    {
+      "example_id": "finra_2264",
+      "query": "2264. Margin Disclosure Statement",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_2360",
+      "query": "2360. Options",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.875
+      }
+    },
+    {
+      "example_id": "finra_3110",
+      "query": "3110. Supervision",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.875
+      }
+    },
+    {
+      "example_id": "finra_3210",
+      "query": "3210. Accounts At Other Broker-Dealers and Financial Institutions",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_3220",
+      "query": "3220. Influencing or Rewarding Employees of Others",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_4512",
+      "query": "4512. Customer Account Information",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_4530",
+      "query": "4530. Reporting Requirements",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_5130",
+      "query": "5130. Restrictions on the Purchase and Sale of Initial Equity Public Offerings",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_5210",
+      "query": "5210. Publication of Transactions and Quotations",
+      "category": "finra",
+      "judge_failures": [
+        "output_json_valid",
+        "schema_adherence",
+        "summary_quality"
+      ],
+      "per_objective": {
+        "output_json_valid": 0.0,
+        "schema_adherence": 0.0,
+        "summary_quality": 0.0
+      }
+    },
+    {
+      "example_id": "finra_5310",
+      "query": "5310. Best Execution and Interpositioning",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_8210",
+      "query": "8210. Provision of Information and Testimony and Inspection and Copying of Books",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    }
+  ],
+  "trace_ids": [],
+  "mlflow": {
+    "run_id": "",
+    "experiment_id": "1"
+  }
+}

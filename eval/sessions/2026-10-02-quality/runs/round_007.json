@@ -1,0 +1,19 @@
+{
+  "round_id": 7,
+  "branch": "anvil/exp-round-7",
+  "scaffold_commit_sha": "4ebf1d41de69152a7f26c2048c380e504ac4d674",
+  "parent_commit_sha": "4ebf1d41de69152a7f26c2048c380e504ac4d674",
+  "decision": "noop",
+  "action_kind": "noop",
+  "parse_status": "ok_last_of_many",
+  "baseline_score": 0.9671875,
+  "score_delta_vs_parent": 0.0,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "Parent baseline 0.9672 with only summary_quality=0.934 non-perfect; max remaining headroom 0.033. Frontier (Round 4, +0.0016) already captured the one safe content lever (conciseness parenthetical in section_summary.md). The three other summary_quality sub-criteria (accuracy, completeness, faithfulness) each have a direct precedent failure: Round 1 (\u22120.025, completeness coverage push \u2192 32k truncation on 2 rows) and Round 6 (\u22120.105, faithfulness no-add bullet \u2192 2 rows to invalid JSON). Sampling is exhausted (Round 3 T=0.0 was effective noop; top_p narrowing or lowering max_tokens from 32000 add no deterministic signal and risk truncation). Adding a new runtime rule listing the four judge sub-criteria is semantically equivalent to concatenating Round 1 + Round 6 and would likely reproduce their truncation cascade. Edits to hierarchy / citations / exclusions / output_schema / identity either touch judges already at 1.0 (schema_adherence, output_json_valid) or destabilize scaffold components whose per-example effect we cannot observe \u2014 the baseline failure list provides no per-sub-criterion breakdown and no model outputs. Risk/reward is deeply asymmetric: the only kept content edit was +0.0016, while the two reverts were \u22120.025 and \u22120.105 (combined mean \u22120.065, 40\u00d7 the mean kept gain). Noop preserves the Round-4 frontier (0.9688), eliminates the chance of another catastrophic revert this cycle, and lets the next round proceed from a clean parent. The prompt contract explicitly endorses this: 'noop with a thoughtful rationale is preferable to a risky guess.'",
+  "optimizer_run": null,
+  "optimizer_session_url": null,
+  "frontier_best": null
+}

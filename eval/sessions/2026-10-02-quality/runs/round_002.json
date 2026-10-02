@@ -1,0 +1,19 @@
+{
+  "round_id": 2,
+  "branch": "anvil/exp-round-2",
+  "scaffold_commit_sha": "f1f1c52769316982a29125a566a84311be46b497",
+  "parent_commit_sha": "f1f1c52769316982a29125a566a84311be46b497",
+  "decision": "noop",
+  "action_kind": "noop",
+  "parse_status": "ok_last_of_many",
+  "baseline_score": 0.9671875,
+  "score_delta_vs_parent": 0.0,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "Baseline aggregate 0.967 with only summary_quality (0.934) non-perfect \u2014 ~0.033 of total headroom, spread across four unobservable sub-metrics (accuracy/completeness/faithfulness/conciseness). The parent run exposes no per-example failures and no mlflow_run_id, so I cannot localize which sub-metric is leaking. Round 1 just reverted (\u22120.106) after editing section_summary.md with three simultaneous nudges (no-paraphrase, normative-obligation, coverage); all three judges regressed and one example truncated to 0/0/0 \u2014 a clear signal that pushing section_summary.md toward more coverage or more constraints breaks output_json_valid. The remaining low-risk surfaces either (a) duplicate existing instructions (section_summary already mandates verbatim preservation of legal terms, cross-references, dates, thresholds; identity + output_schema already enforce JSON-only output), which risks the round-6-style clash that cost \u22120.194, or (b) target already-perfect judges (schema_adherence, output_json_valid) with no upside and real downside. Sampling levers are also exhausted: temperature=0.1 is already low, max_tokens=32000 is already generous, max_tool_calls=0 with empty tools registry. Holding the frontier at 0.967 this round is strictly better than guessing; next round should prioritize wiring per-example sub-metric telemetry so a surgical edit becomes possible.",
+  "optimizer_run": null,
+  "optimizer_session_url": null,
+  "frontier_best": null
+}

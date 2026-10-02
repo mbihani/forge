@@ -1,0 +1,258 @@
+{
+  "round_id": 1,
+  "branch": "anvil/exp-round-1",
+  "scaffold_commit_sha": "fc66b780f5a3ed895aa073f527e2718596435d9f",
+  "parent_commit_sha": "f1f1c52769316982a29125a566a84311be46b497",
+  "decision": "revert",
+  "action_kind": "edit_skill",
+  "parse_status": "ok_last_of_many",
+  "baseline_score": 0.9671875,
+  "score_delta_vs_parent": -0.10625000000000007,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "Target the only non-perfect judge (summary_quality=0.934, mean 4.74/5 across accuracy/completeness/faithfulness/conciseness). The two existing bullets covered faithfulness and conciseness but gave no guidance on coverage; FINRA rules nest 4-5 levels deep with per-term definitions, so the easiest marginal loss is merging siblings or skipping a level-4/5 subsection, which depresses completeness (and sometimes accuracy when a defined term is omitted). The edit adds (a) a 'no paraphrase of defined terms / numeric thresholds' faithfulness nudge, (b) a 'state the normative obligation' accuracy nudge, (c) an explicit Coverage discipline block requiring one object per substantive subsection and per defined term. Pure additive edit to an existing skill \u2014 no new file, no reordering, no clash with hierarchy.md (structure-only), exclusions.md (strip-list only), citations.md, or output_schema.md. Predicted \u0394: +0.01 to +0.03 on summary_quality, mostly from the completeness criterion, with small accuracy upside; aggregate target 0.97-0.98.",
+  "optimizer_run": null,
+  "optimizer_session_url": null,
+  "frontier_best": {
+    "summary_quality": 0.934375,
+    "schema_adherence": 1.0,
+    "output_json_valid": 1.0,
+    "aggregate": 0.9671875
+  },
+  "evaluated_at": "2026-10-02T17:28:09+00:00",
+  "n_examples": 20,
+  "mode": "full",
+  "scorers": [
+    "output_json_valid",
+    "schema_adherence",
+    "summary_quality"
+  ],
+  "aggregate": 0.8609374999999999,
+  "per_judge": {
+    "summary_quality": 0.771875,
+    "schema_adherence": 0.95,
+    "output_json_valid": 0.95
+  },
+  "per_bucket": {
+    "finra": {
+      "summary_quality": 0.771875,
+      "schema_adherence": 0.95,
+      "output_json_valid": 0.95,
+      "aggregate": 0.8609374999999999
+    }
+  },
+  "cost_metrics": {
+    "n_rows": 20.0
+  },
+  "failures": [
+    {
+      "example_id": "finra_1210",
+      "query": "1210. Registration Requirements",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.875
+      }
+    },
+    {
+      "example_id": "finra_1220",
+      "query": "1220. Registration Categories",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.8125
+      }
+    },
+    {
+      "example_id": "finra_2010",
+      "query": "2010. STANDARDS OF COMMERCIAL HONOR AND PRINCIPLES OF TRADE",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_2020",
+      "query": "2020. Use of Manipulative, Deceptive or Other Fraudulent Devices",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.875
+      }
+    },
+    {
+      "example_id": "finra_2111",
+      "query": "2111. Suitability",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_2210",
+      "query": "2210. Communications with the Public",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_2264",
+      "query": "2264. Margin Disclosure Statement",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_2360",
+      "query": "2360. Options",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.75
+      }
+    },
+    {
+      "example_id": "finra_3110",
+      "query": "3110. Supervision",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.8125
+      }
+    },
+    {
+      "example_id": "finra_3210",
+      "query": "3210. Accounts At Other Broker-Dealers and Financial Institutions",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_3220",
+      "query": "3220. Influencing or Rewarding Employees of Others",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_3310",
+      "query": "3310. Anti-Money Laundering Compliance Program",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_4512",
+      "query": "4512. Customer Account Information",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_4530",
+      "query": "4530. Reporting Requirements",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.875
+      }
+    },
+    {
+      "example_id": "finra_5130",
+      "query": "5130. Restrictions on the Purchase and Sale of Initial Equity Public Offerings",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_5210",
+      "query": "5210. Publication of Transactions and Quotations",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.0
+      }
+    },
+    {
+      "example_id": "finra_5310",
+      "query": "5310. Best Execution and Interpositioning",
+      "category": "finra",
+      "judge_failures": [
+        "output_json_valid",
+        "schema_adherence",
+        "summary_quality"
+      ],
+      "per_objective": {
+        "output_json_valid": 0.0,
+        "schema_adherence": 0.0,
+        "summary_quality": 0.0
+      }
+    },
+    {
+      "example_id": "finra_8210",
+      "query": "8210. Provision of Information and Testimony and Inspection and Copying of Books",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.0
+      }
+    }
+  ],
+  "trace_ids": [],
+  "mlflow": {
+    "run_id": "",
+    "experiment_id": "1"
+  }
+}

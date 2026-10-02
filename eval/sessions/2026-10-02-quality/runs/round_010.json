@@ -1,0 +1,19 @@
+{
+  "round_id": 10,
+  "branch": "anvil/exp-round-10",
+  "scaffold_commit_sha": "4ebf1d41de69152a7f26c2048c380e504ac4d674",
+  "parent_commit_sha": "4ebf1d41de69152a7f26c2048c380e504ac4d674",
+  "decision": "noop",
+  "action_kind": "noop",
+  "parse_status": "ok_last_of_many",
+  "baseline_score": 0.9671875,
+  "score_delta_vs_parent": 0.0,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "Parent 0.9672; frontier 0.9688 (R4 brevity nudge, +0.0016). Only summary_quality (0.934) has headroom (0.034), spread across accuracy/completeness/faithfulness/conciseness. Three of four sub-criteria have been empirically mined: R4 conciseness KEEP +0.0016; R1 completeness/coverage REVERT -0.106 (2 rows 32k-truncated to 0/0/0 on finra_5210/5310); R6 faithfulness no-invention REVERT -0.105 (same truncation cascade on finra_4512/5210). R9 defied prior noop guidance and touched output_schema.md's inline schema-sketch comment (aligning its '1-3 sentences' annotation to R4's brevity language) and REVERTED -0.047 with 1 row dropping to 0/0/0 on schema_adherence+output_json_valid \u2014 proving even cosmetic edits to a structural file are fragile. Only unaddressed sub-criterion is accuracy, but every content path to it (normative-obligation nudges, defined-term capitalization, verbatim quoting) was tried in R1 or clashes with section_summary.md's existing bullets. All other active skills (identity/hierarchy/citations/exclusions/output_schema) either target judges already at 1.0 (zero upside, real downside per R9) or structurally clash with section_summary (verbatim-term preservation, cross-references). Sampling exhausted: R3 T=0.0 was noop; top_p narrowing or max_tokens reduction risk reproducing the truncation cascade; max_tool_calls=0 with empty tools has no mechanism. Adding a new skill/rule reproduces the Round-6-legacy clash pattern (-0.194). EV math is deeply asymmetric: one +0.0016 kept gain vs three reverts averaging -0.086 (50x downside). The prompt contract explicitly endorses this: 'noop with a thoughtful rationale is preferable to a risky guess.' Noop preserves the R4 frontier (0.9688) and a clean parent for a round where per-example sub-criterion telemetry or model outputs become available.",
+  "optimizer_run": null,
+  "optimizer_session_url": null,
+  "frontier_best": null
+}

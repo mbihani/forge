@@ -1,0 +1,28 @@
+{
+  "best": {
+    "summary_quality": 0.9375,
+    "schema_adherence": 1.0,
+    "output_json_valid": 1.0,
+    "aggregate": 0.96875
+  },
+  "objectives": [
+    "aggregate",
+    "summary_quality",
+    "schema_adherence",
+    "output_json_valid"
+  ],
+  "pareto": false,
+  "directions": {
+    "aggregate": "maximize",
+    "summary_quality": "maximize",
+    "schema_adherence": "maximize",
+    "output_json_valid": "maximize"
+  },
+  "sources": {
+    "aggregate": "aggregate",
+    "summary_quality": "summary_quality",
+    "schema_adherence": "schema_adherence",
+    "output_json_valid": "output_json_valid"
+  },
+  "epsilon": 0.0
+}

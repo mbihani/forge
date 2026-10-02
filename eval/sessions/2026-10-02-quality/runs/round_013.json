@@ -1,0 +1,19 @@
+{
+  "round_id": 13,
+  "branch": "anvil/exp-round-13",
+  "scaffold_commit_sha": "4ebf1d41de69152a7f26c2048c380e504ac4d674",
+  "parent_commit_sha": "4ebf1d41de69152a7f26c2048c380e504ac4d674",
+  "decision": "noop",
+  "action_kind": "noop",
+  "parse_status": "schema_mismatch",
+  "baseline_score": 0.9671875,
+  "score_delta_vs_parent": 0.0,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "parser: schema mismatch at 'noop.rationale': String should have at most 2000 characters",
+  "optimizer_run": null,
+  "optimizer_session_url": null,
+  "frontier_best": null
+}

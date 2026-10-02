@@ -1,0 +1,262 @@
+{
+  "round_id": 6,
+  "branch": "anvil/exp-round-6",
+  "scaffold_commit_sha": "f8e960df172b97b91ff5b26aca04d51f65e55de9",
+  "parent_commit_sha": "4ebf1d41de69152a7f26c2048c380e504ac4d674",
+  "decision": "revert",
+  "action_kind": "edit_skill",
+  "parse_status": "ok_last_of_many",
+  "baseline_score": 0.9671875,
+  "score_delta_vs_parent": -0.10468749999999993,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "Only non-perfect judge is summary_quality=0.934 (headroom 0.033). Round 4 addressed conciseness (+0.0016 kept). Remaining headroom lives in the other three sub-criteria (accuracy, completeness, faithfulness). The one failure mode no active skill speaks to is faithfulness-by-invention: the current bullets instruct what to INCLUDE (core requirement, verbatim terms, precise language) but never what to EXCLUDE content-wise, and a legal summarizer under 'preserve defined terms + cross-references' pressure often adds a short interpretive gloss (e.g. 'This means that...' or an illustrative example not in the source) that the judge docks faithfulness 5\u21924 on. I add exactly ONE bullet forbidding additions. It is strictly length-REDUCING \u2014 the mechanical opposite of Round 1's catastrophic length-inflating cascade (\u22120.106), which combined coverage-push + no-paraphrase + normative-obligation and 32k-truncated two examples to 0/0/0. Removing the coverage-push component (which was the inflation driver) and keeping only the no-add constraint cannot reproduce that failure. Materially different from Round 4 (brevity parenthetical, sentence count) \u2014 this bullet is about content SOURCE (don't invent), not length. No clash: identity.md says 'faithful short summary' (aligned); hierarchy/citations/exclusions/output_schema are structural (orthogonal); no active rule speaks to summary content. Predicted \u0394: +0.003 to +0.010 on summary_quality via faithfulness-criterion flips on 2\u20134 examples currently at 0.9375. Downside: true noop if the model already avoids invention at T=0.1, or at worst a tiny completeness nudge of ~0.003 (strictly bounded because the constraint only forbids additions, it does not remove anything the previous bullets required).",
+  "optimizer_run": null,
+  "optimizer_session_url": null,
+  "frontier_best": {
+    "summary_quality": 0.9375,
+    "schema_adherence": 1.0,
+    "output_json_valid": 1.0,
+    "aggregate": 0.96875
+  },
+  "evaluated_at": "2026-10-02T17:55:15+00:00",
+  "n_examples": 20,
+  "mode": "full",
+  "scorers": [
+    "output_json_valid",
+    "schema_adherence",
+    "summary_quality"
+  ],
+  "aggregate": 0.8625,
+  "per_judge": {
+    "summary_quality": 0.825,
+    "schema_adherence": 0.9,
+    "output_json_valid": 0.9
+  },
+  "per_bucket": {
+    "finra": {
+      "summary_quality": 0.825,
+      "schema_adherence": 0.9,
+      "output_json_valid": 0.9,
+      "aggregate": 0.8625
+    }
+  },
+  "cost_metrics": {
+    "n_rows": 20.0
+  },
+  "failures": [
+    {
+      "example_id": "finra_1210",
+      "query": "1210. Registration Requirements",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_1220",
+      "query": "1220. Registration Categories",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.8125
+      }
+    },
+    {
+      "example_id": "finra_2010",
+      "query": "2010. STANDARDS OF COMMERCIAL HONOR AND PRINCIPLES OF TRADE",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.8125
+      }
+    },
+    {
+      "example_id": "finra_2020",
+      "query": "2020. Use of Manipulative, Deceptive or Other Fraudulent Devices",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_2111",
+      "query": "2111. Suitability",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_2210",
+      "query": "2210. Communications with the Public",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_2264",
+      "query": "2264. Margin Disclosure Statement",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_2360",
+      "query": "2360. Options",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.875
+      }
+    },
+    {
+      "example_id": "finra_3110",
+      "query": "3110. Supervision",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.875
+      }
+    },
+    {
+      "example_id": "finra_3210",
+      "query": "3210. Accounts At Other Broker-Dealers and Financial Institutions",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_3220",
+      "query": "3220. Influencing or Rewarding Employees of Others",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_4511",
+      "query": "4511. General Requirements",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_4512",
+      "query": "4512. Customer Account Information",
+      "category": "finra",
+      "judge_failures": [
+        "output_json_valid",
+        "schema_adherence",
+        "summary_quality"
+      ],
+      "per_objective": {
+        "output_json_valid": 0.0,
+        "schema_adherence": 0.0,
+        "summary_quality": 0.0
+      }
+    },
+    {
+      "example_id": "finra_4530",
+      "query": "4530. Reporting Requirements",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.875
+      }
+    },
+    {
+      "example_id": "finra_5130",
+      "query": "5130. Restrictions on the Purchase and Sale of Initial Equity Public Offerings",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_5210",
+      "query": "5210. Publication of Transactions and Quotations",
+      "category": "finra",
+      "judge_failures": [
+        "output_json_valid",
+        "schema_adherence",
+        "summary_quality"
+      ],
+      "per_objective": {
+        "output_json_valid": 0.0,
+        "schema_adherence": 0.0,
+        "summary_quality": 0.0
+      }
+    },
+    {
+      "example_id": "finra_5310",
+      "query": "5310. Best Execution and Interpositioning",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_8210",
+      "query": "8210. Provision of Information and Testimony and Inspection and Copying of Books",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.875
+      }
+    }
+  ],
+  "trace_ids": [],
+  "mlflow": {
+    "run_id": "",
+    "experiment_id": "1"
+  }
+}

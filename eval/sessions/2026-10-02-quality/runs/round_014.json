@@ -1,0 +1,19 @@
+{
+  "round_id": 14,
+  "branch": "anvil/exp-round-14",
+  "scaffold_commit_sha": "4ebf1d41de69152a7f26c2048c380e504ac4d674",
+  "parent_commit_sha": "4ebf1d41de69152a7f26c2048c380e504ac4d674",
+  "decision": "noop",
+  "action_kind": "noop",
+  "parse_status": "ok_last_of_many",
+  "baseline_score": 0.9671875,
+  "score_delta_vs_parent": 0.0,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "Parent 0.9672; frontier 0.9688 (R4 brevity, +0.0016, in scaffold). Only summary_quality (0.934) has headroom (0.034); schema_adherence/output_json_valid at 1.0 have zero upside and real downside (R9 cosmetic output_schema.md edit -0.047 by dropping 1 row to 0/0/0 on both). Four summary_quality sub-criteria mined: conciseness R4 KEEP +0.0016; completeness/coverage R1 REVERT -0.106 (32k-truncation on finra_5210/5310); faithfulness no-invention R6 REVERT -0.105 (same cascade on finra_4512/5210); schema-sketch cosmetic brevity R9 REVERT -0.047. Only unmined sub-criterion is accuracy, but every content path (normative-obligation phrasing, defined-term capitalization, additional verbatim-quoting) was tried in R1 or structurally overlaps section_summary.md's 'preserves key legal terms, rule cross-references, dates, thresholds, and party names verbatim' bullet - added length pressure reliably reproduces the R1/R6 truncation cascade. Edits to hierarchy/citations/exclusions/identity target judges already at 1.0 or clash with section_summary (R9 proved cosmetic structural edits fragile). Sampling exhausted: R3 T=0.0 noop; lowering max_tokens reinvites truncation; top_p narrowing at T=0.1 has no mechanism; max_tool_calls=0 with empty tools has no mechanism. delete_rule on no_repeat_failed_mutations.md (applies_to: optimizer) has zero runtime effect. Adding a new skill/rule reproduces the legacy R6 clash pattern (-0.194). EV: 1 kept gain +0.0016 vs 3 reverts avg -0.086 (54x downside). R7/R8/R10/R11/R12 reached same conclusion. Noop preserves R4 frontier (0.9688) and a clean parent for a round when per-example sub-criterion telemetry or model outputs become available to localize the accuracy leak. R13 noop was rejected on >2000-char rationale; this one is bounded under the limit.",
+  "optimizer_run": null,
+  "optimizer_session_url": null,
+  "frontier_best": null
+}

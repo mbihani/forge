@@ -1,0 +1,210 @@
+{
+  "round_id": 3,
+  "branch": "anvil/exp-round-3",
+  "scaffold_commit_sha": "a3d2134d683e73b83d7df344a3ea24b4a2600591",
+  "parent_commit_sha": "f1f1c52769316982a29125a566a84311be46b497",
+  "decision": "revert",
+  "action_kind": "change_sampling",
+  "parse_status": "ok_last_of_many",
+  "baseline_score": 0.9671875,
+  "score_delta_vs_parent": 0.0,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "Only non-perfect judge is summary_quality=0.934 (headroom ~0.033) and the parent eval still exposes no per-example telemetry, so a content-level mutation is a shot in the dark. Round 1's edit_skill on section_summary.md (coverage + no-paraphrase + normative-obligation nudges) proved that any directional content push on this scaffold inflates output length and regresses all three judges by ~0.11 \u2014 one example truncated to 0/0/0. Round 2 therefore noop'd, declaring sampling 'exhausted' at T=0.1; that's an over-statement. The task is deterministic structured JSON extraction \u2014 greedy decoding (T=0.0) is the canonical setting, strictly more deterministic than 0.1, and it (a) adds no new instruction surface so cannot clash with hierarchy/section_summary/citations/exclusions/output_schema the way the Round-6-class skill addition did (\u22120.194 in the legacy run), and (b) does not increase average output length, so it cannot reproduce the Round-1 truncation failure. Expected effect: picks the mode of the token distribution on quoted phrases and legal-term verbatim preservation, which maps to the faithfulness and accuracy sub-criteria of summary_quality. Predicted \u0394: +0.000 to +0.015 on summary_quality (aggregate ~0.967 \u2192 0.967\u20130.98); worst case is a true no-op if the Databricks endpoint already treats near-zero temperatures identically, in which case we've still cleanly eliminated one lever at zero risk.",
+  "optimizer_run": null,
+  "optimizer_session_url": null,
+  "frontier_best": {
+    "summary_quality": 0.934375,
+    "schema_adherence": 1.0,
+    "output_json_valid": 1.0,
+    "aggregate": 0.9671875
+  },
+  "evaluated_at": "2026-10-02T17:39:17+00:00",
+  "n_examples": 20,
+  "mode": "full",
+  "scorers": [
+    "output_json_valid",
+    "schema_adherence",
+    "summary_quality"
+  ],
+  "aggregate": 0.9671875,
+  "per_judge": {
+    "summary_quality": 0.934375,
+    "schema_adherence": 1.0,
+    "output_json_valid": 1.0
+  },
+  "per_bucket": {
+    "finra": {
+      "summary_quality": 0.934375,
+      "schema_adherence": 1.0,
+      "output_json_valid": 1.0,
+      "aggregate": 0.9671875
+    }
+  },
+  "cost_metrics": {
+    "n_rows": 20.0
+  },
+  "failures": [
+    {
+      "example_id": "finra_1210",
+      "query": "1210. Registration Requirements",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_1220",
+      "query": "1220. Registration Categories",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.8125
+      }
+    },
+    {
+      "example_id": "finra_2111",
+      "query": "2111. Suitability",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_2210",
+      "query": "2210. Communications with the Public",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.8125
+      }
+    },
+    {
+      "example_id": "finra_2360",
+      "query": "2360. Options",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.875
+      }
+    },
+    {
+      "example_id": "finra_3110",
+      "query": "3110. Supervision",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.875
+      }
+    },
+    {
+      "example_id": "finra_3210",
+      "query": "3210. Accounts At Other Broker-Dealers and Financial Institutions",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_3220",
+      "query": "3220. Influencing or Rewarding Employees of Others",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_4512",
+      "query": "4512. Customer Account Information",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_4530",
+      "query": "4530. Reporting Requirements",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_5130",
+      "query": "5130. Restrictions on the Purchase and Sale of Initial Equity Public Offerings",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_5210",
+      "query": "5210. Publication of Transactions and Quotations",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_5310",
+      "query": "5310. Best Execution and Interpositioning",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_8210",
+      "query": "8210. Provision of Information and Testimony and Inspection and Copying of Books",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.875
+      }
+    }
+  ],
+  "trace_ids": [],
+  "mlflow": {
+    "run_id": "",
+    "experiment_id": "1"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "round_id": 8,
+  "branch": "anvil/exp-round-8",
+  "scaffold_commit_sha": "4ebf1d41de69152a7f26c2048c380e504ac4d674",
+  "parent_commit_sha": "4ebf1d41de69152a7f26c2048c380e504ac4d674",
+  "decision": "noop",
+  "action_kind": "noop",
+  "parse_status": "ok_last_of_many",
+  "baseline_score": 0.9671875,
+  "score_delta_vs_parent": 0.0,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "Parent baseline 0.9672; frontier 0.9688 (Round 4, +0.0016 brevity nudge). Only summary_quality (0.934) has headroom (0.033) spread across 14 examples at 0.8125-0.9375 with no per-sub-criterion telemetry. Three section_summary.md content edits exhausted: R1 completeness/coverage push -0.106 (2 rows 32k-truncated to 0/0/0); R4 brevity +0.0016 (KEPT = conciseness lever consumed); R6 faithfulness no-invention -0.105 (2 rows truncated to 0/0/0 again). The only unaddressed sub-criteria are accuracy and completeness, and R1 attempted exactly those and triggered the catastrophic length-inflation cascade. Sampling exhausted: R3 T=0.0 was noop; R1 T=0.7->0.2 regressed; max_tokens up is noop today, max_tokens down invites R1-style truncation; top_p/tool_choice/max_tool_calls have no sentence-level mechanism. Edits to hierarchy/citations/exclusions/output_schema/identity target judges already at 1.0 (schema_adherence, output_json_valid) with zero upside and real downside; identity.md is required+kind:identity and will fail composer on structural change. Adding a new skill or rule risks the Round-6-legacy clash pattern (-0.194) since any content it would carry overlaps section_summary. delete_skill is out: every active skill is required:true and removing structural ones (hierarchy, citations, output_schema) would drop the perfect judges. Expected-value math: single kept gain +0.0016 vs two -0.105 reverts; another untargeted content edit has EV << 0. Noop preserves the R4 frontier (0.9688) and a clean parent commit for the next round when either (a) per-example sub-criterion telemetry or (b) actual model outputs become available to localize the leak.",
+  "optimizer_run": null,
+  "optimizer_session_url": null,
+  "frontier_best": null
+}
