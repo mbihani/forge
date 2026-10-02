@@ -621,3 +621,81 @@ def test_task_finally_close_failure_does_not_mask_real_error(
         assert closed == [True]
     finally:
         app_mod._sessions.pop(session_id, None)
+
+
+def test_task_finally_close_is_shielded_from_cancellation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cancellation arriving while the task runs must NOT abort the
+    finally-block parent-run close: the close is SHIELDED so it runs to
+    completion, and cancellation is NOT suppressed — ``CancelledError`` still
+    propagates afterward (the task ends cancelled).
+
+    Reverting the shield makes the cancellation abort the close await before
+    it completes (``closed`` stays empty) — this test bites that.
+    """
+    import asyncio
+    import threading
+    import time
+
+    from anvil.orchestrator import app as app_mod
+
+    started = threading.Event()
+    closed: list[bool] = []
+
+    def _blocking_round(**_kwargs: object) -> None:
+        # Signal that the task is inside the (cancellable) round await, then
+        # block briefly so the test can cancel the task at this await point.
+        started.set()
+        time.sleep(0.3)
+
+    def _slow_close() -> None:
+        # Non-trivial so "ran to completion" is observable; must finish even
+        # though the surrounding task is being cancelled (shield).
+        time.sleep(0.05)
+        closed.append(True)
+
+    class _Sink:
+        run_id = "run-1"
+        experiment_id = "exp-1"
+        close = staticmethod(_slow_close)
+
+    monkeypatch.setattr(app_mod, "_ensure_parent_branch", lambda *_a, **_k: None)
+    monkeypatch.setattr(app_mod, "_build_baseline_sync", lambda *_a, **_k: {"aggregate": 0.5})
+    monkeypatch.setattr(app_mod, "_open_optimizer_sink_sync", lambda *_a, **_k: _Sink())
+    monkeypatch.setattr(app_mod, "run_round", _blocking_round)
+
+    session_id = "sess-cancel-shield"
+    app_mod._sessions[session_id] = app_mod.SessionData(
+        session_id=session_id,
+        repo_url="https://example/repo",
+        repo_path=tmp_path,
+        status="optimizing",
+        validation={},
+        config={},
+        baseline=None,
+        rounds=[],
+        frontier=None,
+        finalized=None,
+        error=None,
+    )
+
+    async def _drive() -> None:
+        task = asyncio.create_task(
+            app_mod._run_optimization_task(session_id, None, max_rounds=1, max_turns=1)
+        )
+        # Wait until the task is parked inside the round await, then cancel.
+        while not started.is_set():
+            await asyncio.sleep(0.01)
+        task.cancel()
+        # Cancellation must NOT be suppressed — it propagates after the
+        # shielded close completes.
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    try:
+        asyncio.run(_drive())
+        # The shielded close ran to completion despite the cancellation.
+        assert closed == [True]
+    finally:
+        app_mod._sessions.pop(session_id, None)
