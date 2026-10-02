@@ -288,6 +288,11 @@ class SessionData:
     optimizer_run_id: str | None = None
     optimizer_experiment_id: str | None = None
     optimizer_session_url: str | None = None
+    # Session start timestamp, captured when the optimize task opens the
+    # parent run. Reused VERBATIM in both the task-end summary and the
+    # finalize re-log so the re-logged (held-out) summary preserves the
+    # original start time instead of blanking it.
+    optimizer_started_at: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -1577,6 +1582,9 @@ async def _run_optimization_task(
     request handler) so a git failure sets the session to ``error``
     instead of leaving it stuck in ``building_baseline``.
     """
+    # Initialized before the try so the ``finally`` can always terminate the
+    # parent run even if the task raises before/after the sink is opened.
+    sink: OptimizerArtifactSink | None = None
     try:
         sess = _get_session(session_id)
         if sess is None:
@@ -1614,6 +1622,9 @@ async def _run_optimization_task(
             with _session_lock:
                 sess.optimizer_run_id = sink.run_id
                 sess.optimizer_experiment_id = sink.experiment_id
+                # Retained for the finalize re-log so it preserves this exact
+                # started_at rather than blanking it.
+                sess.optimizer_started_at = started_at
         # Rounds — each in its own thread-pool call so the event loop can
         # update status + the rounds list between rounds.
         for i in range(1, max_rounds + 1):
@@ -1651,12 +1662,13 @@ async def _run_optimization_task(
                 last_url = sess.rounds[-1].get("optimizer_session_url")
                 if last_url:
                     sess.optimizer_session_url = last_url
-        # Persist the run-level IMPROVEMENT SUMMARY to the parent run, then
-        # terminate it. Fully best-effort (``persist_improvement_summary``
-        # and ``close`` swallow failures) so a dead sink never fails the
-        # optimize task. ``finalized`` is normally None here (finalize is a
-        # separate endpoint); when it later runs, it re-logs an updated
-        # summary with the held-out aggregate to the same run.
+        # Persist the run-level IMPROVEMENT SUMMARY to the parent run (the
+        # terminate is deferred to the ``finally`` so the run is always
+        # closed even on a task failure). Fully best-effort
+        # (``persist_improvement_summary`` swallows failures) so a dead sink
+        # never fails the optimize task. ``finalized`` is normally None here
+        # (finalize is a separate endpoint); when it later runs, it re-logs
+        # an updated summary with the held-out aggregate to the same run.
         if sink is not None:
             finished_at = datetime.now(UTC).isoformat(timespec="seconds")
             backend = _resolve_optimizer_backend(sess)
@@ -1679,7 +1691,6 @@ async def _run_optimization_task(
                     baseline=sess.baseline,
                 )
             )
-            await anyio.to_thread.run_sync(sink.close)
     except Exception as exc:  # noqa: BLE001 — surface any failure
         with _session_lock:
             sess = _get_session(session_id)
@@ -1687,7 +1698,12 @@ async def _run_optimization_task(
                 sess.status = "error"
                 sess.error = str(exc)
         logger.exception("optimization task for session %s failed", session_id)
-        logger.exception("optimization task for session %s failed", session_id)
+    finally:
+        # Always terminate the parent run so a failure elsewhere in the task
+        # does not leave it indefinitely RUNNING. Best-effort — ``close``
+        # swallows any MLflow error.
+        if sink is not None:
+            await anyio.to_thread.run_sync(sink.close)
 
 
 # ---------------------------------------------------------------------------
@@ -2255,7 +2271,9 @@ def _relog_summary_after_finalize_sync(sess: SessionData) -> None:
             sess,
             backend=_resolve_optimizer_backend(sess),
             mode=(sess.config or {}).get("mode"),
-            started_at="",
+            # Preserve the ORIGINAL session start (captured when the run
+            # opened) so the held-out re-log does not blank it.
+            started_at=sess.optimizer_started_at or "",
             finished_at=datetime.now(UTC).isoformat(timespec="seconds"),
         )
         persist_improvement_summary(

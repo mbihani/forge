@@ -219,6 +219,54 @@ def test_render_improvement_summary_md_is_tabular() -> None:
     assert "kept 1 · reverted 1 · noop 1 · infra_fail 0" in md
 
 
+def test_final_aggregate_fallback_uses_last_kept_not_last_round() -> None:
+    """Without finalized/frontier, the 'final' aggregate must reflect the
+    RETAINED agent — the last KEPT round — NOT a later reverted candidate
+    whose mutation was discarded.
+
+    Rounds: R1 KEEP@0.60, R2 REVERT@0.70 (a tempting-but-discarded higher
+    score). The retained agent is R1's 0.60, so net = 0.60 - 0.50 = +0.10.
+    If the fallback naively took the last evaluated round it would report
+    0.70 / +0.20 — the bite this test guards.
+    """
+    rounds = [
+        {"round_id": 1, "decision": "keep", "action_kind": "edit_skill",
+         "baseline_score": 0.50, "aggregate": 0.60, "score_delta_vs_parent": 0.10},
+        {"round_id": 2, "decision": "revert", "action_kind": "edit_rule",
+         "baseline_score": 0.60, "aggregate": 0.70, "score_delta_vs_parent": 0.10},
+    ]
+    summary = build_improvement_summary(
+        session_meta={},
+        rounds=rounds,
+        frontier=None,
+        finalized=None,
+        baseline={"aggregate": 0.50},
+    )
+    assert summary["final_aggregate"] == 0.60
+    assert summary["net_improvement"] == pytest.approx(0.10)
+
+
+def test_final_aggregate_fallback_all_reverted_is_baseline() -> None:
+    """When NO round was kept (all reverted/noop/infra_fail) and there is no
+    finalized/frontier data, the agent is still the baseline: final ==
+    baseline and net_improvement == 0 — never a discarded candidate's score."""
+    rounds = [
+        {"round_id": 1, "decision": "revert", "action_kind": "edit_skill",
+         "baseline_score": 0.50, "aggregate": 0.70, "score_delta_vs_parent": 0.20},
+        {"round_id": 2, "decision": "infra_fail", "action_kind": "noop",
+         "baseline_score": 0.50, "aggregate": None, "score_delta_vs_parent": None},
+    ]
+    summary = build_improvement_summary(
+        session_meta={},
+        rounds=rounds,
+        frontier=None,
+        finalized=None,
+        baseline={"aggregate": 0.50},
+    )
+    assert summary["final_aggregate"] == 0.50
+    assert summary["net_improvement"] == 0.0
+
+
 # ---------------------------------------------------------------------------
 # (c) best-effort guard
 # ---------------------------------------------------------------------------
@@ -439,3 +487,60 @@ def test_persistence_experiment_overrides_experiments_optimizer(tmp_path: Path) 
     )
     _, experiment = resolve_persistence_settings(scaffold)
     assert experiment == "/Shared/custom-opt"
+
+
+# ---------------------------------------------------------------------------
+# finalize re-log preserves the ORIGINAL session start metadata
+# ---------------------------------------------------------------------------
+
+
+def test_finalize_relog_preserves_started_at(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The held-out summary re-logged at finalize must preserve the original
+    ``started_at`` (captured at task start into SessionData), not blank it.
+
+    Reverting the fix (passing ``started_at=""``) makes this fail: the
+    re-logged ``improvement_summary.json`` would carry an empty start time.
+    """
+    from anvil.orchestrator import app as app_mod
+
+    recording = _RecordingClient()
+
+    def _fake_bind(**kwargs: object) -> OptimizerArtifactSink:
+        return OptimizerArtifactSink(
+            client=recording,
+            run_id=str(kwargs["run_id"]),
+            experiment_id=str(kwargs["experiment_id"]),
+        )
+
+    monkeypatch.setattr(app_mod.OptimizerArtifactSink, "bind", staticmethod(_fake_bind))
+
+    start_ts = "2026-10-02T00:00:00+00:00"
+    sess = app_mod.SessionData(
+        session_id="s1",
+        repo_url="https://example/repo",
+        repo_path=tmp_path,
+        status="finalized",
+        validation={},
+        config={},
+        baseline={"aggregate": 0.50},
+        rounds=[
+            {"round_id": 1, "decision": "keep", "action_kind": "edit_skill",
+             "baseline_score": 0.50, "aggregate": 0.60, "score_delta_vs_parent": 0.10},
+        ],
+        frontier=None,
+        finalized={"aggregate": 0.58},
+        error=None,
+        optimizer_run_id="run-1",
+        optimizer_experiment_id="exp-1",
+        optimizer_started_at=start_ts,
+    )
+
+    app_mod._relog_summary_after_finalize_sync(sess)
+
+    by_path = {c[2]: c[1] for c in recording.texts}
+    summary = json.loads(by_path["improvement_summary.json"])
+    assert summary["session"]["started_at"] == start_ts
+    # The held-out net improvement is also present (finalized aggregate used).
+    assert summary["net_improvement"] == pytest.approx(0.08)
