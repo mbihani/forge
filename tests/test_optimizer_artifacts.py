@@ -544,3 +544,80 @@ def test_finalize_relog_preserves_started_at(
     assert summary["session"]["started_at"] == start_ts
     # The held-out net improvement is also present (finalized aggregate used).
     assert summary["net_improvement"] == pytest.approx(0.08)
+
+
+# ---------------------------------------------------------------------------
+# finally-block parent-run close must never mask the real task outcome
+# ---------------------------------------------------------------------------
+
+
+def test_task_finally_close_failure_does_not_mask_real_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When a round raises AND the finally-block ``sink.close`` ALSO raises,
+    ``_run_optimization_task`` must still complete normally (no exception
+    escapes) and record the REAL failure (the round error) — the close error
+    must be swallowed, never mask the outcome.
+
+    Reverting the close guard (removing the try/except around
+    ``anyio.to_thread.run_sync(sink.close)``) makes the close exception
+    escape the finally, so the task raises instead of recording the round
+    error — this test bites that.
+    """
+    import asyncio
+
+    from anvil.orchestrator import app as app_mod
+
+    class _ClosesBoom:
+        run_id = "run-1"
+        experiment_id = "exp-1"
+
+        def close(self) -> None:
+            raise RuntimeError("close boom")
+
+    closed: list[bool] = []
+
+    def _fake_close() -> None:
+        closed.append(True)
+        raise RuntimeError("close boom")
+
+    sink = _ClosesBoom()
+    sink.close = _fake_close  # type: ignore[method-assign]
+
+    monkeypatch.setattr(app_mod, "_ensure_parent_branch", lambda *_a, **_k: None)
+    monkeypatch.setattr(app_mod, "_build_baseline_sync", lambda *_a, **_k: {"aggregate": 0.5})
+    monkeypatch.setattr(app_mod, "_open_optimizer_sink_sync", lambda *_a, **_k: sink)
+
+    def _boom_round(**_kwargs: object) -> None:
+        raise RuntimeError("round boom")
+
+    monkeypatch.setattr(app_mod, "run_round", _boom_round)
+
+    session_id = "sess-close-guard"
+    app_mod._sessions[session_id] = app_mod.SessionData(
+        session_id=session_id,
+        repo_url="https://example/repo",
+        repo_path=tmp_path,
+        status="optimizing",
+        validation={},
+        config={},
+        baseline=None,
+        rounds=[],
+        frontier=None,
+        finalized=None,
+        error=None,
+    )
+    try:
+        # Must NOT raise — the close error is swallowed in the finally.
+        asyncio.run(
+            app_mod._run_optimization_task(session_id, None, max_rounds=1, max_turns=1)
+        )
+        sess = app_mod._sessions[session_id]
+        # The REAL failure (the round error) is what the session records.
+        assert sess.status == "error"
+        assert "round boom" in (sess.error or "")
+        assert "close boom" not in (sess.error or "")
+        # The finally-block close was attempted (and its exception swallowed).
+        assert closed == [True]
+    finally:
+        app_mod._sessions.pop(session_id, None)

@@ -1700,10 +1700,20 @@ async def _run_optimization_task(
         logger.exception("optimization task for session %s failed", session_id)
     finally:
         # Always terminate the parent run so a failure elsewhere in the task
-        # does not leave it indefinitely RUNNING. Best-effort — ``close``
-        # swallows any MLflow error.
+        # does not leave it indefinitely RUNNING. The close is itself fully
+        # guarded here: ``sink.close`` swallows MLflow errors internally, but
+        # the thread dispatch (or a future sink error / cancellation) must
+        # NEVER escape the finally and mask the original task failure, so wrap
+        # the whole await too. Best-effort — a close failure is only warned.
         if sink is not None:
-            await anyio.to_thread.run_sync(sink.close)
+            try:
+                await anyio.to_thread.run_sync(sink.close)
+            except Exception as close_exc:  # noqa: BLE001 — never mask the real outcome
+                logger.warning(
+                    "optimization task for session %s: parent-run close failed: %s",
+                    session_id,
+                    close_exc,
+                )
 
 
 # ---------------------------------------------------------------------------
