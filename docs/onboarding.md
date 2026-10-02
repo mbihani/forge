@@ -321,6 +321,38 @@ without hand-writing a scorer.
 
 ---
 
+## 12. Seeing the optimization activity — per-round eval traces
+
+forge arms MLflow tracing for **every** engine before it dispatches
+(`evaluate_branch` → `anvil.observability.setup_eval_tracing`): it selects the
+eval experiment (`experiments.eval`, default `/Shared/anvil-eval`) and enables
+`mlflow.openai.autolog`. Because the gateway client (`build_gateway_client`) is
+openai-backed, **any** `chat.completions.create` your engine makes is captured
+as a `CHAT_MODEL` span in that experiment — no engine code required.
+
+For a clean **one-trace-per-row** view (the summarize call, the judge call,
+etc. grouped under a single tagged trace), wrap each row in the helper:
+
+```python
+from anvil.observability import eval_row_trace
+
+def _predict_and_score(row):
+    with eval_row_trace(
+        example_id=row["example_id"], query=row["query"],
+        scaffold_root=scaffold_path, runtime_endpoint=model,
+    ):
+        ...  # your gateway calls autolog as sub-spans under this root CHAIN span
+```
+
+The runner passes `trace_rows=True` to your engine when tracing is armed (absorb
+it via `**_kwargs`, or declare it and gate the wrap on it so direct/unit calls
+stay untraced). Traces are tagged `source=eval` + `scaffold_branch` /
+`scaffold_commit_sha`, so a round's traces are identifiable by its
+`anvil/round-N` branch. Record the eval `experiment_id` on your `EvalReport`
+(best-effort `mlflow.get_experiment_by_name(config.experiments.eval)`) so the
+report points at where the traces landed. See `anvil.domains.pitcrew.eval` for
+the worked adoption.
+
 ## See also
 
 - `CLAUDE.md` — the invariants (plane separation, immutable `harness/config.yaml`).
