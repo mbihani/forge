@@ -1,7 +1,7 @@
 {
-  "scaffold_commit_sha": "357816c3cce23e54aaa99d788ba387d385fd6bee",
-  "evaluated_at": "2026-10-02T14:30:19+00:00",
-  "mode": "quick",
+  "scaffold_commit_sha": "8a5eeb5323c98330dcb18abdc2e9f722dfe52872",
+  "evaluated_at": "2026-10-02T16:56:50+00:00",
+  "mode": "full",
   "scorers": [
     "output_json_valid",
     "schema_adherence",
@@ -9,24 +9,24 @@
   ],
   "runtime_endpoint": "databricks-claude-sonnet-4-6",
   "judge_endpoint": "databricks-claude-sonnet-4-6",
-  "aggregate": 0.96875,
+  "aggregate": 0.9671875,
   "per_judge": {
-    "summary_quality": 0.9375,
+    "summary_quality": 0.934375,
     "schema_adherence": 1.0,
     "output_json_valid": 1.0
   },
   "per_bucket": {
     "finra": {
-      "summary_quality": 0.9375,
+      "summary_quality": 0.934375,
       "schema_adherence": 1.0,
       "output_json_valid": 1.0,
-      "aggregate": 0.96875
+      "aggregate": 0.9671875
     }
   },
-  "n_examples": 8,
+  "n_examples": 20,
   "mlflow_run_id": "",
   "scorer_fingerprint": "",
   "cost_metrics": {
-    "n_rows": 8.0
+    "n_rows": 20.0
   }
 }
