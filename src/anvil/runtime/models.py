@@ -185,6 +185,33 @@ class OptimizerBackendConfig(BaseModel):
     agent_bundle_path: str = "agents/forge_optimizer.yaml"
 
 
+class OptimizerPersistenceConfig(BaseModel):
+    """Schema of ``harness/config.yaml > persistence`` — durable optimizer
+    artifact sink toggle.
+
+    Controls whether an optimize session's per-round optimizer logs
+    (transcript + critique) and run-level improvement summary are durably
+    persisted to a parent MLflow run under ``experiments.optimizer``. All
+    fields are optional so a config WITHOUT the ``persistence:`` section
+    validates (backward compatible) — and ``enabled`` defaults to ``True``,
+    so persistence is ON by default. Read by the loop/orchestrator plane
+    (:func:`anvil.loop.optimizer_artifacts.resolve_persistence_settings`),
+    NOT merged into :class:`HarnessConfig` — like ``optimizer`` backend
+    selection, this is a loop/deployment concern.
+
+    The ``ANVIL_PERSIST_OPTIMIZER_ARTIFACTS`` env var is authoritative over
+    ``enabled`` (env wins when set), matching the ``ANVIL_OPTIMIZER_BACKEND``
+    precedence for the optimizer backend.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    # Experiment to attach the parent run to. When None, falls back to
+    # ``experiments.optimizer`` (then ``/Shared/anvil-optimizer``).
+    experiment: str | None = None
+
+
 class EvalModeConfig(BaseModel):
     rows: int
     buckets: dict[str, int] = Field(default_factory=dict)
@@ -496,6 +523,10 @@ class RuntimeYAML(BaseModel):
     eval: EvalConfig = Field(default_factory=EvalConfig)
     gate: GateConfig = Field(default_factory=GateConfig)
     optimizer: OptimizerBackendConfig = Field(default_factory=OptimizerBackendConfig)
+    # Durable optimizer-artifact persistence (per-round logs + run summary
+    # to MLflow). Optional + enabled-by-default so existing configs stay
+    # valid; a loop/orchestrator-plane concern, not merged into HarnessConfig.
+    persistence: OptimizerPersistenceConfig = Field(default_factory=OptimizerPersistenceConfig)
 
 
 class HarnessConfig(BaseModel):
@@ -548,6 +579,8 @@ RUNTIME_FIELDS: frozenset[str] = frozenset(
         "loop",
         "eval",
         "gate",
+        "optimizer",
+        "persistence",
     }
 )
 SCAFFOLD_FIELDS: frozenset[str] = frozenset({"sampling", "skills", "rules", "tools"})
