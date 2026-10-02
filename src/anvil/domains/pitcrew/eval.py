@@ -169,7 +169,13 @@ def evaluate_pitcrew(
         )
         with row_cm as span:
             try:
-                pdf_bytes = Path(row["pdf_path"]).read_bytes()
+                # Resolve a relative pdf_path against the repo root (scaffold's
+                # parent) so the vendored corpus works regardless of CWD — the
+                # golden set ships repo-relative paths for portability.
+                pdf_path = Path(row["pdf_path"])
+                if not pdf_path.is_absolute():
+                    pdf_path = scaffold_path.parent / pdf_path
+                pdf_bytes = pdf_path.read_bytes()
                 output = predict_fn(pdf_bytes)
             except Exception as exc:  # noqa: BLE001 - isolate per-row failures
                 logger.warning("summarize failed for %s: %s", row.get("example_id"), exc)
