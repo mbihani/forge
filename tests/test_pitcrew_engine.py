@@ -118,3 +118,40 @@ def test_engine_aggregates_injected_scores(tmp_golden: Path) -> None:
     assert 0.0 < report.aggregate < 1.0
     # Junk rows surface as failures.
     assert len(report.failures) == 4
+
+
+def test_engine_reports_summarize_latency(tmp_golden: Path) -> None:
+    """cost_metrics carries the latency Pareto objective's source metric."""
+    good_text = json.dumps(_GOOD)
+
+    def predict_fn(pdf_bytes: bytes) -> str:  # noqa: ARG001
+        return good_text
+
+    report = evaluate_pitcrew(
+        scaffold_root=REPO_ROOT / "scaffold",
+        runtime_config_path=REPO_ROOT / "harness" / "config.yaml",
+        golden_set_path=tmp_golden,
+        mode="quick",
+        predict_fn=predict_fn,
+        judge_fn=lambda doc_block, summary_text: 1.0,  # noqa: ARG005
+    )
+    cm = report.cost_metrics
+    assert cm["n_rows"] == 8.0
+    assert 0.0 <= cm["latency_ms_median"] <= cm["latency_ms_p90"]
+    assert cm["latency_ms_mean"] >= 0.0
+    assert cm["output_chars_mean"] == pytest.approx(len(good_text))
+
+
+def test_engine_omits_latency_when_every_summarize_fails(tmp_golden: Path) -> None:
+    def predict_fn(pdf_bytes: bytes) -> str:  # noqa: ARG001
+        raise RuntimeError("gateway down")
+
+    report = evaluate_pitcrew(
+        scaffold_root=REPO_ROOT / "scaffold",
+        runtime_config_path=REPO_ROOT / "harness" / "config.yaml",
+        golden_set_path=tmp_golden,
+        mode="quick",
+        predict_fn=predict_fn,
+        judge_fn=lambda doc_block, summary_text: 1.0,  # noqa: ARG005
+    )
+    assert "latency_ms_median" not in report.cost_metrics

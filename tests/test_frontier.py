@@ -631,7 +631,12 @@ def test_real_harness_config_parses_with_gate() -> None:
     cfg = RuntimeYAML.model_validate(raw)
     assert cfg.gate.type == "frontier"
     assert cfg.gate.epsilon == 0.0
-    assert cfg.gate.pareto == ParetoConfig(enabled=False)
+    # anvil/latency: latency is the target, the aggregate a noise-tolerant guardrail.
+    assert cfg.gate.pareto.enabled
+    assert [(o.name, o.direction, o.source) for o in cfg.gate.pareto.objectives] == [
+        ("latency", "minimize", "latency"),
+        ("quality", "maximize", "aggregate"),
+    ]
 
 
 def test_gate_config_parses_structured_pareto_objectives() -> None:

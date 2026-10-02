@@ -237,8 +237,21 @@ gate:
   epsilon: 0.0
   # Multi-objective optimization (only used when type: frontier). Disabled
   # preserves the single aggregate objective used by older configurations.
+  # Latency session: minimize the summarizer's median per-doc wall-clock
+  # while quality (the aggregate) may not regress by more than the judge
+  # noise band. One invalid-JSON doc costs > 0.01 aggregate, so a
+  # truncation-driven speedup still reverts.
   pareto:
-    enabled: false
+    enabled: true
+    objectives:
+      - name: latency
+        direction: minimize
+        source: latency
+        epsilon: 2000.0   # ms; gateway wall-clock noise band
+      - name: quality
+        direction: maximize
+        source: aggregate
+        epsilon: 0.01
     # Example:
     # objectives:
     #   - name: quality

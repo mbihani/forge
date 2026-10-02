@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import nullcontext, suppress
 from datetime import UTC, datetime
@@ -96,6 +97,20 @@ def _macro(rows_scores: list[dict[str, float]]) -> dict[str, float]:
             if k in s:
                 acc[k].append(s[k])
     return {k: (sum(v) / len(v) if v else 0.0) for k, v in acc.items()}
+
+
+def _median(sorted_vals: list[float]) -> float:
+    n = len(sorted_vals)
+    mid = n // 2
+    return sorted_vals[mid] if n % 2 else (sorted_vals[mid - 1] + sorted_vals[mid]) / 2
+
+
+def _percentile(sorted_vals: list[float], q: float) -> float:
+    """Nearest-rank percentile of an already-sorted list (q in [0, 1])."""
+    if not sorted_vals:
+        return 0.0
+    idx = min(len(sorted_vals) - 1, int(round(q * (len(sorted_vals) - 1))))
+    return sorted_vals[idx]
 
 
 def evaluate_pitcrew(
@@ -176,10 +191,14 @@ def evaluate_pitcrew(
                 if not pdf_path.is_absolute():
                     pdf_path = scaffold_path.parent / pdf_path
                 pdf_bytes = pdf_path.read_bytes()
+                # Wall-clock of the summarize call only (judge excluded) — the
+                # latency Pareto objective reads the median of these.
+                t0 = time.perf_counter()
                 output = predict_fn(pdf_bytes)
+                latency_ms: float | None = (time.perf_counter() - t0) * 1000.0
             except Exception as exc:  # noqa: BLE001 - isolate per-row failures
                 logger.warning("summarize failed for %s: %s", row.get("example_id"), exc)
-                output, pdf_bytes = "", b""
+                output, pdf_bytes, latency_ms = "", b"", None
             parsed = extract_json(output)
             json_valid = score_json_valid(parsed)
             scores: dict[str, float] = {
@@ -204,6 +223,8 @@ def evaluate_pitcrew(
             "query": row["query"],
             "category": row["category"],
             "scores": scores,
+            "latency_ms": latency_ms,
+            "n_chars": len(output),
         }
 
     results: list[dict[str, Any] | None] = [None] * len(selected)
@@ -258,6 +279,21 @@ def evaluate_pitcrew(
         except Exception as exc:  # noqa: BLE001 - best-effort observability
             logger.warning("could not resolve eval experiment id: %s", exc)
 
+    # Cost metrics: row count always; latency stats over rows whose summarize
+    # call succeeded. The latency Pareto objective reads latency_ms_median
+    # (robust to the 10-page rule's slow tail); output_chars_mean is the
+    # low-noise proxy for decode time the optimizer can actually move.
+    cost_metrics: dict[str, float] = {"n_rows": float(len(scored_rows))}
+    latencies = sorted(r["latency_ms"] for r in scored_rows if r.get("latency_ms") is not None)
+    if latencies:
+        cost_metrics["latency_ms_median"] = _median(latencies)
+        cost_metrics["latency_ms_mean"] = sum(latencies) / len(latencies)
+        cost_metrics["latency_ms_p90"] = _percentile(latencies, 0.90)
+    if scored_rows:
+        cost_metrics["output_chars_mean"] = sum(r["n_chars"] for r in scored_rows) / len(
+            scored_rows
+        )
+
     return EvalReport(
         aggregate=aggregate,
         per_judge=per_judge,
@@ -270,6 +306,6 @@ def evaluate_pitcrew(
         scorers=sorted(per_judge.keys()),
         evaluated_at=datetime.now(UTC).isoformat(timespec="seconds"),
         trace_ids=[],
-        cost_metrics={"n_rows": float(len(scored_rows))},
+        cost_metrics=cost_metrics,
         scorer_fingerprint="",
     )

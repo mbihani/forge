@@ -128,10 +128,14 @@ def run_round(
     branch = create_round_branch(repo_root, round_id, parent_branch=parent_branch)
 
     # 2. Build prompt and run the optimizer session.
+    prompt_gate_cfg = load_gate_config(scaffold_root)
     prompt = build_round_prompt(
         repo_root=repo_root,
         round_id=round_id,
         baseline=asdict_baseline(baseline) if baseline else None,
+        objectives=(
+            prompt_gate_cfg.pareto.objectives or None if prompt_gate_cfg.pareto.enabled else None
+        ),
     )
 
     # NOTE: optimizer-side MLflow tracing is intentionally disabled for

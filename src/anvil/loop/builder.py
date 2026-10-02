@@ -22,6 +22,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from anvil.runtime.models import ParetoObjective
+
 _PROMPT_TEMPLATE = """\
 # Round {round_id}
 
@@ -39,6 +41,10 @@ The most-failed examples in the parent run (read the full list in
 ``{baseline_failures_path}``):
 
 {failures_summary}
+
+## Gate objectives
+
+{objectives_block}
 
 ## What you must do
 
@@ -65,6 +71,7 @@ def build_round_prompt(
     round_id: int,
     baseline: dict | None,
     critique_lookback: int = 3,
+    objectives: list[ParetoObjective] | None = None,
 ) -> str:
     repo_root = Path(repo_root)
 
@@ -95,6 +102,7 @@ def build_round_prompt(
         failures_summary = _failure_summary_from_baseline(baseline)
 
     critiques_block = _format_critiques(repo_root, critique_lookback)
+    objectives_block = _format_objectives(repo_root, baseline, objectives)
 
     return _PROMPT_TEMPLATE.format(
         round_id=round_id,
@@ -106,6 +114,7 @@ def build_round_prompt(
         per_bucket_correctness=per_bucket_str,
         baseline_failures_path=baseline_failures_path,
         failures_summary=failures_summary,
+        objectives_block=objectives_block,
         critique_lookback=critique_lookback,
         critiques_block=critiques_block,
     )
@@ -118,6 +127,58 @@ def _failure_summary_from_baseline(baseline: dict) -> str:
         worst = min(scores.items(), key=lambda kv: kv[1])
         lines.append(f"  - {bucket}: worst judge = {worst[0]}={worst[1]:.2f}")
     return "\n".join(lines) if lines else "  (no per-bucket data)"
+
+
+def _format_objectives(
+    repo_root: Path, baseline: dict | None, objectives: list[ParetoObjective] | None
+) -> str:
+    """Describe what the gate keeps on, so the optimizer targets it.
+
+    Without Pareto objectives the gate is single-objective on the
+    aggregate. With them, list each objective's direction + tolerance
+    alongside the baseline value and the best-so-far from
+    ``eval/runs/frontier.json`` (the gate compares against the frontier,
+    not the frozen baseline).
+    """
+    if not objectives:
+        return "- aggregate (maximize): the only objective the gate keeps on."
+    cost_metrics = (baseline or {}).get("cost_metrics") or {}
+    frontier_path = repo_root / "eval" / "runs" / "frontier.json"
+    best = _read_json(frontier_path).get("best", {}) if frontier_path.is_file() else {}
+    lines = [
+        "A mutation is KEPT only if at least one objective improves by more "
+        "than its epsilon AND no objective regresses by more than its epsilon:",
+        "",
+    ]
+    for obj in objectives:
+        metric = "aggregate" if obj.source == "aggregate" else _COST_METRIC[obj.source]
+        base = baseline.get("aggregate") if baseline and obj.source == "aggregate" else None
+        if base is None:
+            base = cost_metrics.get(metric)
+        eps = "gate default" if obj.epsilon is None else f"{obj.epsilon:g}"
+        lines.append(
+            f"- {obj.name} ({obj.direction} {metric}; epsilon={eps}): "
+            f"baseline={_fmt(base)}, best-so-far={_fmt(best.get(obj.name))}"
+        )
+    if cost_metrics:
+        lines += ["", "Baseline cost metrics: " + ", ".join(
+            f"{k}={_fmt(v)}" for k, v in sorted(cost_metrics.items())
+        )]
+    return "\n".join(lines)
+
+
+_COST_METRIC = {
+    "tokens": "total_tokens",
+    "context_chars": "total_context_chars",
+    "n_rows": "n_rows",
+    "latency": "latency_ms_median",
+}
+
+
+def _fmt(v: object) -> str:
+    if not isinstance(v, (int, float)):
+        return "n/a"
+    return f"{v:.0f}" if abs(v) >= 1000 else f"{v:.4g}"
 
 
 def _format_critiques(repo_root: Path, k: int) -> str:
