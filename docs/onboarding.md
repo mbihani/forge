@@ -14,6 +14,28 @@ convention.
 
 ---
 
+## How you drive forge (three surfaces)
+
+forge has **no Claude Code slash command or prompt** that runs an optimization —
+you drive it one of three ways. Only the web wizard is guided step-by-step; the
+REST API and the scripts are fire-and-forget (one kickoff runs all rounds
+autonomously, and the frontier gate decides keep/revert without asking you).
+
+| Surface | What it is | Guided? |
+|---|---|---|
+| **Web wizard** | The `forge-orchestrator` Databricks App's single-page UI: select repo → compatibility check → configure → **Start** → watch progress → **Finalize** | ✅ Yes — waits between steps 1–3 |
+| **REST API** | `POST /api/session` → `POST /optimize` → poll `GET /api/session/{id}` → `POST /finalize` | ❌ Fire-and-forget |
+| **Local scripts** | `scripts/make_baseline.py` then `scripts/run_round.py --rounds N` (§8–§9) | ❌ Fire-and-forget |
+
+> From **Claude Code** in this repo, run the **`forge-onboarding`** skill — it
+> verifies the prerequisites below and drives the scripts (or points you at the
+> wizard) for you.
+
+Note: forge's *optimizer* internally runs a Claude Agent SDK session as its
+mutation engine, but that is forge's own engine — not a session you type into.
+
+---
+
 ## 1. Mental model: your agent is a "domain"
 
 forge is **domain-agnostic**. It never hard-codes what your agent does. Instead

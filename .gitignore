@@ -30,8 +30,9 @@ Thumbs.db
 # ANVIL-specific
 # personal handoffs, decks, demo notes
 .private/
-# agent SDK working dirs (worktrees, etc.)
-.claude/
+# agent SDK working dirs (worktrees, etc.) — but ship repo-authored skills
+.claude/*
+!.claude/skills/
 # local diagnostic logs
 traces/
 # local MLflow store (when running detached)
