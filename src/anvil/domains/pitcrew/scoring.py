@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -151,6 +152,14 @@ def _parse_scores(raw: str) -> float:
     return (mean - 1.0) / 4.0  # 1-5 -> 0-1
 
 
+_JUDGE_RATE_LIMIT_RETRIES = 4
+_JUDGE_BACKOFF_S = 10.0
+
+
+def _is_rate_limited(exc: Exception) -> bool:
+    return getattr(exc, "status_code", None) == 429 or "REQUEST_LIMIT_EXCEEDED" in str(exc)
+
+
 def build_summary_quality_judge(judge_client: Any, model: str):
     """Return ``judge(pdf_document_block, summary_text) -> float`` in [0,1].
 
@@ -162,16 +171,24 @@ def build_summary_quality_judge(judge_client: Any, model: str):
     def judge(pdf_document_block: dict[str, Any], summary_text: str) -> float:
         prompt = _JUDGE_PROMPT.format(summary=summary_text[:20000])
         content = [pdf_document_block, {"type": "text", "text": prompt}]
-        try:
-            response = judge_client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": content}],
-                max_tokens=200,
-                temperature=0,
-            )
-            return _parse_scores(response.choices[0].message.content or "")
-        except Exception as exc:  # noqa: BLE001 - isolate judge failures per row
-            logger.warning("summary_quality judge failed: %s", exc)
-            return 0.0
+        for attempt in range(_JUDGE_RATE_LIMIT_RETRIES + 1):
+            try:
+                response = judge_client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "user", "content": content}],
+                    max_tokens=200,
+                    temperature=0,
+                )
+                return _parse_scores(response.choices[0].message.content or "")
+            except Exception as exc:  # noqa: BLE001 - isolate judge failures per row
+                # A rate-limited judge call scoring 0.0 costs ~0.025 aggregate on
+                # a 20-row run (as much as the gate's noise band), so back off and
+                # retry 429s instead of letting quota pressure decide the round.
+                if _is_rate_limited(exc) and attempt < _JUDGE_RATE_LIMIT_RETRIES:
+                    time.sleep(_JUDGE_BACKOFF_S * 2**attempt)
+                    continue
+                logger.warning("summary_quality judge failed: %s", exc)
+                return 0.0
+        return 0.0
 
     return judge
