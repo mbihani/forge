@@ -512,7 +512,7 @@ def _patch_runner_common(
     )
     monkeypatch.setattr(runner, "select_subset", lambda exs, **_k: exs)
     monkeypatch.setattr(runner, "make_kb_executor", lambda *a, **kw: SimpleNamespace())
-    monkeypatch.setattr(runner, "enable_runtime_tracing", lambda *a, **kw: None)
+    monkeypatch.setattr(runner, "setup_eval_tracing", lambda **kw: None)
     monkeypatch.setattr(runner.mlflow, "set_experiment", lambda *a, **kw: None)
     monkeypatch.setattr(runner.mlflow, "set_tracking_uri", lambda *a, **kw: None)
     monkeypatch.setattr(runner.mlflow, "get_experiment_by_name", lambda *a, **kw: None)

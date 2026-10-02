@@ -74,7 +74,7 @@ from anvil.data import load_golden_set, select_subset
 from anvil.eval.cache import compute_scorer_fingerprint
 from anvil.eval.engines import GENAI_ENGINE, load_engine
 from anvil.eval.scorers import build_scorers
-from anvil.observability import SOURCE_EVAL, enable_runtime_tracing
+from anvil.observability import SOURCE_EVAL, setup_eval_tracing
 from anvil.runtime.agent import AnvilAgent
 from anvil.runtime.client import build_gateway_client
 from anvil.runtime.loader import default_runtime_config_path, load_harness
@@ -746,6 +746,15 @@ def evaluate_branch(
 
     snapshot = load_harness(scaffold_path, runtime_path)
 
+    # Arm eval tracing for EVERY engine BEFORE dispatch (generic): bind the
+    # profile, select the eval experiment, and enable autolog so any gateway
+    # LLM call — the builtin genai agent OR a pluggable domain engine — emits
+    # per-row traces of the optimization activity to the eval experiment.
+    # Previously this setup lived only on the genai path below, so custom
+    # engines (savesage, pitcrew, …) produced no traces. Also centralizes the
+    # ``--profile`` binding so a custom engine's gateway client picks it up.
+    setup_eval_tracing(experiment=snapshot.config.experiments.eval, profile=profile)
+
     # Engine dispatch (domain-agnostic). ``genai`` is the built-in default
     # implemented by the rest of this function; any other engine is a
     # pluggable domain resolved through the registry, which lazily imports
@@ -757,12 +766,16 @@ def evaluate_branch(
     if engine_name != GENAI_ENGINE:
         engine_fn = load_engine(engine_name)
         resolved_mode = mode or snapshot.config.eval.default_mode
+        # ``trace_rows`` signals that tracing is armed so the engine can wrap
+        # each row in ``eval_row_trace`` for a grouped per-row trace. Engines
+        # that ignore it (absorbed by ``**_kwargs``) still get autolog traces.
         return engine_fn(
             scaffold_root=scaffold_path,
             runtime_config_path=runtime_path,
             golden_set_path=golden_set_path,
             profile=profile,
             mode=resolved_mode,
+            trace_rows=True,
         )
 
     cfg: EvalConfig = snapshot.config.eval
@@ -773,19 +786,9 @@ def evaluate_branch(
         raise ValueError(
             f"mode {selected_mode!r} not in harness/config.yaml > eval.modes ({list(cfg.modes)})"
         )
-    # ``"DEFAULT"`` is the sentinel default of ``run_round`` (loop/round.py),
-    # not a profile that actually exists in ~/.databrickscfg here. Binding
-    # ``databricks://DEFAULT`` forces MLflow to read a [DEFAULT] config
-    # section and disables its fallback to DATABRICKS_HOST/DATABRICKS_TOKEN,
-    # so the round path fails where the baseline path (which passes no
-    # profile) succeeds. Treat the sentinel as "use ambient/native auth" so
-    # both paths behave identically, locally and on the deployed App.
-    if profile and profile != "DEFAULT":
-        mlflow.set_tracking_uri(f"databricks://{profile}")
-        os.environ["DATABRICKS_CONFIG_PROFILE"] = profile
-    mlflow.set_experiment(snapshot.config.experiments.eval)
-
-    enable_runtime_tracing()
+    # Profile binding, eval-experiment selection, and autolog are armed above
+    # (``setup_eval_tracing``) for all engines, so the genai path needs no
+    # repeat here.
 
     # Both the runtime agent and the judge route through the AI Gateway
     # client (the sole LLM route). The gateway resolves host + token from

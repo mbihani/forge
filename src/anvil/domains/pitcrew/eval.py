@@ -20,6 +20,7 @@ import json
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import nullcontext, suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,7 @@ from anvil.domains.pitcrew.scoring import (
 )
 from anvil.domains.pitcrew.summarizer import _pdf_document_block, summarize_pdf
 from anvil.eval.runner import EvalReport
+from anvil.observability import eval_row_trace
 from anvil.runtime.composer import compose_prompt
 from anvil.runtime.loader import load_harness
 
@@ -103,6 +105,7 @@ def evaluate_pitcrew(
     golden_set_path: Path | str = "data/golden_set.jsonl",
     profile: str | None = None,
     mode: str | None = None,
+    trace_rows: bool = False,
     predict_fn: Any | None = None,
     judge_fn: Any | None = None,
     runtime_client: Any | None = None,
@@ -149,26 +152,47 @@ def evaluate_pitcrew(
         judge_fn = build_summary_quality_judge(judge_client, snapshot.config.judge_endpoint)
 
     def _predict_and_score(row: dict) -> dict[str, Any]:
-        try:
-            pdf_bytes = Path(row["pdf_path"]).read_bytes()
-            output = predict_fn(pdf_bytes)
-        except Exception as exc:  # noqa: BLE001 - isolate per-row failures
-            logger.warning("summarize failed for %s: %s", row.get("example_id"), exc)
-            output, pdf_bytes = "", b""
-        parsed = extract_json(output)
-        json_valid = score_json_valid(parsed)
-        scores: dict[str, float] = {
-            "output_json_valid": json_valid,
-            "schema_adherence": score_schema_adherence(parsed),
-        }
-        # Gate the quality judge behind parseability: an unparseable structured
-        # output is a failure (and the judge scores prose, not JSON validity),
-        # so a truncated/invalid summary must not earn quality credit. Also
-        # skips the expensive PDF-grounded judge call when it can't count.
-        if pdf_bytes and json_valid >= 1.0:
-            scores["summary_quality"] = judge_fn(_pdf_document_block(pdf_bytes), output)
-        else:
-            scores["summary_quality"] = 0.0
+        # Wrap each row in a per-row root span (when tracing is armed by
+        # evaluate_branch) so the summarize + judge gateway calls autolog as
+        # CHAT_MODEL sub-spans under one coherent, tagged per-row eval trace.
+        # ``nullcontext`` keeps the row untraced when called outside an eval
+        # (e.g. unit tests inject predict_fn and pass trace_rows=False).
+        row_cm = (
+            eval_row_trace(
+                example_id=row["example_id"],
+                query=row["query"],
+                scaffold_root=scaffold_path,
+                runtime_endpoint=model,
+            )
+            if trace_rows
+            else nullcontext()
+        )
+        with row_cm as span:
+            try:
+                pdf_bytes = Path(row["pdf_path"]).read_bytes()
+                output = predict_fn(pdf_bytes)
+            except Exception as exc:  # noqa: BLE001 - isolate per-row failures
+                logger.warning("summarize failed for %s: %s", row.get("example_id"), exc)
+                output, pdf_bytes = "", b""
+            parsed = extract_json(output)
+            json_valid = score_json_valid(parsed)
+            scores: dict[str, float] = {
+                "output_json_valid": json_valid,
+                "schema_adherence": score_schema_adherence(parsed),
+            }
+            # Gate the quality judge behind parseability: an unparseable
+            # structured output is a failure (and the judge scores prose, not
+            # JSON validity), so a truncated/invalid summary must not earn
+            # quality credit. Also skips the expensive PDF-grounded judge call
+            # when it can't count.
+            if pdf_bytes and json_valid >= 1.0:
+                scores["summary_quality"] = judge_fn(_pdf_document_block(pdf_bytes), output)
+            else:
+                scores["summary_quality"] = 0.0
+            if span is not None:
+                # Span output is best-effort observability.
+                with suppress(Exception):
+                    span.set_outputs({"scores": scores, "n_chars": len(output)})
         return {
             "example_id": row["example_id"],
             "query": row["query"],
@@ -215,13 +239,26 @@ def evaluate_pitcrew(
                 }
             )
 
+    # When tracing is armed, record the eval experiment id so the report
+    # points at where this round's per-row traces landed. Best-effort.
+    experiment_id = ""
+    if trace_rows:
+        try:
+            import mlflow  # noqa: PLC0415
+
+            exp = mlflow.get_experiment_by_name(snapshot.config.experiments.eval)
+            if exp is not None:
+                experiment_id = exp.experiment_id
+        except Exception as exc:  # noqa: BLE001 - best-effort observability
+            logger.warning("could not resolve eval experiment id: %s", exc)
+
     return EvalReport(
         aggregate=aggregate,
         per_judge=per_judge,
         per_bucket=per_bucket,
         failures=failures,
         run_id="",
-        experiment_id="",
+        experiment_id=experiment_id,
         n_rows=len(scored_rows),
         mode=selected_mode,
         scorers=sorted(per_judge.keys()),
