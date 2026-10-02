@@ -239,8 +239,9 @@ gate:
   # preserves the single aggregate objective used by older configurations.
   # Latency session: minimize the summarizer's median per-doc wall-clock
   # while quality (the aggregate) may not regress by more than the judge
-  # noise band. One invalid-JSON doc costs > 0.01 aggregate, so a
-  # truncation-driven speedup still reverts.
+  # noise band. Same-scaffold full runs drifted ~0.025 aggregate (judge
+  # variance); one invalid-JSON doc costs ~0.047, so a truncation-driven
+  # speedup still reverts.
   pareto:
     enabled: true
     objectives:
@@ -251,7 +252,7 @@ gate:
       - name: quality
         direction: maximize
         source: aggregate
-        epsilon: 0.01
+        epsilon: 0.03
     # Example:
     # objectives:
     #   - name: quality
