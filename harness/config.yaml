@@ -126,6 +126,10 @@ loop:
 
 # Eval configuration.
 eval:
+  # Pluggable eval engine. ``pitcrew`` re-runs the mutated summarization
+  # prompt over FINRA PDFs (direct_pdf document block) and scores with
+  # json-valid + schema-adherence + a PDF-grounded quality judge.
+  engine: pitcrew
   # Permit the one-time held-out evaluation performed by scripts/finalize.py.
   held_out_test: true
   # Default mode for `evaluate_branch`. One of: quick, standard, full.
@@ -141,10 +145,10 @@ eval:
   #   seed: 42
   # Row count per mode (deterministic sub-set of the golden set).
   modes:
-    quick:    {rows: 8,  buckets: {direct: 2, multi_hop: 2, distractor: 2, out_of_scope: 2}}
-    standard: {rows: 12, buckets: {direct: 4, multi_hop: 4, distractor: 2, out_of_scope: 2}}
-    full:     {rows: 20, buckets: {direct: 6, multi_hop: 6, distractor: 4, out_of_scope: 4}}
-    test:     {rows: 20, buckets: {direct: 6, multi_hop: 6, distractor: 4, out_of_scope: 4}}
+    quick:    {rows: 8,  buckets: {finra: 8}}
+    standard: {rows: 12, buckets: {finra: 12}}
+    full:     {rows: 20, buckets: {finra: 20}}
+    test:     {rows: 20, buckets: {finra: 20}}
   # Parallelism for predict_fn rows. Tune down if TPM saturates.
   n_workers: 4
   # Cooldown seconds between row tasks inside the thread pool when
