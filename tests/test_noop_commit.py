@@ -249,8 +249,8 @@ def _patch_omnigent_session(
     Selects the omnigent backend via the ``ANVIL_OPTIMIZER_BACKEND`` env
     override (the repo's ``harness/config.yaml`` carries no optimizer
     section), then patches :func:`_run_omnigent_session` to return the
-    4-tuple ``(action, transcript, parse_result, optimizer_error)`` the
-    real backend would — driving the ACTUAL decision-override path in
+    5-tuple ``(action, transcript, parse_result, optimizer_error,
+    session_url)`` the real backend would — driving the ACTUAL decision-override path in
     ``run_round`` rather than fabricating the persisted round JSON.
     """
     import anvil.loop.round as round_mod
@@ -270,7 +270,7 @@ def _patch_omnigent_session(
     )
 
     async def _fake_omnigent(**_kwargs: object):  # noqa: ANN003
-        return action, transcript, parse_result, optimizer_error
+        return action, transcript, parse_result, optimizer_error, None
 
     monkeypatch.setenv("ANVIL_OPTIMIZER_BACKEND", "omnigent")
     monkeypatch.setattr(round_mod, "_run_omnigent_session", _fake_omnigent)

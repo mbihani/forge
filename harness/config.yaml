@@ -79,6 +79,21 @@ optimizer:
   # per round.
   agent_bundle_path: agents/forge_optimizer.yaml
 
+# Durable optimizer-artifact persistence. When enabled (the default), each
+# optimize session opens ONE parent MLflow run under
+# ``experiments.optimizer`` and attaches the per-round optimizer logs
+# (transcript + critique) plus a run-level improvement summary
+# (improvement_summary.{json,md}) to it — so they SURVIVE the ephemeral
+# /tmp/forge-sessions/<id> clone being wiped on shutdown. All writes are
+# best-effort: a down tracking server only logs a warning, never fails a
+# round or finalize. Optional block (omit to keep the enabled default);
+# the ``ANVIL_PERSIST_OPTIMIZER_ARTIFACTS`` env var (0/1) is authoritative
+# over ``enabled`` for a deployment. ``experiment`` overrides where the
+# parent run lands (defaults to ``experiments.optimizer`` below).
+persistence:
+  enabled: true
+  # experiment: "/Shared/anvil-optimizer"
+
 # MLflow experiment paths. Stable, declared here, NOT driven by
 # environment variables (which lint/format passes have historically
 # clobbered). The CLI may override per-run via --experiment-suffix

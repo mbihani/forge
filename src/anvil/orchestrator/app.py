@@ -104,6 +104,11 @@ try:
     from anvil.eval import evaluate_branch
     from anvil.eval.cache import report_to_baseline, save_baseline
     from anvil.loop.frontier import load_frontier
+    from anvil.loop.optimizer_artifacts import (
+        OptimizerArtifactSink,
+        persist_improvement_summary,
+        resolve_persistence_settings,
+    )
     from anvil.loop.round import run_round
     from anvil.optimizer.omnigent_client import resolve_omnigent_server_url
     from anvil.orchestrator.conversion import (
@@ -118,6 +123,9 @@ except Exception as exc:  # noqa: BLE001 — capture any import failure
     report_to_baseline = None  # type: ignore[assignment]
     save_baseline = None  # type: ignore[assignment]
     load_frontier = None  # type: ignore[assignment]
+    OptimizerArtifactSink = None  # type: ignore[assignment]
+    persist_improvement_summary = None  # type: ignore[assignment]
+    resolve_persistence_settings = None  # type: ignore[assignment]
     run_round = None  # type: ignore[assignment]
     DEFAULT_TARGET_BRANCH = None  # type: ignore[assignment]
     ConversionResult = None  # type: ignore[assignment]
@@ -271,6 +279,15 @@ class SessionData:
     _findings: dict[str, list[str]] | None = field(default=None, repr=False)
     _github_token: str | None = field(default=None, repr=False)
     _convert_task: Any = field(default=None, repr=False)
+    # Durable optimizer-artifact sink pointers (set when the parent MLflow
+    # run opens at the start of ``_run_optimization_task``). Surfaced in the
+    # session response so the persisted per-round logs + improvement summary
+    # are discoverable, and reused by finalize to append the held-out summary
+    # to the same run. All None when persistence is off or the sink failed
+    # to open.
+    optimizer_run_id: str | None = None
+    optimizer_experiment_id: str | None = None
+    optimizer_session_url: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -1458,6 +1475,13 @@ def _session_to_response(sess: SessionData, rounds: list[dict[str, Any]]) -> dic
         "frontier": sess.frontier,
         "finalized": sess.finalized,
         "error": sess.error,
+        # Durable optimizer-artifact sink pointers (parent MLflow run that
+        # holds the persisted per-round logs + improvement summary; and the
+        # omnigent conversation URL when applicable). None when persistence
+        # is off / the sink did not open.
+        "optimizer_run_id": sess.optimizer_run_id,
+        "optimizer_experiment_id": sess.optimizer_experiment_id,
+        "optimizer_session_url": sess.optimizer_session_url,
     }
 
 
@@ -1478,6 +1502,59 @@ def _apply_artifacts(sess: SessionData, artifacts: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 # Async background optimization task
 # ---------------------------------------------------------------------------
+
+
+def _open_optimizer_sink_sync(
+    repo_path: Path, session_id: str
+) -> OptimizerArtifactSink | None:
+    """Open the per-session optimizer artifact sink (best-effort, in a thread).
+
+    Resolves the persistence toggle + experiment from the cloned repo's
+    ``harness/config.yaml`` (env ``ANVIL_PERSIST_OPTIMIZER_ARTIFACTS``
+    authoritative), then opens ONE parent MLflow run under the optimizer
+    experiment. Returns ``None`` when persistence is disabled OR the sink
+    could not open — in both cases the session simply runs without durable
+    persistence; it is never fatal.
+    """
+    try:
+        enabled, experiment = resolve_persistence_settings(repo_path / "scaffold")
+        if not enabled:
+            logger.info("optimizer-artifact persistence disabled for session %s", session_id)
+            return None
+        return OptimizerArtifactSink.open(experiment_name=experiment, session_id=session_id)
+    except Exception as exc:  # noqa: BLE001 — best-effort; never fatal
+        logger.warning("could not open optimizer artifact sink for %s: %s", session_id, exc)
+        return None
+
+
+def _optimizer_session_meta(
+    sess: SessionData, *, backend: str, mode: str | None, started_at: str, finished_at: str
+) -> dict[str, Any]:
+    """Build the ``session`` block of the improvement summary from live state."""
+    return {
+        "session_id": sess.session_id,
+        "repo_url": sess.repo_url,
+        "agent_subpath": sess.agent_subpath,
+        "agent_ref": _git_head_sha(sess.repo_path),
+        "mode": mode or (sess.config or {}).get("mode") or "prompt",
+        "backend": backend,
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "session_url": sess.optimizer_session_url,
+    }
+
+
+def _resolve_optimizer_backend(sess: SessionData) -> str:
+    """Best-effort optimizer backend name for summary metadata.
+
+    env ``ANVIL_OPTIMIZER_BACKEND`` wins (deployment-authoritative, matching
+    the loop); else the cloned config's ``optimizer.backend``; else ``local``.
+    """
+    env = os.getenv("ANVIL_OPTIMIZER_BACKEND", "").strip()
+    if env:
+        return env
+    cfg_backend = ((sess.config or {}).get("optimizer") or {}).get("backend")
+    return cfg_backend or "local"
 
 
 async def _run_optimization_task(
@@ -1525,6 +1602,18 @@ async def _run_optimization_task(
         with _session_lock:
             sess.baseline = baseline
             sess.status = "optimizing"
+        started_at = datetime.now(UTC).isoformat(timespec="seconds")
+        # Open ONE durable parent MLflow run for this optimize session (the
+        # per-round logs + run summary attach to it; distinct from the
+        # per-round eval runs under experiments.eval). Best-effort — a dead
+        # sink is None and the loop runs exactly as before.
+        sink = await anyio.to_thread.run_sync(
+            partial(_open_optimizer_sink_sync, sess.repo_path, session_id)
+        )
+        if sink is not None:
+            with _session_lock:
+                sess.optimizer_run_id = sink.run_id
+                sess.optimizer_experiment_id = sink.experiment_id
         # Rounds — each in its own thread-pool call so the event loop can
         # update status + the rounds list between rounds.
         for i in range(1, max_rounds + 1):
@@ -1536,6 +1625,7 @@ async def _run_optimization_task(
                     eval_mode=eval_mode,
                     max_turns=max_turns,
                     mode=mode,
+                    artifact_sink=sink,
                 )
             )
             # B4: Read round JSON in a thread pool (not under the lock).
@@ -1554,6 +1644,42 @@ async def _run_optimization_task(
         with _session_lock:
             _apply_artifacts(sess, artifacts)
             sess.status = "finalized" if sess.finalized else "optimized"
+            # Surface the omnigent conversation URL (if any) recorded into
+            # the last round's JSON, so the summary + session response can
+            # point at the optimizer transcript on the managed server.
+            if sess.rounds:
+                last_url = sess.rounds[-1].get("optimizer_session_url")
+                if last_url:
+                    sess.optimizer_session_url = last_url
+        # Persist the run-level IMPROVEMENT SUMMARY to the parent run, then
+        # terminate it. Fully best-effort (``persist_improvement_summary``
+        # and ``close`` swallow failures) so a dead sink never fails the
+        # optimize task. ``finalized`` is normally None here (finalize is a
+        # separate endpoint); when it later runs, it re-logs an updated
+        # summary with the held-out aggregate to the same run.
+        if sink is not None:
+            finished_at = datetime.now(UTC).isoformat(timespec="seconds")
+            backend = _resolve_optimizer_backend(sess)
+            session_meta = _optimizer_session_meta(
+                sess,
+                backend=backend,
+                mode=mode,
+                started_at=started_at,
+                finished_at=finished_at,
+            )
+            rounds_snapshot = list(sess.rounds)
+            await anyio.to_thread.run_sync(
+                partial(
+                    persist_improvement_summary,
+                    sink,
+                    session_meta=session_meta,
+                    rounds=rounds_snapshot,
+                    frontier=sess.frontier,
+                    finalized=sess.finalized,
+                    baseline=sess.baseline,
+                )
+            )
+            await anyio.to_thread.run_sync(sink.close)
     except Exception as exc:  # noqa: BLE001 — surface any failure
         with _session_lock:
             sess = _get_session(session_id)
@@ -2108,6 +2234,42 @@ async def get_frontier(session_id: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _relog_summary_after_finalize_sync(sess: SessionData) -> None:
+    """Re-log the improvement summary (with held-out data) to the existing
+    parent run (run in a thread pool). Fully best-effort.
+
+    Binds to ``sess.optimizer_run_id`` rather than creating a new run, so
+    the held-out finalized aggregate (and thus the real net improvement)
+    overwrites the ``improvement_summary.{json,md}`` artifacts written at
+    the end of the optimize task. Any failure is swallowed.
+    """
+    try:
+        sink = OptimizerArtifactSink.bind(
+            run_id=sess.optimizer_run_id,
+            experiment_id=sess.optimizer_experiment_id or "",
+            session_url=sess.optimizer_session_url,
+        )
+        if sink is None:
+            return
+        session_meta = _optimizer_session_meta(
+            sess,
+            backend=_resolve_optimizer_backend(sess),
+            mode=(sess.config or {}).get("mode"),
+            started_at="",
+            finished_at=datetime.now(UTC).isoformat(timespec="seconds"),
+        )
+        persist_improvement_summary(
+            sink,
+            session_meta=session_meta,
+            rounds=list(sess.rounds),
+            frontier=sess.frontier,
+            finalized=sess.finalized,
+            baseline=sess.baseline,
+        )
+    except Exception as exc:  # noqa: BLE001 — best-effort; never fatal
+        logger.warning("could not re-log improvement summary after finalize: %s", exc)
+
+
 @app.post("/api/session/{session_id}/finalize")
 async def finalize(session_id: str) -> dict[str, Any]:
     _require_imports()
@@ -2161,6 +2323,12 @@ async def finalize(session_id: str) -> dict[str, Any]:
     with _session_lock:
         sess.finalized = result
         sess.status = "finalized"
+    # Best-effort: append an UPDATED improvement summary (now carrying the
+    # held-out finalized aggregate → the real net-improvement) to the SAME
+    # parent run opened during optimization. Bound by the stored run id so
+    # no new run is created; a dead sink or missing run id is a no-op.
+    if sess.optimizer_run_id and OptimizerArtifactSink is not None:
+        await anyio.to_thread.run_sync(partial(_relog_summary_after_finalize_sync, sess))
     return result
 
 

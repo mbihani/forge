@@ -18,9 +18,12 @@ import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
+
+if TYPE_CHECKING:
+    from anvil.loop.optimizer_artifacts import OptimizerArtifactSink
 
 from anvil.eval import evaluate_branch, load_baseline
 from anvil.loop.builder import build_round_prompt
@@ -82,6 +85,7 @@ def run_round(
     eval_mode: str | None = None,
     max_turns: int = 30,
     mode: str | None = None,
+    artifact_sink: OptimizerArtifactSink | None = None,
 ) -> RoundReport:
     """Run round ``round_id`` end-to-end. Returns a report.
 
@@ -100,6 +104,14 @@ def run_round(
     read from ``harness/config.yaml`` for this round when provided. When
     ``None`` (the default) the mode is read from disk via
     :func:`_read_optimization_mode`, preserving backward compatibility.
+
+    ``artifact_sink`` (optional) is a per-session
+    :class:`~anvil.loop.optimizer_artifacts.OptimizerArtifactSink`. When
+    supplied, the round ADDITIONALLY logs the optimizer transcript + the
+    critique rationale to the session's durable parent MLflow run (the
+    clone-local writes are kept — the MLflow write is additive and
+    best-effort, so a dead sink never fails the round). ``None`` (the
+    default, e.g. a bare ``run_round`` CLI call) skips durable logging.
     """
     repo_root = Path(repo_root).resolve()
     scaffold_root = Path(scaffold_root or (repo_root / "scaffold")).resolve()
@@ -141,9 +153,13 @@ def run_round(
     # 'omnigent noop/INFRA_FAIL' WITHOUT reading the transcript file.
     selected_backend = optimizer_cfg.get("backend") or "local"
     resolved_optimizer_server_url: str | None = None
+    # Managed-omnigent conversation URL — a durable pointer to the
+    # optimizer session's transcript on the Omnigent server. None on the
+    # local backend. Recorded into the round JSON for discoverability.
+    optimizer_session_url: str | None = None
     if selected_backend == "omnigent":
         resolved_optimizer_server_url = _resolve_omnigent_backend_url(optimizer_cfg)
-        action, transcript, parse_result, optimizer_error = asyncio.run(
+        action, transcript, parse_result, optimizer_error, optimizer_session_url = asyncio.run(
             _run_omnigent_session(
                 prompt=prompt,
                 repo_root=repo_root,
@@ -295,22 +311,35 @@ def run_round(
         print(f"[round {round_id}] optimizer backend failure: {optimizer_error}")
 
     # 8. Write critique md.
-    critique_path = repo_root / "scaffold" / "memory" / f"round_{round_id:03d}_critique.md"
-    critique_path.write_text(
-        _build_critique_md(
-            round_id=round_id,
-            branch=branch,
-            decision=decision,
-            action_kind=action.action,
-            apply_summary=apply_result.action_summary,
-            rationale=action.rationale,
-            baseline_score=baseline_aggregate,
-            mutated_score=mutated_score,
-            score_delta=score_delta,
-            parse_status=parse_result.parse_status,
-        ),
-        encoding="utf-8",
+    critique_md = _build_critique_md(
+        round_id=round_id,
+        branch=branch,
+        decision=decision,
+        action_kind=action.action,
+        apply_summary=apply_result.action_summary,
+        rationale=action.rationale,
+        baseline_score=baseline_aggregate,
+        mutated_score=mutated_score,
+        score_delta=score_delta,
+        parse_status=parse_result.parse_status,
     )
+    critique_path = repo_root / "scaffold" / "memory" / f"round_{round_id:03d}_critique.md"
+    critique_path.write_text(critique_md, encoding="utf-8")
+
+    # 8b. Durably persist the per-round LOGS (transcript + critique) to the
+    # session's parent MLflow run, when a sink is supplied. This is the
+    # survives-shutdown write: the clone-local files above are wiped when
+    # ``/tmp/forge-sessions/<id>`` is rmtree'd. We log HERE — while the
+    # transcript + critique are in hand and BEFORE the round branch may be
+    # deleted on REVERT/INFRA_FAIL (which would otherwise drop the artifacts
+    # for exactly the failing rounds). Fully best-effort: ``log_round``
+    # swallows any MLflow failure, so a dead sink never fails the round.
+    if artifact_sink is not None:
+        artifact_sink.log_round(
+            round_id=round_id,
+            transcript=transcript or "(empty)\n",
+            critique_md=critique_md,
+        )
 
     # 9. Write round JSON (combines aggregate + decision + delta).
     round_json_path = repo_root / "eval" / "runs" / f"round_{round_id:03d}.json"
@@ -333,6 +362,10 @@ def run_round(
                 optimizer_error=optimizer_error,
                 optimizer_backend=selected_backend,
                 optimizer_server_url=resolved_optimizer_server_url,
+                rationale=action.rationale,
+                optimizer_run_id=artifact_sink.run_id if artifact_sink else None,
+                optimizer_experiment_id=artifact_sink.experiment_id if artifact_sink else None,
+                optimizer_session_url=optimizer_session_url,
             ),
             indent=2,
         )
@@ -538,16 +571,18 @@ async def _run_omnigent_session(
     max_turns: int,
     optimizer_endpoint: str | None,
     server_url: str,
-) -> tuple[Any, str, Any, str | None]:
+) -> tuple[Any, str, Any, str | None, str | None]:
     """Run the optimizer on a managed Omnigent server.
 
     Builds the backend from the ``optimizer:`` config section, collects
     the scaffold tree into a flat ``relative_path -> content`` dict, and
-    delegates to :func:`get_backend`. Returns a 4-tuple
-    ``(action, transcript, parse_result, optimizer_error)`` — the same
-    three values as :func:`run_optimizer_session` plus the backend-failure
-    marker (``None`` on success) so the round can distinguish a swallowed
-    backend error from a legitimate optimizer-chosen noop.
+    delegates to :func:`get_backend`. Returns a 5-tuple
+    ``(action, transcript, parse_result, optimizer_error, session_url)`` —
+    the same three values as :func:`run_optimizer_session`, plus the
+    backend-failure marker (``None`` on success) so the round can
+    distinguish a swallowed backend error from a legitimate
+    optimizer-chosen noop, plus the managed conversation ``session_url``
+    (a durable pointer to the optimizer transcript; ``None`` on failure).
     """
     scaffold_files = _collect_scaffold_files(repo_root)
     bundle_rel = optimizer_cfg.get("agent_bundle_path", "agents/forge_optimizer.yaml")
@@ -588,7 +623,13 @@ async def _run_omnigent_session(
         # the cleanup omnigent-specific without widening the Protocol.
         if isinstance(backend, OmnigentBackend):
             await backend.client.aclose()
-    return result.action, result.transcript, result.parse_result, result.optimizer_error
+    return (
+        result.action,
+        result.transcript,
+        result.parse_result,
+        result.optimizer_error,
+        result.session_url,
+    )
 
 
 def _collect_scaffold_files(repo_root: Path) -> dict[str, str]:
@@ -680,6 +721,10 @@ def _build_round_json(
     optimizer_error: str | None = None,
     optimizer_backend: str | None = None,
     optimizer_server_url: str | None = None,
+    rationale: str | None = None,
+    optimizer_run_id: str | None = None,
+    optimizer_experiment_id: str | None = None,
+    optimizer_session_url: str | None = None,
 ) -> dict:
     payload: dict = {
         "round_id": round_id,
@@ -704,6 +749,23 @@ def _build_round_json(
         # backend was pointed at; None otherwise.
         "optimizer_backend": optimizer_backend,
         "optimizer_server_url": optimizer_server_url,
+        # Optimizer's own rationale for the action it chose this round
+        # (``OptimizerAction.rationale``). Carried so the run-level
+        # improvement summary can show the per-round diagnosis without
+        # re-reading the critique md. May be empty.
+        "rationale": rationale,
+        # Durable sink pointers: the SESSION-level parent MLflow run that
+        # holds this round's persisted transcript + critique (distinct from
+        # the per-round eval run under ``mlflow`` below), and — on the
+        # omnigent backend — the managed conversation URL. All None when
+        # persistence is off / local backend. Surfaced alongside the eval
+        # ``mlflow`` pointer so the stored logs/summary are findable.
+        "optimizer_run": (
+            {"run_id": optimizer_run_id, "experiment_id": optimizer_experiment_id}
+            if optimizer_run_id
+            else None
+        ),
+        "optimizer_session_url": optimizer_session_url,
         # Best-so-far per objective after this round's decision (frontier
         # gate only; None for the legacy delta gate / noop / infra-fail).
         # The decision is driven by this, not by ``score_delta_vs_parent``.
