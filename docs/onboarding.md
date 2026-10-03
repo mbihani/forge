@@ -43,7 +43,7 @@ answer maps to config):
 
 | # | Decision | Sets |
 |---|---|---|
-| 1 | Which agent / domain (existing domain, `trace` engine, or a new domain) | `eval.engine` |
+| 1 | Which agent: source repo (`owner/name` or path, branch, subdirectory, private?) and domain (existing, `trace` engine, or new) | `eval.engine`, domain code |
 | 2 | Objective: quality, latency/cost with a quality floor, or both | `gate.pareto` objectives |
 | 3 | What may change: prompt scaffold or agent code | `mode` |
 | 4 | Which runtime models may be tried (each verified on the agent's real input) | `levers.model.allowed` |
@@ -51,9 +51,30 @@ answer maps to config):
 | 6 | Mutations per round (1–5) | `loop.max_mutations_per_round` |
 | 7 | Eval size (quick / standard / full) | `eval.default_mode`, `--eval-mode` |
 | 8 | Rounds and per-objective gate margins | `--rounds`, `gate…epsilon` |
-| 9 | Workspace auth and optimizer backend | `--profile` / env, `optimizer.backend` |
-| 10 | Which repo and branch receive results | git remote, `--parent-branch` |
+| 9 | Where it runs (local / sandbox / app), which workspace, optimizer backend | `--profile`, `optimizer.backend` |
+| 10 | Forge repo(s), starting branch, parent branch, and push account — each by name | git remotes + credentials, `--parent-branch` |
 | 11 | Re-sync model prices now? | `harness/model_catalog.csv` |
+| 12 | Environment variables for that path (checked by name, never echoed) | see below |
+
+**Environment variables** (the skill's Group E has the full table):
+
+- **Always:** Databricks auth — `DATABRICKS_CONFIG_PROFILE` locally, or
+  `DATABRICKS_HOST` + `DATABRICKS_TOKEN` in a sandbox. Runtime, judge, MLflow,
+  and the optimizer all read it: fine on one workspace, but if the
+  optimizer's gateway is on another workspace, leave `DATABRICKS_TOKEN` unset
+  and use per-side auth (a shared token fails as an empty optimizer transcript).
+- **`local` optimizer backend:** `ANVIL_AI_GATEWAY_URL`
+  (`https://<workspace-id>.ai-gateway.cloud.databricks.com/anthropic`) —
+  required; without it every round fails at start, unless `ANTHROPIC_BASE_URL`
+  is set — often inherited from the coding harness you run forge from, which
+  silently points the optimizer at that harness's workspace.
+- **`omnigent` backend:** `OMNIGENT_SERVER_URL`, `OMNIGENT_AUTH_TOKEN`.
+- **Overrides that silently beat `harness/config.yaml`:**
+  `ANVIL_OPTIMIZER_BACKEND`, `ANVIL_PERSIST_OPTIMIZER_ARTIFACTS`.
+- **Optional:** `ANVIL_GATEWAY_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`,
+  `ANVIL_GIT_COMMITTER_NAME` / `_EMAIL`, `ANVIL_GOOGLE_QUOTA_PROJECT`
+  (price sync), plus any your domain reads (`grep -rn "environ\|getenv"
+  src/anvil/domains/<name>/`).
 
 Then the preflight: clean tree on the right remote, engine + levers load,
 every allowed model accepts the agent's real input, lever dependencies are

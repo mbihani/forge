@@ -6,9 +6,10 @@ description: >-
   agent, says "start an optimizer session", "run forge on my agent", "optimize
   for latency/cost/quality", "take me through optimization", wants to set up a
   forge domain / eval engine, prime a baseline, or kick off rounds. ALWAYS runs
-  an intake first: asks the user every decision the run needs (objective,
-  models, levers, mutations per round, eval size, budget, workspace, where
-  results go), writes the config, runs preflight checks, and only then starts.
+  an intake first: asks the user every decision the run needs (agent repo,
+  objective, models, levers, mutations per round, eval size, budget,
+  workspace, forge repo/branch/account, environment variables), writes the
+  config, runs preflight checks, and only then starts.
 ---
 
 # Starting a forge optimization session
@@ -47,11 +48,17 @@ below); otherwise ask in plain text and wait. Record every answer.
 
 ### Group A — What to optimize
 
-1. **Which agent / domain?** An existing domain in `src/anvil/domains/<name>/`,
-   the built-in `trace` engine (agent already has MLflow traces with
-   assessments), or a new domain to build (see Step 2). If the agent is
-   traced at the *function* level or takes non-text input (PDFs, images), the
-   `trace` engine cannot ingest it — say so and plan a domain instead.
+1. **Which agent, and where does its code live?** Ask for:
+   - the **agent's source repo** — `owner/name` or URL (e.g. `mbihani/pitcrew`)
+     or a local path, plus the **branch** and **subdirectory** holding the
+     agent (e.g. `document-summarizer/`), and whether it is private (the REST
+     path then needs a `github_token`, held in memory only);
+   - the **domain / engine** — an existing domain in
+     `src/anvil/domains/<name>/`, the built-in `trace` engine (agent already
+     has MLflow traces with assessments — ask for the `experiment_id`), or a
+     new domain to build (Step 2). If the agent is traced at the *function*
+     level or takes non-text input (PDFs, images), the `trace` engine cannot
+     ingest it — say so and plan a domain instead.
 2. **Objective?** This decides the gate, so never assume it:
    - *Quality* — maximize the aggregate (`gate.pareto.enabled: false`).
    - *Latency (or cost) with a quality floor* — Pareto gate: minimize
@@ -92,18 +99,58 @@ below); otherwise ask in plain text and wait. Record every answer.
 
 ### Group D — Where it runs and where results go
 
-9. **Workspace and auth?** Databricks profile (`--profile`) for local runs, or
-   `DATABRICKS_HOST` + `DATABRICKS_TOKEN` in a sandbox. Optimizer backend
-   `local` or `omnigent` (`optimizer.backend` + `server_url`).
-10. **Which repo/branch receives results?** Confirm the git remote the session
-    pushes to (`git remote -v`) — clones have pushed to a stale repo before.
-    Confirm the parent branch (default `anvil/exp`).
+9. **Where does it run?** This machine (local scripts), a sandbox (e.g. an
+   Omnigent sandbox — env vars only, no `~/.databrickscfg`, no browser
+   logins), or the `forge-orchestrator` app. Which Databricks **workspace**
+   (host or profile name) serves the runtime model, the judge, and MLflow?
+   Which optimizer **backend** — `local` (Claude Agent SDK subprocess) or
+   `omnigent` (managed server; ask for its URL)? The answers decide which
+   environment variables Group E must collect.
+10. **Which forge repo, branch, and account?** Ask for each by name — do not
+    infer them from `git remote -v`, which has pointed at a stale repo before:
+    - the **forge repo** the session runs from and pushes results to
+      (`owner/name`; list every remote if results go to more than one);
+    - the **branch** to start from (the one carrying this domain's code and
+      config) and the **parent branch** rounds fork from (default `anvil/exp`);
+    - the **GitHub account** used to push (and, for a managed/EMU account,
+      that git credentials are set for it — e.g. a repo-local credential
+      helper — since the active `gh` account may be a different one);
+    - the **git identity** for round commits (`ANVIL_GIT_COMMITTER_NAME` /
+      `ANVIL_GIT_COMMITTER_EMAIL`; unset, rounds commit as `anvil-bot`).
 11. **Refresh model prices?** If `model_catalog.sheet_id` is set, offer to
     re-sync now (`scripts/sync_model_catalog.py`, needs
     `gcloud auth application-default login`) and commit the CSV diff.
 
-End the intake with a summary table of every answer and get an explicit
-"go" before writing anything.
+### Group E — Environment variables
+
+Check which variables are set **by name only** — never print, log, or commit
+a value; `env | cut -d= -f1 | sort` or `[ -n "$VAR" ] && echo set`. Ask the
+user only for what is missing for the chosen path. For secrets, ask them to
+set the variable themselves (in Claude Code: `! export NAME=...`, or their
+sandbox's secret store) rather than pasting it into the chat.
+
+| Variable | Needed when | What it does |
+|---|---|---|
+| `DATABRICKS_CONFIG_PROFILE` | local runs (or pass `--profile`) | Profile in `~/.databrickscfg` for the gateway (runtime + judge) and MLflow |
+| `DATABRICKS_HOST` + `DATABRICKS_TOKEN` | sandbox / no profile | Workspace URL + token for the same. `DATABRICKS_TOKEN` is read by **every** path (runtime, judge, MLflow, and the optimizer's gateway auth). Fine when everything is on one workspace. If the optimizer's gateway is on a different workspace from the agent, do **not** set it — give each side its own auth (profiles); a token for workspace A sent to workspace B's gateway fails silently as an empty optimizer transcript |
+| `ANVIL_AI_GATEWAY_URL` | `local` optimizer backend — **required** | The optimizer's Anthropic route, `https://<workspace-id>.ai-gateway.cloud.databricks.com/anthropic` (not `<host>/serving-endpoints/anthropic`). Unset ⇒ every round raises at start, unless `ANTHROPIC_BASE_URL` is already set — which it often is, **inherited from the coding harness you are running in** (e.g. Claude Code), silently sending the optimizer to that harness's workspace. If it is set, ask which workspace it points at and whether that is intended |
+| `ANTHROPIC_AUTH_TOKEN` | optional | Overrides the optimizer's gateway auth (normally from the Databricks profile / host) |
+| `OMNIGENT_SERVER_URL`, `OMNIGENT_AUTH_TOKEN` | `omnigent` backend | Server URL and bearer token; override `optimizer.server_url` / `auth_token` |
+| `ANVIL_OPTIMIZER_BACKEND` | optional — **overrides config** | `local` / `omnigent`; wins over `optimizer.backend`. If set to something other than the user's Q9 answer, flag it |
+| `ANVIL_PERSIST_OPTIMIZER_ARTIFACTS` | optional — **overrides config** | `0` / `1`; wins over `persistence.enabled` (optimizer transcripts in MLflow) |
+| `ANVIL_GATEWAY_BASE_URL` | optional | Runtime + judge base URL; default `<DATABRICKS_HOST>/serving-endpoints` |
+| `ANVIL_GIT_COMMITTER_NAME`, `ANVIL_GIT_COMMITTER_EMAIL` | optional | Author of round commits; unset ⇒ `anvil-bot <anvil-bot@users.noreply.github.com>` |
+| `ANVIL_GOOGLE_QUOTA_PROJECT` | price re-sync only | Google quota project for the Sheets API (default `gcp-dev-field-eng-aiapiquota`) |
+| Domain-specific (e.g. `SAVESAGE_STATEMENT_AGENT_PATH`, `SAVESAGE_LUNA_PROFILE`) | that domain | Find them with `grep -rn "environ\|getenv" src/anvil/domains/<name>/` and ask for each |
+
+Leave alone (forge sets these itself): `MLFLOW_GENAI_EVAL_MAX_WORKERS` (from
+`eval.n_workers`), `MLFLOW_ENABLE_ASYNC_TRACE_LOGGING`, the `ANTHROPIC_*`
+model defaults (from `optimizer_endpoint`), and the deploy-time
+`ANVIL_SCAFFOLD_*` / `FORGE_CRASH_LOG_WORKSPACE_PATH`.
+
+End the intake with a summary table of every answer — repos and branches by
+name, environment variables by name with set / missing (never values) — and
+get an explicit "go" before writing anything.
 
 ## Step 2 — Write the configuration
 
@@ -130,27 +177,39 @@ engine to read `snapshot.config.levers`; a model lever needs it to call
 Run each check and report pass/fail; fix or go back to the user on any fail.
 
 1. **Clean tree, right branch, right remote** — `git status --short` empty;
-   `git remote -v` points at the repo from question 10.
-2. **Engine loads and config is valid** —
+   `git branch --show-current` is the branch from question 10; `git remote -v`
+   points at the repo(s) from question 10, and `git ls-remote <remote>`
+   succeeds with the push account's credentials.
+2. **Environment complete and consistent** (names only, never values) —
+   every variable Group E marked as needed is set; no override variable
+   (`ANVIL_OPTIMIZER_BACKEND`, `ANVIL_PERSIST_OPTIMIZER_ARTIFACTS`,
+   `OMNIGENT_SERVER_URL`) contradicts the user's answers; you can say which
+   workspace the runtime gateway, the optimizer gateway (`ANVIL_AI_GATEWAY_URL`
+   or an inherited `ANTHROPIC_BASE_URL`), and MLflow each point at — and if
+   the optimizer's differs from the agent's, `DATABRICKS_TOKEN` is unset.
+   Confirm reachability with one cheap call each: a one-token gateway
+   completion on `runtime_endpoint`, and
+   `mlflow.get_experiment_by_name(<experiments.eval>)`.
+3. **Engine loads and config is valid** —
    `uv run python -c "from anvil.eval.engines import load_engine; from anvil.runtime.loader import load_harness; load_engine('<engine>'); s = load_harness('scaffold'); print(s.config.effective_runtime_model, s.config.levers)"`.
    This also validates every lever value against its allowlist.
-3. **Every allowed model works with the agent's real input** — make one real
+4. **Every allowed model works with the agent's real input** — make one real
    call per model with the agent's actual input shape (not a text-only ping).
    Drop any model that errors and tell the user why. Known traps: GPT and
    Gemini reject Anthropic-style PDF `document` blocks; some newer models reject
    `temperature` (the gateway client retries without it — confirm it succeeds).
-4. **Lever dependencies present** — e.g. `uv run python -c "import fitz"` before
+5. **Lever dependencies present** — e.g. `uv run python -c "import fitz"` before
    allowing `input_mode: text`.
-5. **Prices known** — `scripts/sync_model_catalog.py --check <allowed models>`;
+6. **Prices known** — `scripts/sync_model_catalog.py --check <allowed models>`;
    unpriced models still run, but tell the user their cost will be blank.
-6. **Baseline matches the run** — regenerate it now, live, at the chosen eval
+7. **Baseline matches the run** — regenerate it now, live, at the chosen eval
    size: `uv run python scripts/make_baseline.py --mode <mode>` and commit
    `eval/runs/baseline.json`. Its `mode` must equal the rounds' `--eval-mode`,
    it must be produced by the same scaffold/levers the rounds start from, and
    for a latency objective its `cost_metrics` must contain
    `latency_ms_median`. Never reuse a cached or different-size baseline: the
    gate would compare unlike runs and keep or revert on noise.
-7. **Parent branch** — `anvil/exp` exists at the baseline commit
+8. **Parent branch** — `anvil/exp` exists at the baseline commit
    (`git branch -f anvil/exp HEAD` after committing the baseline).
 
 ## Step 4 — Kick off and report
