@@ -26,6 +26,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from anvil.catalog import cost_usd, load_catalog, model_prices
 from anvil.data import select_subset
 from anvil.domains.pitcrew.scoring import (
     OBJECTIVE_WEIGHTS,
@@ -34,7 +35,12 @@ from anvil.domains.pitcrew.scoring import (
     score_json_valid,
     score_schema_adherence,
 )
-from anvil.domains.pitcrew.summarizer import _pdf_document_block, summarize_pdf
+from anvil.domains.pitcrew.summarizer import (
+    DEFAULT_INPUT_MODE,
+    _pdf_document_block,
+    summarize,
+    text_mode_available,
+)
 from anvil.eval.runner import EvalReport
 from anvil.observability import eval_row_trace
 from anvil.runtime.composer import compose_prompt
@@ -149,16 +155,32 @@ def evaluate_pitcrew(
     examples = load_pitcrew_golden_set(golden_set_path)
     selected = _select(examples, rows=mode_cfg.rows, buckets=dict(mode_cfg.buckets))
     n_workers = max(1, cfg.n_workers)
-    model = snapshot.config.runtime_endpoint
+    model = snapshot.config.effective_runtime_model
+    # Domain lever (harness/config.yaml > levers.input_mode): how the PDF
+    # reaches the model. Forge core treats the name as opaque.
+    input_mode = str(snapshot.config.levers.get("input_mode", DEFAULT_INPUT_MODE))
+    if input_mode == "text" and predict_fn is None and not text_mode_available():
+        # Fail the whole eval loudly (an infra failure) rather than letting
+        # every row error into a 0.0 that reads as a quality regression.
+        raise RuntimeError(
+            "levers.input_mode=text needs pymupdf in this environment (`uv pip install pymupdf`)"
+        )
+    # Per-1M-token price of the model this round runs, for cost_usd. From the
+    # synced price sheet, LiteLLM as fallback; None = unpriced (cost omitted).
+    catalog_path = scaffold_path.parent / snapshot.config.model_catalog.path
+    price = model_prices(
+        [model], load_catalog(catalog_path), tier=snapshot.config.model_catalog.context_tier
+    ).get(model)
 
-    # Re-run predictor + judge — injectable for offline unit tests.
+    # Re-run predictor + judge — injectable for offline unit tests. A
+    # predict_fn may return the summary text, or (text, usage) for costing.
     if predict_fn is None:
         from anvil.runtime.client import build_gateway_client  # noqa: PLC0415
 
         runtime_client = runtime_client or build_gateway_client()
 
-        def predict_fn(pdf_bytes: bytes) -> str:  # noqa: F811
-            return summarize_pdf(runtime_client, model, composed, pdf_bytes)
+        def predict_fn(pdf_bytes: bytes) -> tuple[str, dict[str, int]]:  # noqa: F811
+            return summarize(runtime_client, model, composed, pdf_bytes, input_mode=input_mode)
 
     if judge_fn is None:
         from anvil.runtime.client import build_gateway_client  # noqa: PLC0415
@@ -194,11 +216,15 @@ def evaluate_pitcrew(
                 # Wall-clock of the summarize call only (judge excluded) — the
                 # latency Pareto objective reads the median of these.
                 t0 = time.perf_counter()
-                output = predict_fn(pdf_bytes)
+                result = predict_fn(pdf_bytes)
                 latency_ms: float | None = (time.perf_counter() - t0) * 1000.0
+                output, usage = result if isinstance(result, tuple) else (result, None)
             except Exception as exc:  # noqa: BLE001 - isolate per-row failures
                 logger.warning("summarize failed for %s: %s", row.get("example_id"), exc)
-                output, pdf_bytes, latency_ms = "", b"", None
+                output, pdf_bytes, latency_ms, usage = "", b"", None, None
+            row_cost = (
+                cost_usd(price, usage["input_tokens"], usage["output_tokens"]) if usage else None
+            )
             parsed = extract_json(output)
             json_valid = score_json_valid(parsed)
             scores: dict[str, float] = {
@@ -225,6 +251,8 @@ def evaluate_pitcrew(
             "scores": scores,
             "latency_ms": latency_ms,
             "n_chars": len(output),
+            "usage": usage,
+            "cost_usd": row_cost,
         }
 
     results: list[dict[str, Any] | None] = [None] * len(selected)
@@ -293,6 +321,16 @@ def evaluate_pitcrew(
         cost_metrics["output_chars_mean"] = sum(r["n_chars"] for r in scored_rows) / len(
             scored_rows
         )
+    # Token usage + dollar cost of the summarize calls (judge excluded, like
+    # latency). Informational — shown to the optimizer, not a gate input.
+    usages = [r["usage"] for r in scored_rows if r.get("usage")]
+    if usages:
+        cost_metrics["input_tokens_mean"] = sum(u["input_tokens"] for u in usages) / len(usages)
+        cost_metrics["output_tokens_mean"] = sum(u["output_tokens"] for u in usages) / len(usages)
+    costs = [r["cost_usd"] for r in scored_rows if r.get("cost_usd") is not None]
+    if costs:
+        cost_metrics["cost_usd_total"] = sum(costs)
+        cost_metrics["cost_usd_per_row_mean"] = sum(costs) / len(costs)
 
     return EvalReport(
         aggregate=aggregate,

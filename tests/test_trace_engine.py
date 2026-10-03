@@ -699,7 +699,9 @@ def test_build_predictor_isolates_agent_per_thread(monkeypatch) -> None:
         runner_mod, "_load_memory_system", lambda *a, **k: _FakeMemorySystem()
     )
     snapshot = SimpleNamespace(
-        config=SimpleNamespace(mode="code", agent_module="x", runtime_endpoint="")
+        config=SimpleNamespace(
+            mode="code", agent_module="x", runtime_endpoint="", effective_runtime_model=""
+        )
     )
     predict = _build_predictor(
         snapshot,

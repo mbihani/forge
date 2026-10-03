@@ -19,7 +19,16 @@ edit rather than sampling noise.
 from __future__ import annotations
 
 import base64
+import importlib.util
+import re
 from typing import Any
+
+# Values of the domain's ``input_mode`` lever (harness/config.yaml > levers).
+#   direct_pdf — the PDF as a base64 ``document`` block (production default).
+#   text       — text extracted locally first; the model reads plain text
+#                instead of rendered pages (far fewer input tokens).
+INPUT_MODES = ("direct_pdf", "text")
+DEFAULT_INPUT_MODE = "direct_pdf"
 
 # Fixed decode params for the summarizer re-run. Temperature 0 for a
 # deterministic re-run; max_tokens matches the production app
@@ -31,6 +40,39 @@ MAX_TOKENS = 32000
 _USER_INSTRUCTION = (
     "Please analyze the PDF document above and produce a structured summary."
 )
+_TEXT_INSTRUCTION = (
+    "Please analyze the following document text and produce a structured summary."
+)
+
+
+def text_mode_available() -> bool:
+    """True when the PDF text extractor (pymupdf) is importable."""
+    return importlib.util.find_spec("fitz") is not None
+
+
+def extract_pdf_text(pdf_bytes: bytes) -> str:
+    """Page-marked text, mirroring production ``extract_text_from_pdf``.
+
+    ``[Page N]`` markers keep page citations possible; the trailing
+    amendment-history block is stripped like the production fallback.
+    """
+    try:
+        import fitz  # noqa: PLC0415 - pymupdf, optional (text input mode only)
+    except ImportError as exc:
+        raise RuntimeError(
+            "input_mode=text needs pymupdf (`uv pip install pymupdf`)"
+        ) from exc
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        pages = [
+            f"[Page {i + 1}]\n{text.strip()}"
+            for i in range(len(doc))
+            if (text := doc[i].get_text("text")).strip()
+        ]
+    finally:
+        doc.close()
+    full = "\n\n".join(pages)
+    return re.split(r"\nAmended by SR-", full, maxsplit=1)[0].strip()
 
 
 def _pdf_document_block(pdf_bytes: bytes) -> dict[str, Any]:
@@ -50,24 +92,33 @@ def _pdf_document_block(pdf_bytes: bytes) -> dict[str, Any]:
     }
 
 
-def summarize_pdf(
+def summarize(
     client: Any,
     model: str,
     system_prompt: str,
     pdf_bytes: bytes,
     *,
+    input_mode: str = DEFAULT_INPUT_MODE,
     max_tokens: int = MAX_TOKENS,
     temperature: float = TEMPERATURE,
-) -> str:
-    """Return the model's raw summary text for one PDF.
+) -> tuple[str, dict[str, int]]:
+    """Return ``(summary_text, usage)`` for one PDF.
 
-    ``client`` is a gateway client exposing ``chat.completions.create``
-    (``build_gateway_client``). The caller scores the returned text.
+    ``usage`` is ``{"input_tokens", "output_tokens"}`` from the response
+    (zeros when the gateway reports none) — the engine prices it into
+    ``cost_usd``. ``client`` is a gateway client (``build_gateway_client``).
     """
-    content = [
-        _pdf_document_block(pdf_bytes),
-        {"type": "text", "text": _USER_INSTRUCTION},
-    ]
+    if input_mode == "text":
+        content: list[dict[str, Any]] = [
+            {"type": "text", "text": f"{_TEXT_INSTRUCTION}\n\n{extract_pdf_text(pdf_bytes)}"}
+        ]
+    elif input_mode == "direct_pdf":
+        content = [
+            _pdf_document_block(pdf_bytes),
+            {"type": "text", "text": _USER_INSTRUCTION},
+        ]
+    else:
+        raise ValueError(f"unknown input_mode {input_mode!r}; expected one of {INPUT_MODES}")
     response = client.chat.completions.create(
         model=model,
         messages=[
@@ -77,4 +128,30 @@ def summarize_pdf(
         max_tokens=max_tokens,
         temperature=temperature,
     )
-    return response.choices[0].message.content or ""
+    usage = getattr(response, "usage", None)
+    tokens = {
+        "input_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
+        "output_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
+    }
+    return response.choices[0].message.content or "", tokens
+
+
+def summarize_pdf(
+    client: Any,
+    model: str,
+    system_prompt: str,
+    pdf_bytes: bytes,
+    *,
+    max_tokens: int = MAX_TOKENS,
+    temperature: float = TEMPERATURE,
+) -> str:
+    """Return the model's raw summary text for one PDF (direct_pdf mode)."""
+    text, _usage = summarize(
+        client,
+        model,
+        system_prompt,
+        pdf_bytes,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+    return text

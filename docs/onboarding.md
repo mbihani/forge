@@ -353,6 +353,45 @@ stay untraced). Traces are tagged `source=eval` + `scaffold_branch` /
 report points at where the traces landed. See `anvil.domains.pitcrew.eval` for
 the worked adoption.
 
+## 13. Runtime levers, compound rounds, and model prices
+
+**Levers** let the optimizer change runtime settings that are not prompt
+text — the model, or a domain switch like an input format — but only to
+values you allow. Declare them in the immutable `harness/config.yaml`:
+
+```yaml
+levers:
+  model:                      # forge core: swaps the runtime model for every engine
+    allowed: [databricks-claude-sonnet-4-6, databricks-claude-haiku-4-5]
+  input_mode:                 # any other name: opaque to core, read by your engine
+    allowed: [direct_pdf, text]
+    default: direct_pdf
+```
+
+The optimizer picks a value with a `set_lever` action; the choice is written
+to `scaffold/harness.yaml > levers` and validated against `allowed`. Your
+engine reads resolved values from `snapshot.config.levers` and the model from
+`snapshot.config.effective_runtime_model` (never `runtime_endpoint`, which
+stays the base model the baseline records). The judge model is not a lever.
+Only list models you have checked work with your agent's inputs (e.g. not
+every model accepts a PDF `document` block). The gateway client drops a
+`temperature`/`top_p` a model rejects and retries once.
+
+**Compound rounds**: set `loop.max_mutations_per_round` (default 1, max 5) to
+let one round apply several mutations together via a `compound` action with a
+mandatory `synergy` rationale. Steps apply all-or-nothing; the gate judges the
+combined result once.
+
+**Model prices**: point `model_catalog.sheet_id` at a price sheet (columns
+`Model`, `Price/Input Token ($/1M)`, `Price/Output Token ($/1M)`, optional
+`Context` / `Cache read ($/1M)` / `Provider` / `Notes`) and run
+`uv run python scripts/sync_model_catalog.py` to write
+`harness/model_catalog.csv`; commit it. Rounds read only the CSV. Prices are
+shown to the optimizer next to each `model` value and can be turned into
+`cost_metrics.cost_usd_*` by your engine via `anvil.catalog`; latency is never
+in a price list, so the prompt shows each value's measured history from past
+rounds instead.
+
 ## See also
 
 - `CLAUDE.md` — the invariants (plane separation, immutable `harness/config.yaml`).

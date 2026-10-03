@@ -123,6 +123,40 @@ loop:
   # Hard cap on optimizer turns per round. Round aborts as `noop` if
   # exceeded.
   max_optimizer_turns: 30
+  # Max mutations one round may apply together via a `compound` action
+  # (gated as one unit). 1 = classic single-mutation rounds.
+  max_mutations_per_round: 3
+
+# Runtime levers the optimizer may set with `set_lever` (choices live in
+# scaffold/harness.yaml > levers). Only values listed here are accepted.
+#   model      — forge core: swaps the runtime model for every engine. The
+#                judge (judge_endpoint above) stays fixed so scores remain
+#                comparable. Candidates verified on fevm-stable to accept the
+#                PDF `document` block via the gateway (GPT/Gemini do not).
+#   input_mode — pitcrew domain: direct_pdf (PDF document block) vs text
+#                (pymupdf-extracted, page-marked text; needs pymupdf).
+levers:
+  model:
+    allowed:
+      - databricks-claude-sonnet-4-6
+      - databricks-claude-haiku-4-5
+      - databricks-claude-sonnet-5
+      - databricks-claude-sonnet-5-5
+    description: runtime model for the summarize call
+  input_mode:
+    allowed: [direct_pdf, text]
+    default: direct_pdf
+    description: how the PDF reaches the model — native PDF block or extracted text
+
+# Model prices: scripts/sync_model_catalog.py exports this Google Sheet into
+# `path`; the loop reads only that committed CSV (never the sheet). Re-sync
+# when the sheet changes. Prices are context for the optimizer + cost_usd
+# metrics, not a gate input.
+model_catalog:
+  path: harness/model_catalog.csv
+  sheet_id: 1UBMkM_MOHsjE_ukh88i25LdbLeoEX9AFWcVRVlu7ehg
+  sheet_range: Sheet1
+  context_tier: short
 
 # Eval configuration.
 eval:

@@ -72,7 +72,9 @@ def load_harness(
         system_prompt=composed.text,
         sampling=config.sampling,
         tools=list(config.tools),
-        runtime_endpoint=config.runtime_endpoint,
+        # The model the runtime agent calls: the ``model`` lever when the
+        # optimizer set one, else the immutable base ``runtime_endpoint``.
+        runtime_endpoint=config.effective_runtime_model,
         judge_endpoint=config.judge_endpoint,
         config=config,
         manifest=composed.manifest,

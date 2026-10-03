@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 from anvil.domains.pitcrew.eval import evaluate_pitcrew, load_pitcrew_golden_set
 from anvil.domains.pitcrew.scoring import (
@@ -155,3 +156,54 @@ def test_engine_omits_latency_when_every_summarize_fails(tmp_golden: Path) -> No
         judge_fn=lambda doc_block, summary_text: 1.0,  # noqa: ARG005
     )
     assert "latency_ms_median" not in report.cost_metrics
+
+
+def test_engine_prices_token_usage_into_cost(tmp_golden: Path) -> None:
+    """A (text, usage) predictor yields token + cost_usd metrics from the price list.
+
+    The shipped harness/model_catalog.csv prices databricks-claude-sonnet-4-6
+    (the base model) at ~$3 in / ~$15 out per 1M tokens.
+    """
+    good_text = json.dumps(_GOOD)
+
+    def predict_fn(pdf_bytes: bytes):  # noqa: ARG001
+        return good_text, {"input_tokens": 10_000, "output_tokens": 2_000}
+
+    report = evaluate_pitcrew(
+        scaffold_root=REPO_ROOT / "scaffold",
+        runtime_config_path=REPO_ROOT / "harness" / "config.yaml",
+        golden_set_path=tmp_golden,
+        mode="quick",
+        predict_fn=predict_fn,
+        judge_fn=lambda doc_block, summary_text: 1.0,  # noqa: ARG005
+    )
+    cm = report.cost_metrics
+    assert cm["input_tokens_mean"] == 10_000 and cm["output_tokens_mean"] == 2_000
+    assert cm["cost_usd_per_row_mean"] == pytest.approx(0.06, rel=1e-3)
+    assert cm["cost_usd_total"] == pytest.approx(8 * 0.06, rel=1e-3)
+
+
+def test_text_input_mode_without_pymupdf_fails_fast(
+    tmp_path: Path, tmp_golden: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """input_mode=text with no PDF extractor is an infra failure, not 0.0 scores."""
+    import shutil
+
+    from anvil.domains.pitcrew import eval as pitcrew_eval
+
+    scaffold = tmp_path / "repo" / "scaffold"
+    shutil.copytree(REPO_ROOT / "scaffold", scaffold)
+    (tmp_path / "repo" / "harness").mkdir()
+    shutil.copy(REPO_ROOT / "harness" / "config.yaml", tmp_path / "repo" / "harness" / "config.yaml")
+    harness = yaml.safe_load((scaffold / "harness.yaml").read_text())
+    harness["levers"] = {"input_mode": "text"}
+    (scaffold / "harness.yaml").write_text(yaml.safe_dump(harness))
+    monkeypatch.setattr(pitcrew_eval, "text_mode_available", lambda: False)
+
+    with pytest.raises(RuntimeError, match="pymupdf"):
+        evaluate_pitcrew(
+            scaffold_root=scaffold,
+            golden_set_path=tmp_golden,
+            mode="quick",
+            judge_fn=lambda doc_block, summary_text: 1.0,  # noqa: ARG005
+        )

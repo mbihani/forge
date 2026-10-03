@@ -808,7 +808,7 @@ def evaluate_branch(
         memory_system = _load_memory_system(
             snapshot.config.agent_module,
             llm_client=runtime_client,
-            model=snapshot.config.runtime_endpoint,
+            model=snapshot.config.effective_runtime_model,
         )
 
         def predict_fn(query: str, **_kwargs: Any) -> str:

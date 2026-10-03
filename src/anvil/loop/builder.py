@@ -20,16 +20,18 @@ small, specific, links to where the rich data lives.
 from __future__ import annotations
 
 import json
+import statistics
 from pathlib import Path
+from typing import Any
 
-from anvil.runtime.models import ParetoObjective
+from anvil.runtime.models import MODEL_LEVER, LeverSpec, ParetoObjective
 
 _PROMPT_TEMPLATE = """\
 # Round {round_id}
 
 You are running optimizer round {round_id} on the ANVIL repo at this
-working directory. The round's purpose is to propose ONE structural
-mutation to ``scaffold/`` that beats the cached parent baseline.
+working directory. The round's purpose is to propose {mutation_budget}
+to ``scaffold/`` that beats the cached parent baseline.
 
 ## Cached parent baseline
 - aggregate: {baseline_aggregate:.3f}  (mode={baseline_mode}, n={n_examples})
@@ -46,6 +48,10 @@ The most-failed examples in the parent run (read the full list in
 
 {objectives_block}
 
+## Runtime levers
+
+{levers_block}
+
 ## What you must do
 
 1. Read ``prompts/anvil-round.md`` — the action contract.
@@ -53,11 +59,11 @@ The most-failed examples in the parent run (read the full list in
 3. Read every active rule + skill from ``scaffold/harness.yaml`` (and
    the most recent ~3 critiques in ``scaffold/memory/``) so your
    mutation does not clash with what's already there.
-4. Pick ONE mutation and emit its action JSON block at the end of the
+4. {pick_instruction} Emit its action JSON block at the end of the
    session. ``noop`` with a thoughtful rationale is preferable to a
    risky guess.
 
-You have at most 30 turns.
+You have at most {max_turns} turns.
 
 ## Recent critiques (last {critique_lookback})
 
@@ -72,6 +78,11 @@ def build_round_prompt(
     baseline: dict | None,
     critique_lookback: int = 3,
     objectives: list[ParetoObjective] | None = None,
+    max_mutations: int = 1,
+    max_turns: int = 30,
+    lever_specs: dict[str, LeverSpec] | None = None,
+    lever_values: dict[str, Any] | None = None,
+    model_prices: dict[str, dict[str, float]] | None = None,
 ) -> str:
     repo_root = Path(repo_root)
 
@@ -103,8 +114,30 @@ def build_round_prompt(
 
     critiques_block = _format_critiques(repo_root, critique_lookback)
     objectives_block = _format_objectives(repo_root, baseline, objectives)
+    levers_block = _format_levers(repo_root, lever_specs or {}, lever_values or {}, model_prices)
+
+    if max_mutations <= 1:
+        mutation_budget = "ONE structural mutation"
+        pick_instruction = "Pick ONE mutation."
+    else:
+        mutation_budget = (
+            f"ONE structural mutation, or a `compound` of up to {max_mutations} "
+            "mutations gated together"
+        )
+        pick_instruction = (
+            "Pick ONE mutation — or, when you predict changes COMBINE (e.g. two "
+            "independent latency cuts each smaller than the epsilon, or a cheaper "
+            f"model plus a prompt edit that protects quality on it), a `compound` "
+            f"of 2..{max_mutations} steps with a `synergy` explaining why the "
+            "combination beats each step alone. Prefer a single step when one "
+            "suffices: a compound is harder to attribute."
+        )
 
     return _PROMPT_TEMPLATE.format(
+        mutation_budget=mutation_budget,
+        pick_instruction=pick_instruction,
+        max_turns=max_turns,
+        levers_block=levers_block,
         round_id=round_id,
         baseline_aggregate=baseline_aggregate,
         baseline_mode=baseline_mode,
@@ -165,6 +198,86 @@ def _format_objectives(
             f"{k}={_fmt(v)}" for k, v in sorted(cost_metrics.items())
         )]
     return "\n".join(lines)
+
+
+def _format_levers(
+    repo_root: Path,
+    specs: dict[str, LeverSpec],
+    values: dict[str, Any],
+    model_prices: dict[str, dict[str, float]] | None,
+) -> str:
+    """Describe each declared lever: current value, allowlist, and history.
+
+    History is read from past ``eval/runs/round_*.json`` records (which carry
+    the resolved ``levers`` each eval ran with), so the optimizer sees the
+    measured median latency and aggregate per lever value — latency is NOT in
+    any price list and must be measured. For the ``model`` lever, per-1M-token
+    prices are shown when a model price list was supplied.
+    """
+    if not specs:
+        return "(no levers declared in harness/config.yaml — only scaffold edits are available)"
+    history = _lever_history(repo_root)
+    lines = [
+        "Change one with `set_lever` (name + a value from its allowed list). "
+        "Values outside the list are rejected.",
+        "",
+    ]
+    for name, spec in specs.items():
+        current = values.get(name, spec.default)
+        head = f"- `{name}` (current: {current!r})"
+        if spec.description:
+            head += f" — {spec.description}"
+        lines.append(head)
+        for option in spec.allowed:
+            parts = [f"    - {option!r}"]
+            if name == MODEL_LEVER and model_prices:
+                price = model_prices.get(str(option))
+                if price:
+                    parts.append(
+                        f"${price.get('input_per_million', float('nan')):g} in / "
+                        f"${price.get('output_per_million', float('nan')):g} out per 1M tokens"
+                    )
+                else:
+                    parts.append("price unknown")
+            stats = history.get((name, str(option)))
+            if stats:
+                parts.append(stats)
+            else:
+                parts.append("not yet evaluated")
+            lines.append(parts[0] + ": " + "; ".join(parts[1:]))
+    return "\n".join(lines)
+
+
+def _lever_history(repo_root: Path) -> dict[tuple[str, str], str]:
+    """Summarize past rounds per (lever, value): n, median latency, best aggregate."""
+    runs_dir = repo_root / "eval" / "runs"
+    if not runs_dir.is_dir():
+        return {}
+    buckets: dict[tuple[str, str], dict[str, list]] = {}
+    for path in sorted(runs_dir.glob("round_*.json")):
+        try:
+            rec = _read_json(path)
+        except (OSError, ValueError):
+            continue
+        levers = rec.get("levers") or {}
+        if not levers or rec.get("aggregate") is None:
+            continue
+        latency = (rec.get("cost_metrics") or {}).get("latency_ms_median")
+        for name, value in levers.items():
+            b = buckets.setdefault((name, str(value)), {"agg": [], "lat": [], "kept": []})
+            b["agg"].append(float(rec["aggregate"]))
+            if isinstance(latency, (int, float)):
+                b["lat"].append(float(latency))
+            b["kept"].append(rec.get("decision") == "keep")
+    out: dict[tuple[str, str], str] = {}
+    for key, b in buckets.items():
+        text = (
+            f"{len(b['agg'])} round(s), {sum(b['kept'])} kept, best aggregate {max(b['agg']):.4f}"
+        )
+        if b["lat"]:
+            text += f", median latency {statistics.median(b['lat']):.0f}ms"
+        out[key] = text
+    return out
 
 
 _COST_METRIC = {

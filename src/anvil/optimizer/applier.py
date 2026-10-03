@@ -18,16 +18,19 @@ Returns an :class:`ApplyResult` listing the files touched + an
 
 from __future__ import annotations
 
+import shutil
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
+from pydantic import ValidationError
 
 from anvil.optimizer.actions import (
     AddRuleAction,
     AddSkillAction,
     ChangeSamplingAction,
+    CompoundAction,
     DeleteAgentAction,
     DeleteRuleAction,
     DeleteSkillAction,
@@ -35,9 +38,11 @@ from anvil.optimizer.actions import (
     EditSkillAction,
     NoopAction,
     OptimizerAction,
+    SetLeverAction,
     WriteAgentAction,
 )
 from anvil.optimizer.code_validation import validate_code_candidate
+from anvil.runtime.models import LeverSpec
 
 
 @dataclass
@@ -73,6 +78,8 @@ _PROMPT_ACTIONS: frozenset[str] = frozenset(
     }
 )
 _CODE_ACTIONS: frozenset[str] = frozenset({"write_agent", "delete_agent"})
+# ``set_lever`` and ``compound`` are in neither set: a lever is a runtime
+# knob valid in both modes, and a compound is checked step by step.
 
 
 def apply_action(
@@ -154,12 +161,103 @@ def apply_action(
             value=action.value,
             rationale=action.rationale,
         )
+    if isinstance(action, SetLeverAction):
+        return _apply_set_lever(root, action)
     if isinstance(action, WriteAgentAction):
         return _apply_write_agent(action, repo_root)
     if isinstance(action, DeleteAgentAction):
         return _apply_delete_agent(action, repo_root, root)
+    if isinstance(action, CompoundAction):
+        return _apply_compound(action, root, mode=mode, repo_root=repo_root)
 
     raise ApplyError(f"unknown action type: {type(action).__name__}")
+
+
+def _apply_compound(
+    action: CompoundAction,
+    root: Path,
+    *,
+    mode: str,
+    repo_root: Path,
+) -> ApplyResult:
+    """Apply every step of a compound action, all or nothing.
+
+    Pre-checks run before anything is written: the step count against
+    ``loop.max_mutations_per_round``, every step's mode, and that no two
+    steps touch the same target (two edits of one file would make the
+    second silently overwrite the first). Then ``scaffold/`` and
+    ``agents/`` are snapshotted; if any step raises, both are restored
+    and the error propagates — a half-applied compound never reaches git.
+    """
+    cap = _read_max_mutations(root)
+    n = len(action.steps)
+    if n > cap:
+        raise ApplyError(
+            f"compound has {n} steps but harness/config.yaml > "
+            f"loop.max_mutations_per_round is {cap}"
+        )
+    seen: set[str] = set()
+    for step in action.steps:
+        _validate_action_mode(step.action, mode)
+        key = _step_target(step)
+        if key in seen:
+            raise ApplyError(f"compound touches {key!r} more than once; merge those steps")
+        seen.add(key)
+
+    with tempfile.TemporaryDirectory(prefix="anvil_compound_") as tmp:
+        backups = _snapshot_dirs([root, repo_root / "agents"], Path(tmp))
+        merged = ApplyResult()
+        summaries: list[str] = []
+        try:
+            for step in action.steps:
+                res = apply_action(step, root, mode=mode, repo_root=repo_root)
+                _merge_into(merged, res)
+                summaries.append(res.action_summary)
+        except Exception:
+            _restore_dirs(backups)
+            raise
+    merged.action_summary = f"compound[{n}] ({action.synergy[:120]}): " + " | ".join(summaries)
+    return merged
+
+
+def _step_target(step: OptimizerAction) -> str:
+    """Identity of what a step mutates, for the duplicate-target check."""
+    if isinstance(step, ChangeSamplingAction):
+        return f"sampling.{step.field}"
+    if isinstance(step, SetLeverAction):
+        return f"levers.{step.name}"
+    target = getattr(step, "target_file", None) or getattr(step, "target", None)
+    return str(target)
+
+
+def _snapshot_dirs(dirs: list[Path], tmp: Path) -> list[tuple[Path, Path | None]]:
+    """Copy each existing dir into ``tmp``; record (original, backup-or-None)."""
+    backups: list[tuple[Path, Path | None]] = []
+    for i, d in enumerate(dirs):
+        if d.is_dir():
+            dest = tmp / f"{i}_{d.name}"
+            shutil.copytree(d, dest, symlinks=True)
+            backups.append((d, dest))
+        else:
+            backups.append((d, None))
+    return backups
+
+
+def _restore_dirs(backups: list[tuple[Path, Path | None]]) -> None:
+    """Put every snapshotted dir back exactly; remove dirs that did not exist."""
+    for original, backup in backups:
+        if original.exists():
+            shutil.rmtree(original)
+        if backup is not None:
+            shutil.copytree(backup, original, symlinks=True)
+
+
+def _merge_into(merged: ApplyResult, res: ApplyResult) -> None:
+    for attr in ("files_added", "files_changed", "files_removed"):
+        target: list[str] = getattr(merged, attr)
+        for path in getattr(res, attr):
+            if path not in target:
+                target.append(path)
 
 
 def _validate_action_mode(action_kind: str, mode: str) -> None:
@@ -306,6 +404,70 @@ def _apply_change_sampling(
         files_changed=[str(harness_path.relative_to(root.parent))],
         action_summary=f"change_sampling {field_name}: {old!r} → {value!r}: {rationale[:120]}",
     )
+
+
+def _apply_set_lever(root: Path, action: SetLeverAction) -> ApplyResult:
+    """Write ``scaffold/harness.yaml > levers.<name>`` after allowlist checks.
+
+    The allowlist lives in the immutable ``harness/config.yaml > levers``,
+    so the optimizer can only pick values the operator listed. A value is
+    matched exactly, or by its string form (the optimizer may emit
+    ``"8000"`` for ``8000``); the CANONICAL allowlisted value is stored.
+    """
+    specs = _read_lever_specs(root)
+    if action.name not in specs:
+        raise ApplyError(
+            f"lever {action.name!r} is not declared in harness/config.yaml > levers "
+            f"(declared: {sorted(specs) or 'none'})"
+        )
+    allowed = specs[action.name].allowed
+    canonical = next(
+        (a for a in allowed if a == action.value and type(a) is type(action.value)), None
+    )
+    if canonical is None:
+        canonical = next((a for a in allowed if str(a) == str(action.value)), None)
+    if canonical is None:
+        raise ApplyError(f"lever {action.name!r} = {action.value!r} is not in allowed {allowed!r}")
+
+    harness_path = root / "harness.yaml"
+    harness = _load_yaml(harness_path)
+    levers = dict(harness.get("levers") or {})
+    old = levers.get(action.name, specs[action.name].default)
+    levers[action.name] = canonical
+    harness["levers"] = levers
+    _dump_yaml(harness_path, harness)
+    return ApplyResult(
+        files_changed=[str(harness_path.relative_to(root.parent))],
+        action_summary=(
+            f"set_lever {action.name}: {old!r} → {canonical!r}: {action.rationale[:120]}"
+        ),
+    )
+
+
+def _read_runtime_config_raw(scaffold_root: Path) -> dict:
+    """Raw ``harness/config.yaml`` (empty dict when absent)."""
+    config_path = scaffold_root.parent / "harness" / "config.yaml"
+    if not config_path.is_file():
+        return {}
+    return yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+
+
+def _read_lever_specs(scaffold_root: Path) -> dict[str, LeverSpec]:
+    """Declared lever allowlists from ``harness/config.yaml > levers``."""
+    raw = _read_runtime_config_raw(scaffold_root).get("levers") or {}
+    try:
+        return {name: LeverSpec.model_validate(spec) for name, spec in raw.items()}
+    except ValidationError as exc:
+        raise ApplyError(f"harness/config.yaml > levers is invalid: {exc}") from exc
+
+
+def _read_max_mutations(scaffold_root: Path) -> int:
+    """``loop.max_mutations_per_round`` (default 1 = classic single mutation)."""
+    loop = _read_runtime_config_raw(scaffold_root).get("loop") or {}
+    try:
+        return max(1, int(loop.get("max_mutations_per_round", 1)))
+    except (TypeError, ValueError):
+        return 1
 
 
 def _check_path_safe(target_path: Path, repo_root: Path) -> None:

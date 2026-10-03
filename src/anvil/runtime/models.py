@@ -16,10 +16,21 @@ with a domain-specific message.
 from __future__ import annotations
 
 import math
+import re
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+# A lever value: a scalar the optimizer may select from an allowlist.
+LeverValue = str | int | float | bool
+
+# The one lever forge core understands: it selects the runtime model for
+# every engine (see :meth:`HarnessConfig.effective_runtime_model`). Every
+# other lever name is opaque to core and interpreted by the domain engine.
+MODEL_LEVER = "model"
+
+_LEVER_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*\Z")
 
 
 class SamplingConfig(BaseModel):
@@ -66,6 +77,60 @@ class LoopConfig(BaseModel):
     critique_lookback: int = 3
     revert_lookback: int = 20
     max_optimizer_turns: int = 30
+    # Upper bound on mutations one round may apply together via a
+    # ``compound`` action. 1 (the default) keeps the classic
+    # one-mutation-per-round loop and rejects compound actions.
+    max_mutations_per_round: int = Field(default=1, ge=1, le=5)
+
+
+class LeverSpec(BaseModel):
+    """One optimizer-selectable runtime lever, declared in ``harness/config.yaml``.
+
+    The immutable config owns the allowlist; the mutable
+    ``scaffold/harness.yaml > levers`` holds the current choice. The
+    optimizer changes a lever with a ``set_lever`` action, which the
+    applier validates against ``allowed`` — so the optimizer can never
+    select a value the operator did not list.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    allowed: list[LeverValue] = Field(min_length=1)
+    # Value used when the scaffold does not set the lever. Must be one of
+    # ``allowed``. For the ``model`` lever, omitting it means
+    # ``runtime_endpoint``.
+    default: LeverValue | None = None
+    # Shown to the optimizer in the round prompt — what the lever does.
+    description: str = ""
+
+    @model_validator(mode="after")
+    def _default_is_allowed(self) -> LeverSpec:
+        if self.default is not None and self.default not in self.allowed:
+            raise ValueError(f"lever default {self.default!r} is not in allowed {self.allowed!r}")
+        return self
+
+
+class ModelCatalogConfig(BaseModel):
+    """Where model prices come from (``harness/config.yaml > model_catalog``).
+
+    ``scripts/sync_model_catalog.py`` exports the operator's Google Sheet
+    (``sheet_id`` / ``sheet_range``) into ``path``; the loop reads only
+    that committed file, never the sheet. ``context_tier`` picks the
+    ``Short (<=200k)`` or ``Long (>200k)`` row for models priced per tier.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = "harness/model_catalog.csv"
+    sheet_id: str | None = None
+    sheet_range: str = "Sheet1"
+    context_tier: Literal["short", "long"] = "short"
+
+
+def _validate_lever_names(names: Any) -> None:
+    for name in names:
+        if not isinstance(name, str) or not _LEVER_NAME_RE.match(name):
+            raise ValueError(f"invalid lever name {name!r}: must match {_LEVER_NAME_RE.pattern}")
 
 
 class ParetoObjective(BaseModel):
@@ -491,6 +556,16 @@ class ScaffoldYAML(BaseModel):
     skills: list[SkillRef] = Field(default_factory=list)
     rules: list[RuleRef] = Field(default_factory=list)
     tools: list[ToolRef] = Field(default_factory=list)
+    # Current lever choices (name -> value). Each name must be declared in
+    # ``harness/config.yaml > levers`` and each value must be in that
+    # lever's ``allowed`` list; validated when the two files are merged.
+    levers: dict[str, LeverValue] = Field(default_factory=dict)
+
+    @field_validator("levers")
+    @classmethod
+    def _lever_names(cls, v: dict[str, LeverValue]) -> dict[str, LeverValue]:
+        _validate_lever_names(v)
+        return v
 
 
 class RuntimeYAML(BaseModel):
@@ -527,6 +602,22 @@ class RuntimeYAML(BaseModel):
     # to MLflow). Optional + enabled-by-default so existing configs stay
     # valid; a loop/orchestrator-plane concern, not merged into HarnessConfig.
     persistence: OptimizerPersistenceConfig = Field(default_factory=OptimizerPersistenceConfig)
+    # Optimizer-selectable runtime levers (name -> allowlist). ``model`` is
+    # understood by forge core and swaps the runtime model for every engine;
+    # any other name is opaque to core and interpreted by the domain engine
+    # (e.g. an input-format switch). Empty = no levers (backward compatible).
+    # ``judge_endpoint`` is deliberately NOT a lever: the grader stays fixed
+    # so scores remain comparable across rounds.
+    levers: dict[str, LeverSpec] = Field(default_factory=dict)
+    # Model price list source + synced file. Informational: prices are shown
+    # to the optimizer and used for cost_usd metrics, never as a gate input.
+    model_catalog: ModelCatalogConfig = Field(default_factory=ModelCatalogConfig)
+
+    @field_validator("levers")
+    @classmethod
+    def _lever_names(cls, v: dict[str, LeverSpec]) -> dict[str, LeverSpec]:
+        _validate_lever_names(v)
+        return v
 
 
 class HarnessConfig(BaseModel):
@@ -545,6 +636,23 @@ class HarnessConfig(BaseModel):
     loop: LoopConfig = Field(default_factory=LoopConfig)
     eval: EvalConfig = Field(default_factory=EvalConfig)
     gate: GateConfig = Field(default_factory=GateConfig)
+    # Declared lever allowlists (from harness/config.yaml).
+    lever_specs: dict[str, LeverSpec] = Field(default_factory=dict)
+    # Resolved lever values: the scaffold's choice, else the lever's
+    # default. A lever with neither is absent here (the engine decides).
+    levers: dict[str, LeverValue] = Field(default_factory=dict)
+    model_catalog: ModelCatalogConfig = Field(default_factory=ModelCatalogConfig)
+
+    @property
+    def effective_runtime_model(self) -> str:
+        """The model the runtime agent actually calls this round.
+
+        The ``model`` lever when set, else the immutable
+        ``runtime_endpoint``. ``runtime_endpoint`` itself stays the BASE
+        model — it is what the baseline cache records.
+        """
+        chosen = self.levers.get(MODEL_LEVER)
+        return str(chosen) if chosen is not None else self.runtime_endpoint
 
     @classmethod
     def from_split(cls, scaffold: ScaffoldYAML, runtime: RuntimeYAML) -> HarnessConfig:
@@ -562,7 +670,39 @@ class HarnessConfig(BaseModel):
             loop=runtime.loop,
             eval=runtime.eval,
             gate=runtime.gate,
+            lever_specs=dict(runtime.levers),
+            levers=resolve_levers(runtime.levers, scaffold.levers),
+            model_catalog=runtime.model_catalog,
         )
+
+
+def resolve_levers(
+    specs: dict[str, LeverSpec], chosen: dict[str, LeverValue]
+) -> dict[str, LeverValue]:
+    """Merge scaffold lever choices with their declared specs.
+
+    Raises ``ValueError`` when the scaffold sets an undeclared lever or a
+    value outside its allowlist — a hand-edited or stale scaffold fails
+    loudly at load time instead of silently running an unlisted model.
+    """
+    unknown = sorted(set(chosen) - set(specs))
+    if unknown:
+        raise ValueError(
+            f"scaffold/harness.yaml > levers sets undeclared lever(s) {unknown}; "
+            f"declare them in harness/config.yaml > levers (declared: {sorted(specs)})"
+        )
+    resolved: dict[str, LeverValue] = {}
+    for name, spec in specs.items():
+        if name in chosen:
+            value = chosen[name]
+            if value not in spec.allowed:
+                raise ValueError(
+                    f"lever {name!r} = {value!r} is not in its allowlist {spec.allowed!r}"
+                )
+            resolved[name] = value
+        elif spec.default is not None:
+            resolved[name] = spec.default
+    return resolved
 
 
 # Field names that belong in the *other* file. Used by the loader to
@@ -581,6 +721,7 @@ RUNTIME_FIELDS: frozenset[str] = frozenset(
         "gate",
         "optimizer",
         "persistence",
+        "model_catalog",
     }
 )
 SCAFFOLD_FIELDS: frozenset[str] = frozenset({"sampling", "skills", "rules", "tools"})
