@@ -1,0 +1,24 @@
+{
+  "best": {
+    "latency": 30760.427380499095,
+    "quality": 0.94375
+  },
+  "objectives": [
+    "latency",
+    "quality"
+  ],
+  "pareto": true,
+  "directions": {
+    "latency": "minimize",
+    "quality": "maximize"
+  },
+  "sources": {
+    "latency": "latency",
+    "quality": "aggregate"
+  },
+  "epsilon": 0.0,
+  "epsilons": {
+    "latency": 2000.0,
+    "quality": 0.03
+  }
+}

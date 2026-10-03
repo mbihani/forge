@@ -1,0 +1,19 @@
+{
+  "round_id": 11,
+  "branch": "anvil/exp-round-11",
+  "scaffold_commit_sha": "9c8dc7983d7e7cb3b28564d53362d43aa3ebd9d6",
+  "parent_commit_sha": "9c8dc7983d7e7cb3b28564d53362d43aa3ebd9d6",
+  "decision": "noop",
+  "action_kind": "noop",
+  "parse_status": "ok_last_of_many",
+  "baseline_score": 0.94375,
+  "score_delta_vs_parent": 0.0,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "Frontier saturated: best observed latency 29740ms (R4) and best observed quality 0.9703 (R4) each fall ~1000ms / ~0.0034 short of the 2000ms / 0.03 epsilon bars, and both occurred on single-mutation runs that were already reverted. The combination that would clear a gate (R2's compact-JSON on identity.md + R4's summary brevity on section_summary.md) requires two mutations and so cannot be expressed in one action. Every single-mutation re-approach either (a) replays a reverted mechanism and triggers no_repeat_failed_mutations (compact JSON in identity/output_schema; summary-brevity in section_summary; shorter citations in citations.md; citation-count caps per R10), or (b) layers extra directives on top of R4 (R5 pattern) which collapsed summary_quality 0.941\u21920.841 and json_valid 1.0\u21920.95, or (c) touches fragile surfaces (output_schema.md edits per R6/R9: -0.047; deleting exclusions.md re-admits padding; sampling perturbations are noise gambling per R6/R7 dismissal). R10 just confirmed the pattern \u2014 a non-repeat citation mutation regressed -0.030, hitting the quality floor. Across the lever space, P(gate-clear) \u00d7 upside < P(regress > 0.03) \u00d7 downside. Noop preserves the on-frontier R1-kept state (latency 30760, quality 0.9437) rather than burning the round on a mutation with negative expected value. Two prior noops (R6, R7) reached the same conclusion from the same frontier; R10's revert since then has only reinforced the saturation diagnosis.",
+  "optimizer_run": null,
+  "optimizer_session_url": null,
+  "frontier_best": null
+}

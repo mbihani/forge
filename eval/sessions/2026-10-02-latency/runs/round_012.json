@@ -1,0 +1,19 @@
+{
+  "round_id": 12,
+  "branch": "anvil/exp-round-12",
+  "scaffold_commit_sha": "9c8dc7983d7e7cb3b28564d53362d43aa3ebd9d6",
+  "parent_commit_sha": "9c8dc7983d7e7cb3b28564d53362d43aa3ebd9d6",
+  "decision": "noop",
+  "action_kind": "noop",
+  "parse_status": "ok_last_of_many",
+  "baseline_score": 0.94375,
+  "score_delta_vs_parent": 0.0,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "Frontier saturated after 10 explored rounds; expected value of every remaining single-mutation lever is negative. Latency best-so-far 30760ms with R2 (29839) and R4 (29740) both landing ~1000ms short of the 28760ms epsilon-win bar \u2014 strongly consistent with an input-side TTFT floor on ~20-page FINRA PDFs rather than output tokens, so further output trimming (citations beyond R1, hierarchy pruning, exclusions expansion) hits diminishing returns well before clearing the gate while taking real quality-floor risk (R10 just demonstrated: citation-count cap regressed -0.030 straight into the 0.9137 quality floor). Quality best-so-far 0.9437 with R4 (0.9704) only +0.0034 short of the 0.9737 bar \u2014 inside eval noise (~\u00b10.02 on 20-row aggregate) \u2014 but no_repeat_failed_mutations blocks R4-equivalent re-proposals, and R5 proved that layering additional structural directives on top of R4 catastrophically collapses summary_quality (0.9406 \u2192 0.8406) and even output_json_valid (1.0 \u2192 0.95). All plausible net-new section_summary edits (R3/R5/R8/R9) landed in [-0.048, +0.002]; the only kept mutation ever (R1) is already in the current scaffold. identity.md was touched by R2 (compact-JSON) and reverted; output_schema.md is flagged fragile (legacy R9 edit: -0.047); exclusions.md deletion re-admits amendment-history padding; sampling perturbations (temp=0.1\u21920.0, top_p) are noise gambling per R6/R7 dismissal; max_tool_calls=0 is already minimal; new skills/rules carry R5-pattern clash risk. Across the lever space, P(gate-clear) \u00d7 upside < P(regress > 0.03) \u00d7 downside into the quality floor. Noop preserves the on-frontier R1-kept state (latency 30760, quality 0.9437) rather than burning the round on a mutation with negative expected value. R6, R7, R11 reached the same diagnosis from the same frontier; R10's revert since R11 reinforces rather than invalidates the saturation call.",
+  "optimizer_run": null,
+  "optimizer_session_url": null,
+  "frontier_best": null
+}

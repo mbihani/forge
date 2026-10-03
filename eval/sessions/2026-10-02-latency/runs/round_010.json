@@ -1,0 +1,238 @@
+{
+  "round_id": 10,
+  "branch": "anvil/exp-round-10",
+  "scaffold_commit_sha": "0f8aa71284d83fbd3c75efdbdd68ea9ad58147e9",
+  "parent_commit_sha": "9c8dc7983d7e7cb3b28564d53362d43aa3ebd9d6",
+  "decision": "revert",
+  "action_kind": "edit_skill",
+  "parse_status": "ok_last_of_many",
+  "baseline_score": 0.94375,
+  "score_delta_vs_parent": -0.029687499999999978,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "Pareto target: latency (epsilon 2000ms). Baseline output_chars_mean=21325 and latency_median=37798ms. After the Round 1 anchor-length tightening, citations still account for a disproportionate share of output because nothing caps the number of citation entries per section \u2014 the schema makes `citations` a list and the current skill does not restrict count. In a ~25-section FINRA rule, if the model emits ~3 citations/section at ~80 chars each, forcing exactly one entry removes ~2 \u00d7 ~80 \u00d7 25 \u2248 4000 chars (~19% of output). Predicted latency drop ~4000-6000ms \u2192 clears the 2000ms epsilon with margin. Quality risk is minimal: the summary_quality judge scrutinizes the `summary` field (untouched); schema_adherence stays 1.0 (a one-element list is still a valid list and includes both required keys); output_json_valid stays 1.0 (fewer entries = fewer escape surfaces). Non-overlapping with Round 1 (which shrank the per-quote word count, not the per-section count) so this is not a semantic repeat per the no_repeat_failed_mutations rule. No clash with hierarchy / section_summary / exclusions / output_schema (none constrain citation cardinality). Smallest surgical change that moves a Pareto objective and compounds Round 1's win.",
+  "optimizer_run": null,
+  "optimizer_session_url": null,
+  "frontier_best": {
+    "latency": 30760.427380499095,
+    "quality": 0.94375
+  },
+  "evaluated_at": "2026-10-02T21:01:25+00:00",
+  "n_examples": 20,
+  "mode": "full",
+  "scorers": [
+    "output_json_valid",
+    "schema_adherence",
+    "summary_quality"
+  ],
+  "aggregate": 0.9140625,
+  "per_judge": {
+    "summary_quality": 0.878125,
+    "schema_adherence": 0.95,
+    "output_json_valid": 0.95
+  },
+  "per_bucket": {
+    "finra": {
+      "summary_quality": 0.878125,
+      "schema_adherence": 0.95,
+      "output_json_valid": 0.95,
+      "aggregate": 0.9140625
+    }
+  },
+  "cost_metrics": {
+    "n_rows": 20.0,
+    "latency_ms_median": 32992.34812050054,
+    "latency_ms_mean": 52260.98632759986,
+    "latency_ms_p90": 143049.33026599974,
+    "output_chars_mean": 17345.85
+  },
+  "failures": [
+    {
+      "example_id": "finra_1210",
+      "query": "1210. Registration Requirements",
+      "category": "finra",
+      "judge_failures": [
+        "output_json_valid",
+        "schema_adherence",
+        "summary_quality"
+      ],
+      "per_objective": {
+        "output_json_valid": 0.0,
+        "schema_adherence": 0.0,
+        "summary_quality": 0.0
+      }
+    },
+    {
+      "example_id": "finra_1220",
+      "query": "1220. Registration Categories",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.8125
+      }
+    },
+    {
+      "example_id": "finra_2010",
+      "query": "2010. STANDARDS OF COMMERCIAL HONOR AND PRINCIPLES OF TRADE",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.8125
+      }
+    },
+    {
+      "example_id": "finra_2111",
+      "query": "2111. Suitability",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_2210",
+      "query": "2210. Communications with the Public",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.875
+      }
+    },
+    {
+      "example_id": "finra_2264",
+      "query": "2264. Margin Disclosure Statement",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_2360",
+      "query": "2360. Options",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.8125
+      }
+    },
+    {
+      "example_id": "finra_3110",
+      "query": "3110. Supervision",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_3210",
+      "query": "3210. Accounts At Other Broker-Dealers and Financial Institutions",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_3220",
+      "query": "3220. Influencing or Rewarding Employees of Others",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_4512",
+      "query": "4512. Customer Account Information",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_4530",
+      "query": "4530. Reporting Requirements",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_5130",
+      "query": "5130. Restrictions on the Purchase and Sale of Initial Equity Public Offerings",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_5210",
+      "query": "5210. Publication of Transactions and Quotations",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_5310",
+      "query": "5310. Best Execution and Interpositioning",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_8210",
+      "query": "8210. Provision of Information and Testimony and Inspection and Copying of Books",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.875
+      }
+    }
+  ],
+  "trace_ids": [],
+  "mlflow": {
+    "run_id": "",
+    "experiment_id": "1"
+  }
+}

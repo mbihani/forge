@@ -1,0 +1,19 @@
+{
+  "round_id": 13,
+  "branch": "anvil/exp-round-13",
+  "scaffold_commit_sha": "9c8dc7983d7e7cb3b28564d53362d43aa3ebd9d6",
+  "parent_commit_sha": "9c8dc7983d7e7cb3b28564d53362d43aa3ebd9d6",
+  "decision": "noop",
+  "action_kind": "noop",
+  "parse_status": "ok_last_of_many",
+  "baseline_score": 0.94375,
+  "score_delta_vs_parent": 0.0,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "Frontier saturated after 12 rounds (10 explored, 2 noop). Best observed single-mutation falls short of both epsilon bars: latency bar 28760ms vs R2=29839ms / R4=29740ms (~1000ms short); quality bar 0.9737 vs R4=0.9703 (0.0034 short). All plausible net-new levers now carry negative expected value: section_summary edits occupy [-0.048, +0.002] with R5 proving layered directives collapse summary_quality 0.941->0.841; output_schema.md is flagged fragile (R6/R9 both -0.047); hierarchy.md L5-merging and exclusions.md expansion share R10's citation-count-cap failure mode (-0.030 straight into the quality floor via schema_adherence drop); new skills carry R6-pattern clash risk; sampling perturbations dismissed as noise per R7. The one composite that would clear the gate (R2 compact-JSON on identity.md + R4 summary brevity on section_summary.md, additive ~27839ms) requires two mutations and cannot be expressed as one action; emulating it in a single file either semantically repeats R2 or R4 (blocked by no_repeat_failed_mutations) or layers directives on a reverted-fragile surface (R5 pattern). Across the lever space, P(gate-clear) * upside < P(regress > 0.03) * downside. Noop preserves the on-frontier R1-kept state (latency 30760, quality 0.9437). R11 and R12 reached the same diagnosis from the same frontier; R10's revert since R11 reinforces the saturation call.",
+  "optimizer_run": null,
+  "optimizer_session_url": null,
+  "frontier_best": null
+}

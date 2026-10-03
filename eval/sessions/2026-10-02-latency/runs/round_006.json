@@ -1,0 +1,19 @@
+{
+  "round_id": 6,
+  "branch": "anvil/exp-round-6",
+  "scaffold_commit_sha": "9c8dc7983d7e7cb3b28564d53362d43aa3ebd9d6",
+  "parent_commit_sha": "9c8dc7983d7e7cb3b28564d53362d43aa3ebd9d6",
+  "decision": "noop",
+  "action_kind": "noop",
+  "parse_status": "ok_last_of_many",
+  "baseline_score": 0.94375,
+  "score_delta_vs_parent": 0.0,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "Both Pareto axes are saturated against the frontier (latency=30760, quality=0.9437). Latency: R2 compact-JSON (29839ms) and R4 summary-brevity (29740ms) both landed ~1000ms short of the 28760ms epsilon-win bar; the current scaffold already carries R1 citations-tightening + R4-style section_summary, so any obvious re-application reproduces the known ~29700ms floor (likely input-side TTFT, not output tokens) and would also violate no_repeat_failed_mutations. Quality: best ever observed is R4=0.9703, short of the 0.9737 bar by only 0.0034 \u2014 within eval noise (~\u00b10.02 on aggregate). R5 showed that layering additional structural directives on top of R4 backfires catastrophically (summary_quality 0.9406 \u2192 0.8406, json_valid 1.0 \u2192 0.95), so a 'push R4 slightly further' edit has a worse expected value than noop given the 0.9137 quality floor. Untried levers are weak or unsafe: max_tokens is already far above actual output, temperature perturbation is noise gambling, deleting exclusions.md would re-admit amendment-history padding, further citation tightening re-litigates R1 with diminishing returns, and structural-hierarchy pruning risks schema_adherence (currently 1.0). Noop preserves the kept-R1 state intact and avoids burning the round on a mutation whose downside (>0.03 regression into the quality floor) dominates its upside (<0.004 upside into the quality-win bar).",
+  "optimizer_run": null,
+  "optimizer_session_url": null,
+  "frontier_best": null
+}

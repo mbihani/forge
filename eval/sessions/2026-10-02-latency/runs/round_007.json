@@ -1,0 +1,19 @@
+{
+  "round_id": 7,
+  "branch": "anvil/exp-round-7",
+  "scaffold_commit_sha": "9c8dc7983d7e7cb3b28564d53362d43aa3ebd9d6",
+  "parent_commit_sha": "9c8dc7983d7e7cb3b28564d53362d43aa3ebd9d6",
+  "decision": "noop",
+  "action_kind": "noop",
+  "parse_status": "ok_last_of_many",
+  "baseline_score": 0.94375,
+  "score_delta_vs_parent": 0.0,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "Both Pareto axes remain saturated against the frontier (latency 30760, quality 0.9437) and no untouched lever has an expected value better than keeping the R1 state. Latency: R2 (compact-JSON) and R4 (summary-brevity) both landed at 29700-29839ms, ~1000ms short of the 28760ms epsilon-win bar \u2014 strongly suggesting the floor is input-side TTFT on ~20-page PDFs, not output tokens, so further output trimming (hierarchy pruning, exclusions expansion, more citation tightening) hits diminishing returns well short of the gate while taking on real quality-floor risk. Quality: R4 (0.9703) was the closest result ever observed \u2014 only +0.0034 short of the 0.9737 bar, within eval noise (~\u00b10.02 on 20-row aggregate) \u2014 but no_repeat_failed_mutations prohibits re-proposing an R4-equivalent, and R5 proved layering additional structural directives on top of R4 catastrophically collapses summary_quality (0.9406 \u2192 0.8406) and even output_json_valid (1.0 \u2192 0.95). Sampling perturbation (R6 critique already dismissed): temp is 0.1, moving to 0.0 is noise gambling with ~0 expected delta on either axis; top_p=null and max_tokens=32000 are non-binding. Deleting exclusions.md re-admits amendment-history padding (quality + latency regression). Adding a new skill carries the legacy-R6 and R5 clash-pattern downside. Across the lever space, no candidate has P(gate-clear) \u00d7 upside > P(regress) \u00d7 0.03 downside into the quality floor. Noop preserves the R1-kept state (latency 30760, quality 0.9391 observed on R1) on the Pareto frontier and avoids burning the round.",
+  "optimizer_run": null,
+  "optimizer_session_url": null,
+  "frontier_best": null
+}

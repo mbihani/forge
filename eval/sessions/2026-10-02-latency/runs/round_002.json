@@ -1,0 +1,223 @@
+{
+  "round_id": 2,
+  "branch": "anvil/exp-round-2",
+  "scaffold_commit_sha": "fbee7f5afc87912f819de25fb11b5f8d092e92fe",
+  "parent_commit_sha": "c7c0b711e374a1271bdeb90ffa396034e9a9cb2a",
+  "decision": "revert",
+  "action_kind": "edit_skill",
+  "parse_status": "ok_last_of_many",
+  "baseline_score": 0.94375,
+  "score_delta_vs_parent": 0.021874999999999978,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "Pareto target: latency (epsilon 2000ms). Parent baseline latency_median=37798ms; R1 (citations tightening) already captured the content-length lever (30760ms frontier). The remaining large, untapped latency reservoir is output whitespace: with ~25 sections \u00d7 5 fields \u00d7 nested citations arrays, pretty-printed JSON can carry 2\u20133K chars of pure indentation/newlines over a ~21K output (~10\u201315% of total). Nothing in the current scaffold instructs compact emission. Predicted drop: ~2500\u20134000ms additional, pushing latency to ~27\u201328K ms \u2014 clears the 2000ms epsilon vs parent (37798) by a wide margin and plausibly beats the R1 frontier too. Quality floor: whitespace is semantically invisible to all three judges (summary_quality scores parsed content, schema_adherence scores parsed structure, output_json_valid scores JSON parseability \u2014 compact JSON is still valid JSON). Expected quality delta \u2248 0. Clash check: no active rule/skill specifies pretty-printed layout; the new sentence sits in identity.md's existing 'Output discipline' section alongside the directly analogous 'no markdown fences, no commentary' surface-form directives \u2014 no semantic overlap with hierarchy/section_summary/citations/exclusions/output_schema. Chose identity.md over output_schema.md deliberately: prior R9 in the sibling 'quality' session (-0.047) proved cosmetic edits to output_schema.md are fragile; identity.md's Output discipline section is the natural, lower-risk home for surface-form directives. Frontmatter preserved (kind:identity, required:true) so the composer load path is untouched. Downside is bounded: if the model already defaults to compact JSON, the mutation is a noop with ~0 regression on both axes.",
+  "optimizer_run": null,
+  "optimizer_session_url": null,
+  "frontier_best": {
+    "latency": 30760.427380499095,
+    "quality": 0.94375
+  },
+  "evaluated_at": "2026-10-02T20:06:24+00:00",
+  "n_examples": 20,
+  "mode": "full",
+  "scorers": [
+    "output_json_valid",
+    "schema_adherence",
+    "summary_quality"
+  ],
+  "aggregate": 0.965625,
+  "per_judge": {
+    "summary_quality": 0.93125,
+    "schema_adherence": 1.0,
+    "output_json_valid": 1.0
+  },
+  "per_bucket": {
+    "finra": {
+      "summary_quality": 0.93125,
+      "schema_adherence": 1.0,
+      "output_json_valid": 1.0,
+      "aggregate": 0.965625
+    }
+  },
+  "cost_metrics": {
+    "n_rows": 20.0,
+    "latency_ms_median": 29839.807919499435,
+    "latency_ms_mean": 48243.743875949986,
+    "latency_ms_p90": 132449.82455100035,
+    "output_chars_mean": 15560.4
+  },
+  "failures": [
+    {
+      "example_id": "finra_1210",
+      "query": "1210. Registration Requirements",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_1220",
+      "query": "1220. Registration Categories",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.8125
+      }
+    },
+    {
+      "example_id": "finra_2010",
+      "query": "2010. STANDARDS OF COMMERCIAL HONOR AND PRINCIPLES OF TRADE",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.8125
+      }
+    },
+    {
+      "example_id": "finra_2020",
+      "query": "2020. Use of Manipulative, Deceptive or Other Fraudulent Devices",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_2210",
+      "query": "2210. Communications with the Public",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.875
+      }
+    },
+    {
+      "example_id": "finra_2360",
+      "query": "2360. Options",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.8125
+      }
+    },
+    {
+      "example_id": "finra_3110",
+      "query": "3110. Supervision",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_3210",
+      "query": "3210. Accounts At Other Broker-Dealers and Financial Institutions",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_3220",
+      "query": "3220. Influencing or Rewarding Employees of Others",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_4512",
+      "query": "4512. Customer Account Information",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_4530",
+      "query": "4530. Reporting Requirements",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_5130",
+      "query": "5130. Restrictions on the Purchase and Sale of Initial Equity Public Offerings",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_5210",
+      "query": "5210. Publication of Transactions and Quotations",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_5310",
+      "query": "5310. Best Execution and Interpositioning",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    },
+    {
+      "example_id": "finra_8210",
+      "query": "8210. Provision of Information and Testimony and Inspection and Copying of Books",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.9375
+      }
+    }
+  ],
+  "trace_ids": [],
+  "mlflow": {
+    "run_id": "",
+    "experiment_id": "1"
+  }
+}
