@@ -45,6 +45,15 @@ next steps, read `docs/plan.md`.
   round is `anvil/round-N`; keep = fast-forward merge; revert =
   `git branch -D`.
 
+## Starting an optimization session
+
+- When the user wants to start, set up, or resume an optimization run, use
+  the **`forge-onboarding`** skill (`.claude/skills/forge-onboarding/`). Run
+  its intake — objective, models, levers, mutations per round, eval size,
+  budget, workspace, results repo — and its preflight before writing config
+  or starting any baseline or round. Never assume the objective (quality vs
+  latency/cost); ask.
+
 ## When proposing architecture changes
 
 - Cite MiniMax M2.7 (`research/minimax-m27-*.md`) if relevant — those

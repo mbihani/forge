@@ -28,11 +28,38 @@ autonomously, and the frontier gate decides keep/revert without asking you).
 | **Local scripts** | `scripts/make_baseline.py` then `scripts/run_round.py --rounds N` (§8–§9) | ❌ Fire-and-forget |
 
 > From **Claude Code** in this repo, run the **`forge-onboarding`** skill — it
-> verifies the prerequisites below and drives the scripts (or points you at the
-> wizard) for you.
+> asks you the session intake below, writes the config, runs the preflight
+> checks, and drives the scripts (or points you at the wizard) for you.
 
 Note: forge's *optimizer* internally runs a Claude Agent SDK session as its
 mutation engine, but that is forge's own engine — not a session you type into.
+
+### Session intake — decide these before any round runs
+
+Rounds run unattended once started, so every decision is made up front. Any
+coding harness driving forge should ask these and wait for answers
+(`.claude/skills/forge-onboarding/SKILL.md` has the full wording and how each
+answer maps to config):
+
+| # | Decision | Sets |
+|---|---|---|
+| 1 | Which agent / domain (existing domain, `trace` engine, or a new domain) | `eval.engine` |
+| 2 | Objective: quality, latency/cost with a quality floor, or both | `gate.pareto` objectives |
+| 3 | What may change: prompt scaffold or agent code | `mode` |
+| 4 | Which runtime models may be tried (each verified on the agent's real input) | `levers.model.allowed` |
+| 5 | Other domain levers to allow (and their dependencies) | `levers.<name>` |
+| 6 | Mutations per round (1–5) | `loop.max_mutations_per_round` |
+| 7 | Eval size (quick / standard / full) | `eval.default_mode`, `--eval-mode` |
+| 8 | Rounds and per-objective gate margins | `--rounds`, `gate…epsilon` |
+| 9 | Workspace auth and optimizer backend | `--profile` / env, `optimizer.backend` |
+| 10 | Which repo and branch receive results | git remote, `--parent-branch` |
+| 11 | Re-sync model prices now? | `harness/model_catalog.csv` |
+
+Then the preflight: clean tree on the right remote, engine + levers load,
+every allowed model accepts the agent's real input, lever dependencies are
+installed, prices are known, and the baseline is **freshly generated at the
+same eval size and starting levers as the rounds** (a mismatched or cached
+baseline makes the gate compare unlike runs).
 
 ---
 
