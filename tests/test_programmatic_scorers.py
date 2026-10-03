@@ -285,9 +285,7 @@ def test_runtime_yaml_parses_full_mixed_config(tmp_path: Path) -> None:
             optimizer_endpoint: op
             judge_endpoint: j
             experiments:
-              runtime: r
-              eval: e
-              optimizer: o
+              root: /Shared/forge
             eval:
               scorers:
                 - name: correctness
@@ -644,7 +642,7 @@ def test_evaluate_branch_mixed_scoring(tmp_path: Path, monkeypatch: pytest.Monke
     monkeypatch.setattr(runner, "select_subset", lambda exs, **_k: exs)
     monkeypatch.setattr(runner, "make_kb_executor", lambda *a, **kw: SimpleNamespace())
     monkeypatch.setattr(runner, "AnvilAgent", lambda *a, **kw: SimpleNamespace())
-    monkeypatch.setattr(runner, "enable_runtime_tracing", lambda *a, **kw: None)
+    monkeypatch.setattr("anvil.observability.enable_runtime_tracing", lambda *a, **kw: None)
     monkeypatch.setattr(runner.mlflow, "set_experiment", lambda *a, **kw: None)
     monkeypatch.setattr(runner.mlflow, "set_tracking_uri", lambda *a, **kw: None)
     monkeypatch.setattr(runner.mlflow, "get_experiment_by_name", lambda *a, **kw: None)
@@ -718,7 +716,7 @@ def test_evaluate_branch_backward_compat_string_scorers(
     monkeypatch.setattr(runner, "select_subset", lambda exs, **_k: exs)
     monkeypatch.setattr(runner, "make_kb_executor", lambda *a, **kw: SimpleNamespace())
     monkeypatch.setattr(runner, "AnvilAgent", lambda *a, **kw: SimpleNamespace())
-    monkeypatch.setattr(runner, "enable_runtime_tracing", lambda *a, **kw: None)
+    monkeypatch.setattr("anvil.observability.enable_runtime_tracing", lambda *a, **kw: None)
     monkeypatch.setattr(runner.mlflow, "set_experiment", lambda *a, **kw: None)
     monkeypatch.setattr(runner.mlflow, "set_tracking_uri", lambda *a, **kw: None)
     monkeypatch.setattr(runner.mlflow, "get_experiment_by_name", lambda *a, **kw: None)
@@ -993,7 +991,7 @@ def _run_evaluate_branch_with_profile(
     monkeypatch.setattr(runner, "select_subset", lambda exs, **_k: exs)
     monkeypatch.setattr(runner, "make_kb_executor", lambda *a, **kw: SimpleNamespace())
     monkeypatch.setattr(runner, "AnvilAgent", lambda *a, **kw: SimpleNamespace())
-    monkeypatch.setattr(runner, "enable_runtime_tracing", lambda *a, **kw: None)
+    monkeypatch.setattr("anvil.observability.enable_runtime_tracing", lambda *a, **kw: None)
     monkeypatch.setattr(runner.mlflow, "set_experiment", lambda *a, **kw: None)
     monkeypatch.setattr(runner.mlflow, "get_experiment_by_name", lambda *a, **kw: None)
 
@@ -1051,7 +1049,10 @@ def test_evaluate_branch_default_profile_uses_ambient_auth(
         tmp_path, monkeypatch, profile="DEFAULT", result_df=df
     )
     assert "databricks://DEFAULT" not in tracking_uri_calls
-    assert tracking_uri_calls == []
+    # Ambient auth may still point MLflow at the workspace with the bare
+    # ``databricks`` URI (configure_tracking_uri does this when Databricks
+    # credentials exist and nothing chose a URI) — never a profile-bound one.
+    assert all(uri == "databricks" for uri in tracking_uri_calls)
     assert config_profile_env is None
     # Eval still runs and aggregates normally.
     assert report.aggregate == pytest.approx(0.65)

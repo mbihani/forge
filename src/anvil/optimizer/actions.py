@@ -24,6 +24,8 @@ Eight actions (today):
 * ``add_rule``  / ``edit_rule``       — add or edit a markdown rule
 * ``delete_skill`` / ``delete_rule``   — remove a markdown skill or rule
 * ``change_sampling``                  — tweak ``scaffold/harness.yaml > sampling.*``
+* ``set_lever``                        — pick an allowlisted value for a declared lever
+* ``compound``                         — several of the above applied together, gated as one
 * ``noop``                             — the optimizer chose to do nothing
 
 Each file mutation carries a relative target path and a rationale. Add/edit
@@ -123,6 +125,20 @@ class ChangeSamplingAction(_ActionBase):
     value: float | int | str | None
 
 
+class SetLeverAction(_ActionBase):
+    """Select a value for a declared runtime lever (``scaffold/harness.yaml > levers``).
+
+    ``name`` must be declared in ``harness/config.yaml > levers`` and
+    ``value`` must be in that lever's ``allowed`` list — enforced by the
+    applier, which has the config. ``model`` swaps the runtime model for
+    every engine; any other lever is interpreted by the domain engine.
+    """
+
+    action: Literal["set_lever"] = "set_lever"
+    name: str = Field(min_length=1)
+    value: str | int | float | bool
+
+
 class NoopAction(_ActionBase):
     """The optimizer chose to make no change. Always valid; never a parse failure."""
 
@@ -165,6 +181,45 @@ class DeleteAgentAction(_ActionBase):
         return _check_agent_path(v)
 
 
+# A single mutating step — every action except ``noop`` and ``compound``
+# (no nesting). Used both standalone and as a step inside ``compound``.
+StepAction = Annotated[
+    AddSkillAction
+    | EditSkillAction
+    | DeleteSkillAction
+    | AddRuleAction
+    | EditRuleAction
+    | DeleteRuleAction
+    | ChangeSamplingAction
+    | SetLeverAction
+    | WriteAgentAction
+    | DeleteAgentAction,
+    Field(discriminator="action"),
+]
+
+# Hard schema ceiling on compound size. The operational cap is
+# ``harness/config.yaml > loop.max_mutations_per_round`` (enforced by the
+# applier); this bound only stops a runaway block from validating.
+MAX_COMPOUND_STEPS = 5
+
+
+class CompoundAction(_ActionBase):
+    """Apply several mutations together in ONE round, gated as a unit.
+
+    For changes that are each too small (or too risky) to clear the gate
+    alone but are predicted to combine — e.g. two independent ~1s latency
+    cuts against a 2s epsilon, or a cheaper model plus a prompt edit that
+    protects quality on it. ``synergy`` is mandatory: WHY the steps
+    together should beat each one alone. The applier enforces
+    ``loop.max_mutations_per_round`` and applies the steps atomically
+    (all or nothing).
+    """
+
+    action: Literal["compound"] = "compound"
+    synergy: str = Field(min_length=1, max_length=2000)
+    steps: list[StepAction] = Field(min_length=2, max_length=MAX_COMPOUND_STEPS)
+
+
 # Discriminated union over the literal ``action`` field.
 OptimizerAction = Annotated[
     AddSkillAction
@@ -174,8 +229,10 @@ OptimizerAction = Annotated[
     | EditRuleAction
     | DeleteRuleAction
     | ChangeSamplingAction
+    | SetLeverAction
     | WriteAgentAction
     | DeleteAgentAction
+    | CompoundAction
     | NoopAction,
     Field(discriminator="action"),
 ]

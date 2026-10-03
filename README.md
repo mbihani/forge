@@ -48,7 +48,18 @@ or run the `forge-onboarding` skill from Claude Code in this repo.
 
 - **Scaffold** → `scaffold/` (markdown + YAML, git-tracked).
 - **Mutations log** → `anvil.default.mutations` (Delta append-only).
-- **Traces** → MLflow native Delta sync, experiments
-  `anvil-exp-runtime`, `anvil-exp-eval`, `anvil-exp-optimizer`.
-- **Per-round eval JSON** → `eval/runs/round_NNN.json`.
-- **Per-round critique** → `scaffold/memory/round_NNN_critique.md`.
+- **Traces** → MLflow in the Databricks workspace, one experiment set per
+  domain: `/Shared/forge/<domain>/{eval,optimizer,runtime}`
+  (`harness/config.yaml > experiments`; a domain cannot point at another's).
+  `eval` holds one trace per eval row; `optimizer` holds one run per session
+  with each round's transcript + critique and the improvement summary.
+- **Per-round eval JSON** → `eval/runs/round_NNN.json` (decision, scores,
+  cost metrics, and the `levers` the eval ran with).
+- **Per-round critique** → `scaffold/memory/round_NNN_critique.md` (also in the
+  `optimizer` experiment).
+- **Model prices** → `harness/model_catalog.csv`, synced from a Google Sheet by
+  `scripts/sync_model_catalog.py`.
+
+See [`docs/onboarding.md`](docs/onboarding.md) §12–§15 for tracing, runtime
+levers / compound rounds / prices, the per-domain experiment rule, and how
+an engine adopts them.

@@ -445,7 +445,7 @@ def test_judge_client_built_via_build_gateway_client(
     monkeypatch.setattr(runner, "load_golden_set", lambda _p: [])
     monkeypatch.setattr(runner, "select_subset", lambda *a, **k: [])
     monkeypatch.setattr(runner, "make_kb_executor", lambda *a, **kw: SimpleNamespace())
-    monkeypatch.setattr(runner, "enable_runtime_tracing", lambda *a, **kw: None)
+    monkeypatch.setattr("anvil.observability.enable_runtime_tracing", lambda *a, **kw: None)
     monkeypatch.setattr(runner.mlflow, "set_experiment", lambda *a, **kw: None)
     monkeypatch.setattr(runner.mlflow, "set_tracking_uri", lambda *a, **kw: None)
     monkeypatch.setattr(runner.mlflow, "get_experiment_by_name", lambda *a, **kw: None)

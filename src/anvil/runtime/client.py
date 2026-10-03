@@ -147,11 +147,26 @@ class GatewayClient:
                     api_key=token,
                     base_url=self._parent._base_url,
                 )
-                return client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    **kwargs,
-                )
+                try:
+                    return client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        **kwargs,
+                    )
+                except Exception as exc:
+                    # Newer models reject some sampling params (e.g. Claude
+                    # Sonnet 5: "does not support the temperature parameter").
+                    # A ``model`` lever can swap to such a model mid-run, so
+                    # drop the rejected param(s) and retry ONCE rather than
+                    # failing every row. Any other error propagates.
+                    retry_kwargs = _drop_rejected_params(exc, kwargs)
+                    if retry_kwargs is None:
+                        raise
+                    return client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        **retry_kwargs,
+                    )
 
         def __init__(self, parent: GatewayClient) -> None:
             self.completions = self._Completions(parent)
@@ -170,6 +185,27 @@ class GatewayClient:
         # Always refresh — SP tokens expire, and a long-running app can
         # outlive a token minted at construction time.
         return self._token_fn()
+
+
+# Sampling params a model may reject outright. Dropping them only changes
+# sampling, never the request's content, so a retry without them is safe.
+_DROPPABLE_PARAMS = ("temperature", "top_p")
+
+
+def _drop_rejected_params(exc: Exception, kwargs: dict[str, Any]) -> dict[str, Any] | None:
+    """kwargs minus the param(s) a 400 says the model does not support, else None.
+
+    Matches the gateway's "does not support the <param> parameter" message.
+    Returns None when the error is not that, or names no param we sent — the
+    caller then re-raises the original error.
+    """
+    message = str(exc).lower()
+    if "does not support" not in message:
+        return None
+    dropped = {p for p in _DROPPABLE_PARAMS if p in kwargs and f"{p} parameter" in message}
+    if not dropped:
+        return None
+    return {k: v for k, v in kwargs.items() if k not in dropped}
 
 
 def build_gateway_client(

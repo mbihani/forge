@@ -261,7 +261,7 @@ def test_evaluate_branch_yields_trace_with_untraced_agent(
     monkeypatch.setattr(runner, "select_subset", lambda exs, **_k: exs)
     monkeypatch.setattr(runner, "make_kb_executor", lambda *a, **kw: SimpleNamespace())
     monkeypatch.setattr(runner, "AnvilAgent", lambda *a, **kw: _NoSpanAgent())
-    monkeypatch.setattr(runner, "enable_runtime_tracing", lambda *a, **kw: None)
+    monkeypatch.setattr("anvil.observability.enable_runtime_tracing", lambda *a, **kw: None)
     # Real scorers would need an LLM judge; inject a trivial programmatic one
     # so mlflow.genai.evaluate runs for real without a network call.
     monkeypatch.setattr(runner, "build_scorers", lambda **_kw: [_make_passing_scorer()])

@@ -247,9 +247,7 @@ runtime_endpoint: databricks-claude-sonnet-4-6
 optimizer_endpoint: databricks-claude-opus-4-7
 judge_endpoint: databricks-claude-sonnet-4-6
 experiments:
-  runtime: "/Shared/anvil-runtime"
-  eval: "/Shared/anvil-eval"
-  optimizer: "/Shared/anvil-optimizer"
+  root: "/Shared/forge"
 """
 
 
@@ -340,9 +338,7 @@ def test_build_baseline_forwards_explicit_runtime_config_path(
         f"optimizer_endpoint: {custom_runtime}\n"
         f"judge_endpoint: {custom_judge}\n"
         "experiments:\n"
-        '  runtime: "/Shared/anvil-runtime"\n'
-        '  eval: "/Shared/anvil-eval"\n'
-        '  optimizer: "/Shared/anvil-optimizer"\n',
+        '  root: "/Shared/forge"\n',
         encoding="utf-8",
     )
 

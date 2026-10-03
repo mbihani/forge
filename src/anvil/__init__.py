@@ -23,4 +23,13 @@ import os
 # missing trace never crashes the run.
 os.environ.setdefault("MLFLOW_ENABLE_ASYNC_TRACE_LOGGING", "false")
 
+# LiteLLM (imported by MLflow's eval harness and its trace-cost lookup, and by
+# anvil.catalog's price fallback) calls ``dotenv.load_dotenv()`` on import
+# unless LITELLM_MODE is PRODUCTION. That walks up from the installed package
+# and loads the first ``.env`` it finds — e.g. a stray ``~/.env`` — into
+# os.environ mid-run, which can silently switch DATABRICKS_CONFIG_PROFILE (and
+# so the workspace the gateway and MLflow talk to) halfway through a round.
+# ``setdefault`` honors an explicit override.
+os.environ.setdefault("LITELLM_MODE", "PRODUCTION")
+
 __version__ = "0.2.0"

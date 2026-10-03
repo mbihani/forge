@@ -1,0 +1,70 @@
+# synced from Google Sheet 1UBMkM_MOHsjE_ukh88i25LdbLeoEX9AFWcVRVlu7ehg (Sheet1) at 2026-10-03T11:33:42+00:00
+family,context,input_per_million,output_per_million,cache_read_per_million,provider,notes
+GPT-5.4 Pro / 5.5 Pro,Long (>200k),60.00001,269.9998,,OpenAI,⌖ in-geo +10% if enabled; No cache-read rate published
+GPT-5.4 Pro / 5.5 Pro,Short (<=200k),29.99997,180.0001,,OpenAI,⌖ in-geo +10% if enabled; No cache-read rate published
+GPT-6 Astra,Long (>200k),19.99998,75.0001,1.99997,OpenAI,⌖ in-geo +10% if enabled
+Claude Opus 4 / 4.1,All lengths,15.00002,75.0001,1.50003,Anthropic,Single rate for Global and In-geo
+GPT-6 Astra,Short (<=200k),9.99999,50.00002,1.00002,OpenAI,⌖ in-geo +10% if enabled
+GPT-5.5,Long (>200k),9.99999,44.99999,1.00002,OpenAI,⌖ in-geo +10% if enabled
+Claude Fable 5.1,All lengths,9.99999,50.00002,0.24997,Anthropic,⌖ in-geo +10% if enabled
+Claude Fable 5,All lengths,9.99999,50.00002,1.00002,Anthropic,⌖ in-geo +10% if enabled
+GPT-5.6 Sol,Long (>200k),8.00002,29.99997,0.80003,OpenAI,"⌖ in-geo +10% if enabled; PROMO thru Nov 21 2026; after: input/cache +25%, output +50%"
+GPT-5.5,Short (<=200k),5.00003,29.99997,0.50001,OpenAI,⌖ in-geo +10% if enabled
+GPT-5.4,Long (>200k),5.00003,22.50003,0.50001,OpenAI,⌖ in-geo +10% if enabled
+Claude Opus 4.5 / 4.6 / 4.7 / 4.8 / 5,All lengths,5.00003,25.00001,0.50001,Anthropic,⌖ in-geo +10% if enabled
+Gemini 3.0 / 3.1 Pro,Long (>200k),5.00003,22.50003,0.50001,Google,GEMINI PROMO: billed -20% thru Jan 31 2027
+GPT-6 Sol,Long (>200k),4.00001,15.0003,0.39998,OpenAI,⌖ in-geo +10% if enabled
+GPT-5.6 Sol,Short (<=200k),4.00001,19.99998,0.39998,OpenAI,"⌖ in-geo +10% if enabled; PROMO thru Nov 21 2026; after: input/cache +25%, output +50%"
+GPT-5.6 Terra,Long (>200k),4.00001,18.00001,0.39998,OpenAI,⌖ in-geo +10% if enabled
+Claude Opus 5.5,All lengths,4.00001,19.99998,0.19999,Anthropic,⌖ in-geo +10% if enabled
+Kimi K3,All lengths,3.171418,15.857164,0.317164,Moonshot AI,⌖ in-geo +10% if enabled; Carries regional (data-residency) +10% uplift
+Gemini 2.5 Pro,Long (>200k),3.12501,18.74999,0.31248,Google,GEMINI PROMO: billed -20% thru Jan 31 2027
+Claude Sonnet 4.5 / 4.6,All lengths,2.99999,15.00002,0.30002,Anthropic,⌖ in-geo +10% if enabled
+Claude Sonnet 4,All lengths,2.99999,15.00002,0.30002,Anthropic,Single rate for Global and In-geo
+GPT-5.4,Short (<=200k),2.49998,15.00002,0.24997,OpenAI,⌖ in-geo +10% if enabled
+Gemini 3.0 / 3.1 Pro,Short (<=200k),2.49998,15.00002,0.24997,Google,GEMINI PROMO: billed -20% thru Jan 31 2027
+Grok 4.6,All lengths,2.49998,7.50001,0.62503,xAI,⌖ in-geo +10% if enabled; PROMO: billed -20% thru Jan 31 2027
+GPT-6 Sol,Short (<=200k),1.99997,9.99999,0.19999,OpenAI,⌖ in-geo +10% if enabled
+GPT-5.6 Terra,Short (<=200k),1.99997,12.00003,0.19999,OpenAI,⌖ in-geo +10% if enabled
+Claude Sonnet 5 / 5.5,All lengths,1.99997,9.99999,0.19999,Anthropic,⌖ in-geo +10% if enabled
+Gemini 3.5 Flash,All lengths,1.87502,11.24998,0.18753,Google,⌖ in-geo +10% if enabled; GEMINI PROMO: billed -20% thru Jan 31 2027
+GPT-5.2 Codex / 5.3 Codex,All lengths,1.75,14.0,0.175,OpenAI,⌖ in-geo +10% if enabled; No batch inference rate
+GPT-5.2,All lengths,1.75,14.0,0.175,OpenAI,⌖ in-geo +10% if enabled
+Gemini 2.5 Pro,Short (<=200k),1.56247,12.49997,0.15624,Google,GEMINI PROMO: billed -20% thru Jan 31 2027
+GLM-5.2 / 5.3,All lengths,1.48,4.651418,0.274836,Z.ai,
+DeepSeek V4 Pro,All lengths,1.395418,4.186254,0.139564,DeepSeek,
+GPT-5 / 5.1,All lengths,1.24999,9.99999,0.12502,OpenAI,⌖ in-geo +10% if enabled
+GPT-5.1 Codex Max,All lengths,1.24999,9.99999,0.12502,OpenAI,⌖ in-geo +10% if enabled; No batch inference rate
+Inkling,All lengths,1.057164,4.281418,0.179746,Databricks,
+Kimi K2.7,All lengths,1.004254,4.228582,0.200836,Moonshot AI,
+Claude Haiku 4.5,All lengths,1.00002,5.00003,0.10003,Anthropic,⌖ in-geo +10% if enabled
+GPT-5.4 Mini,All lengths,0.74998,4.50002,0.07497,OpenAI,⌖ in-geo +10% if enabled
+Gemini 3.7 / 3.8 Flash,All lengths,0.74998,3.74997,0.07497,Google,⌖ in-geo +10% if enabled; 50% PROMO thru Dec 31 2026; standard rate doubles after
+Gemini 3.6 Flash,All lengths,0.74998,3.74997,0.07497,Google,50% PROMO thru Dec 31 2026; standard rate doubles after
+Gemini 3.0 Flash,All lengths (text tokens),0.62503,3.74997,0.06251,Google,"GEMINI PROMO: billed -20% thru Jan 31 2027. Image in 8.929, Audio in 17.857 DBU/1M"
+Llama 4 Maverick,All lengths,0.528582,1.585746,,Meta,No cache-read rate published
+Llama 3.3 70B,All lengths,0.528582,1.585746,,Meta,No cache-read rate published
+GPT-5.6 Luna,Long (>200k),0.39998,1.79998,0.03997,OpenAI,⌖ in-geo +10% if enabled
+Gemini 2.5 Flash,All lengths (text tokens),0.37499,3.12501,0.03752,Google,"GEMINI PROMO: billed -20% thru Jan 31 2027. Image in 5.357, Audio in 17.857 DBU/1M"
+Gemini 3.5 Flash Lite,All lengths,0.37499,3.12501,0.03752,Google,⌖ in-geo +10% if enabled; GEMINI PROMO: billed -20% thru Jan 31 2027
+DeepSeek V4.1 Flash,All lengths,0.317164,1.268582,0.031746,DeepSeek,
+Gemini 3.1 Flash Lite,All lengths (text tokens),0.31248,1.87502,0.03122,Google,"⌖ in-geo +10% if enabled; GEMINI PROMO: billed -20% thru Jan 31 2027. Image in 4.464, Audio in 8.929 DBU/1M"
+GPT-5.1 Codex Mini,All lengths,0.24997,1.99997,0.02499,OpenAI,⌖ in-geo +10% if enabled; No batch inference rate
+GPT-5 Mini,All lengths,0.24997,1.99997,0.02499,OpenAI,⌖ in-geo +10% if enabled
+Qwen 3.5 122B,All lengths,0.232582,2.325746,,Alibaba,No cache-read rate published
+GPT-6 Luna,Long (>200k),0.19999,0.7497,0.02002,OpenAI,⌖ in-geo +10% if enabled
+GPT-5.6 Luna,Short (<=200k),0.19999,1.20001,0.02002,OpenAI,⌖ in-geo +10% if enabled
+GPT-5.4 Nano,All lengths,0.19999,1.24999,0.02002,OpenAI,⌖ in-geo +10% if enabled
+GLM-5.3 Flash,All lengths,0.158582,0.528582,0.031746,Z.ai,
+Qwen 3 80B Instruct,All lengths,0.158582,1.268582,,Alibaba,No cache-read rate published
+GPT-OSS-120B,All lengths,0.158582,0.634254,,OpenAI (open weights),No cache-read rate published
+Gemma 3 12B,All lengths,0.158582,0.528582,,Google,No cache-read rate published
+Llama 3.1 8B,All lengths,0.158582,0.475746,,Meta,No cache-read rate published
+DeepSeek V4 Flash,All lengths,0.148,0.296,0.0296,DeepSeek,
+GTE (embedding),All lengths,0.137418,,,Alibaba,Embedding - input only
+Gemini 2.5 Flash Lite,All lengths (text tokens),0.12502,0.50001,0.01253,Google,"GEMINI PROMO: billed -20% thru Jan 31 2027. Image in 1.786, Audio in 5.357 DBU/1M"
+BGE Large (embedding),All lengths,0.105746,,,BAAI,Embedding - input only
+GPT-6 Luna,Short (<=200k),0.10003,0.50001,0.01001,OpenAI,⌖ in-geo +10% if enabled
+GPT-OSS-20B,All lengths,0.074,0.317164,,OpenAI (open weights),No cache-read rate published
+GPT-5 Nano,All lengths,0.04998,0.39998,0.00497,OpenAI,⌖ in-geo +10% if enabled
+Qwen 3 0.6B Embedding,All lengths,0.021164,,,Alibaba,Embedding - input only

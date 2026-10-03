@@ -457,7 +457,7 @@ def _build_predictor(
         from anvil.eval.runner import _load_memory_system  # noqa: PLC0415
 
         agent_module = snapshot.config.agent_module
-        model = snapshot.config.runtime_endpoint
+        model = snapshot.config.effective_runtime_model
 
         def _get_memory_system() -> Any:
             inst = getattr(local, "agent", None)

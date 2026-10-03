@@ -29,3 +29,10 @@ The resulting rows are included in the optimizer prompt with the instruction:
 a mutation that is semantically equivalent to any of these. If your proposed
 change is similar, either (a) explain what is materially different this time,
 or (b) propose a different change."*
+
+**Exception — recombining near-misses in a `compound`.** A reverted mutation
+may be re-proposed as one step of a `compound` action when it was reverted
+for falling SHORT of an epsilon (not for regressing), and the compound's
+`synergy` explains why combining it with the other step(s) should clear the
+gate where each alone did not. Re-proposing it on its own, or bundling it
+with an unrelated change, is still a repeat.

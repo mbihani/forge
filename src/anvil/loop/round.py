@@ -25,6 +25,7 @@ import yaml
 if TYPE_CHECKING:
     from anvil.loop.optimizer_artifacts import OptimizerArtifactSink
 
+from anvil.catalog import load_catalog, model_prices
 from anvil.eval import evaluate_branch, load_baseline
 from anvil.loop.builder import build_round_prompt
 from anvil.loop.decision import Decision, apply_optimizer_error
@@ -50,9 +51,11 @@ from anvil.optimizer import (
     get_backend,
     run_optimizer_session,
 )
+from anvil.optimizer.applier import ApplyError
 from anvil.optimizer.omnigent_backend import OmnigentBackend
 from anvil.optimizer.omnigent_client import resolve_omnigent_server_url
 from anvil.runtime.loader import default_runtime_config_path
+from anvil.runtime.models import LeverSpec, LoopConfig, ModelCatalogConfig, resolve_levers
 
 
 @dataclass
@@ -128,10 +131,21 @@ def run_round(
     branch = create_round_branch(repo_root, round_id, parent_branch=parent_branch)
 
     # 2. Build prompt and run the optimizer session.
+    prompt_gate_cfg = load_gate_config(scaffold_root)
+    loop_cfg = _read_loop_config(scaffold_root)
+    lever_specs = _read_lever_specs_for_prompt(scaffold_root)
     prompt = build_round_prompt(
         repo_root=repo_root,
         round_id=round_id,
         baseline=asdict_baseline(baseline) if baseline else None,
+        objectives=(
+            prompt_gate_cfg.pareto.objectives or None if prompt_gate_cfg.pareto.enabled else None
+        ),
+        max_mutations=loop_cfg.max_mutations_per_round,
+        max_turns=max_turns,
+        lever_specs=lever_specs,
+        lever_values=_effective_levers(scaffold_root),
+        model_prices=_model_prices_for_prompt(scaffold_root, lever_specs),
     )
 
     # NOTE: optimizer-side MLflow tracing is intentionally disabled for
@@ -181,7 +195,23 @@ def run_round(
         )
 
     # 3. Apply the action (writes scaffold files, edits harness.yaml).
-    apply_result = apply_action(action, scaffold_root, mode=mode, repo_root=repo_root)
+    #
+    # An action the applier rejects (a lever value outside its allowlist, a
+    # compound over loop.max_mutations_per_round, an edit of a missing file)
+    # is recorded as a noop with the reason, instead of crashing the whole
+    # multi-round run. Compound actions restore scaffold/ + agents/ on
+    # failure, so nothing half-applied is left behind.
+    apply_error: str | None = None
+    try:
+        apply_result = apply_action(action, scaffold_root, mode=mode, repo_root=repo_root)
+    except ApplyError as exc:
+        apply_error = f"{exc}"
+        print(f"[round {round_id}] applier rejected {action.action}: {apply_error}")
+        action = NoopAction(rationale=f"applier rejected {action.action}: {apply_error}"[:2000])
+        apply_result = apply_action(action, scaffold_root, mode=mode, repo_root=repo_root)
+    # Lever values THIS round's eval runs with (e.g. which model). Captured
+    # now, before a revert can check out the parent, for the round JSON.
+    round_levers = _effective_levers(scaffold_root)
 
     # 4. Commit the mutation — but only when the applier actually wrote
     # something. A parse-failure noop (parse_status=no_block) collapses
@@ -361,8 +391,13 @@ def run_round(
                 eval_report=eval_report,
                 baseline_score=baseline_aggregate,
                 score_delta=score_delta,
-                parse_status=parse_result.parse_status,
-                notes=(f"optimizer backend failed: {optimizer_error}" if optimizer_error else ""),
+                parse_status=("apply_rejected" if apply_error else parse_result.parse_status),
+                notes=(
+                    f"optimizer backend failed: {optimizer_error}"
+                    if optimizer_error
+                    else (f"applier rejected action: {apply_error}" if apply_error else "")
+                ),
+                levers=round_levers,
                 frontier_best=frontier.best if frontier else None,
                 optimizer_error=optimizer_error,
                 optimizer_backend=selected_backend,
@@ -465,6 +500,79 @@ def _save_dashboard_round(repo_root: Path | str, round_id: int, payload: str) ->
     return path
 
 
+def _effective_levers(scaffold_root: Path | str) -> dict[str, Any]:
+    """Resolved lever values for the scaffold as it is on disk right now.
+
+    Merges ``scaffold/harness.yaml > levers`` with the declared specs'
+    defaults; for a declared ``model`` lever with no value, reports the base
+    ``runtime_endpoint``. Best-effort: returns ``{}`` on any read/validation
+    problem — this is a record, not a gate.
+    """
+    scaffold_root = Path(scaffold_root)
+    try:
+        raw_cfg = (
+            yaml.safe_load(default_runtime_config_path(scaffold_root).read_text(encoding="utf-8"))
+            or {}
+        )
+        raw_scaffold = (
+            yaml.safe_load((scaffold_root / "harness.yaml").read_text(encoding="utf-8")) or {}
+        )
+        specs = {n: LeverSpec.model_validate(s) for n, s in (raw_cfg.get("levers") or {}).items()}
+        resolved: dict[str, Any] = resolve_levers(specs, raw_scaffold.get("levers") or {})
+    except Exception:  # noqa: BLE001 - a record, never fail the round
+        return {}
+    if "model" in specs and "model" not in resolved and raw_cfg.get("runtime_endpoint"):
+        resolved["model"] = raw_cfg["runtime_endpoint"]
+    return resolved
+
+
+def _read_loop_config(scaffold_root: Path | str) -> LoopConfig:
+    """``harness/config.yaml > loop`` (defaults when absent/invalid)."""
+    try:
+        raw = (
+            yaml.safe_load(default_runtime_config_path(scaffold_root).read_text(encoding="utf-8"))
+            or {}
+        )
+        return LoopConfig.model_validate(raw.get("loop") or {})
+    except Exception:  # noqa: BLE001 - fall back to the classic defaults
+        return LoopConfig()
+
+
+def _read_lever_specs_for_prompt(scaffold_root: Path | str) -> dict[str, LeverSpec]:
+    """Declared lever specs for the round prompt (``{}`` when absent/invalid)."""
+    try:
+        raw = (
+            yaml.safe_load(default_runtime_config_path(scaffold_root).read_text(encoding="utf-8"))
+            or {}
+        )
+        return {n: LeverSpec.model_validate(s) for n, s in (raw.get("levers") or {}).items()}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _model_prices_for_prompt(
+    scaffold_root: Path | str, lever_specs: dict[str, LeverSpec]
+) -> dict[str, dict[str, Any]] | None:
+    """Prices for the ``model`` lever's allowed values (None when no model lever).
+
+    Read from the synced ``model_catalog`` CSV (LiteLLM fallback). Best-effort:
+    a missing/unreadable catalog just shows "price unknown" in the prompt.
+    """
+    spec = lever_specs.get("model")
+    if spec is None:
+        return None
+    try:
+        raw = (
+            yaml.safe_load(default_runtime_config_path(scaffold_root).read_text(encoding="utf-8"))
+            or {}
+        )
+        cfg = ModelCatalogConfig.model_validate(raw.get("model_catalog") or {})
+        entries = load_catalog(Path(scaffold_root).parent / cfg.path)
+        return model_prices([str(m) for m in spec.allowed], entries, tier=cfg.context_tier)
+    except Exception:  # noqa: BLE001 - prices are context for the optimizer, not a gate
+        return None
+
+
 def _read_optimization_mode(scaffold_root: Path | str) -> str:
     """Read the optimization mode from ``harness/config.yaml``.
 
@@ -562,9 +670,7 @@ def _resolve_omnigent_backend_url(optimizer_cfg: dict[str, Any]) -> str:
     when either source yields a value.
     """
     return (
-        resolve_omnigent_server_url()
-        or optimizer_cfg.get("server_url")
-        or "http://localhost:6767"
+        resolve_omnigent_server_url() or optimizer_cfg.get("server_url") or "http://localhost:6767"
     )
 
 
@@ -730,6 +836,7 @@ def _build_round_json(
     optimizer_run_id: str | None = None,
     optimizer_experiment_id: str | None = None,
     optimizer_session_url: str | None = None,
+    levers: dict[str, Any] | None = None,
 ) -> dict:
     payload: dict = {
         "round_id": round_id,
@@ -739,6 +846,10 @@ def _build_round_json(
         "decision": decision.value,
         "action_kind": action_kind,
         "parse_status": parse_status,
+        # Resolved lever values the mutated eval ran with (e.g. the model).
+        # Empty when no levers are declared. Lets per-model latency/quality
+        # history be read straight from the round records.
+        "levers": levers or {},
         "baseline_score": baseline_score,
         "score_delta_vs_parent": score_delta,
         "notes": notes,

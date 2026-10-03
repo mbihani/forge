@@ -92,20 +92,21 @@ optimizer:
 # parent run lands (defaults to ``experiments.optimizer`` below).
 persistence:
   enabled: true
-  # experiment: "/Shared/anvil-optimizer"
+  # experiment: "/Shared/forge/<domain>/optimizer"   # must stay under experiments.root/<domain>/
 
-# MLflow experiment paths. Stable, declared here, NOT driven by
-# environment variables (which lint/format passes have historically
-# clobbered). The CLI may override per-run via --experiment-suffix
-# but the suffix is appended in-process, never via env-var.
-#
-# Defaults to ``/Shared`` so the harness boots in any workspace.
-# Per-user paths (``/Users/<email>/anvil-runtime``) work too — edit
-# below to taste.
+# MLflow experiments — one set PER DOMAIN, in the Databricks workspace.
+# Each kind resolves to <root>/<eval.engine>/<kind>:
+#   <root>/<domain>/eval       one trace per eval row (agent + judge calls)
+#   <root>/<domain>/optimizer  one run per optimize session (transcripts,
+#                              critiques, improvement summary)
+#   <root>/<domain>/runtime    deployed-agent traces
+# Created on first use (including the workspace folder). A kind may be set
+# explicitly, but only to a path under <root>/<domain>/ — anything else fails
+# at load, so domains never share experiments. Use a per-user root
+# (/Users/<email>/forge) if you cannot write to /Shared. See
+# docs/onboarding.md §14.
 experiments:
-  runtime:   "/Shared/anvil-runtime"
-  eval:      "/Shared/anvil-eval"
-  optimizer: "/Shared/anvil-optimizer"
+  root: /Shared/forge
 
 # Loop configuration — how the ANVIL optimizer schedules itself.
 loop:
@@ -123,6 +124,36 @@ loop:
   # Hard cap on optimizer turns per round. Round aborts as `noop` if
   # exceeded.
   max_optimizer_turns: 30
+  # Max mutations one round may apply together via a `compound` action
+  # (gated as one unit). 1 = classic single-mutation rounds. Max 5.
+  max_mutations_per_round: 1
+
+# Runtime levers the optimizer may set with `set_lever` (the choice lives in
+# scaffold/harness.yaml > levers). Only values listed here are accepted.
+#   model  — forge core: swaps the runtime model for every engine. The judge
+#            (judge_endpoint) stays fixed so scores remain comparable. Only
+#            list models verified to accept your agent's real input.
+#   <name> — any other name is opaque to core and read by your engine via
+#            snapshot.config.levers (e.g. an input-format switch).
+# See docs/onboarding.md §13.
+# levers:
+#   model:
+#     allowed: [databricks-claude-sonnet-4-6, databricks-claude-haiku-4-5]
+#     description: runtime model for the agent call
+#   input_mode:
+#     allowed: [direct, text]
+#     default: direct
+#     description: how inputs reach the model
+
+# Model prices: scripts/sync_model_catalog.py exports this Google Sheet into
+# `path`; the loop reads only that committed CSV (never the sheet). Re-sync
+# when the sheet changes. Prices are shown to the optimizer next to each
+# `model` lever value and feed cost_usd metrics — never a gate input.
+model_catalog:
+  path: harness/model_catalog.csv
+  sheet_id: 1UBMkM_MOHsjE_ukh88i25LdbLeoEX9AFWcVRVlu7ehg
+  sheet_range: Sheet1
+  context_tier: short
 
 # Eval configuration.
 eval:
