@@ -283,9 +283,10 @@ shutdown), a `.../tree/<branch>/<subpath>` URL, or a local path.
 
 ## See also
 
-- `docs/onboarding.md` — domain skeleton and contract (§2–§7), trace engine
-  (§10), per-row tracing (§12), levers / compound rounds / prices (§13), and
-  the session intake summary.
+- `docs/onboarding.md` — domain skeleton and contract (§2–§7), baseline
+  conditions (§8), trace engine (§10), failure modes (§11), per-row tracing
+  (§12), levers / compound rounds / prices (§13), per-domain MLflow
+  experiments and where traces land (§14), and the session intake summary.
 - `CLAUDE.md` — invariants (plane separation, immutable `harness/config.yaml`).
 - `src/anvil/domains/pitcrew/` — worked domain with a latency objective, a
   model lever, a domain lever (`input_mode`), and cost metrics.
