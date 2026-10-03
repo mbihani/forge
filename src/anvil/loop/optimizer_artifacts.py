@@ -337,11 +337,21 @@ def build_improvement_summary(
         if isinstance(best, dict) and isinstance(best.get("aggregate"), int | float):
             final_aggregate = float(best["aggregate"])
     if final_aggregate is None:
+        # Without finalized/frontier data, the final outcome must reflect the
+        # RETAINED agent, not merely the last evaluated mutation: walk back to
+        # the last KEPT round's aggregate. A reverted/noop/infra_fail round's
+        # score is NOT the final state (its mutation was discarded). When no
+        # round was kept, the agent is still the baseline => final == baseline
+        # (net improvement 0).
         for r in reversed(rounds):
+            if str(r.get("decision") or "").lower() != "keep":
+                continue
             agg = r.get("aggregate")
             if isinstance(agg, int | float):
                 final_aggregate = float(agg)
                 break
+        if final_aggregate is None:
+            final_aggregate = baseline_aggregate
 
     net_improvement = (
         final_aggregate - baseline_aggregate

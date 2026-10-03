@@ -219,6 +219,54 @@ def test_render_improvement_summary_md_is_tabular() -> None:
     assert "kept 1 · reverted 1 · noop 1 · infra_fail 0" in md
 
 
+def test_final_aggregate_fallback_uses_last_kept_not_last_round() -> None:
+    """Without finalized/frontier, the 'final' aggregate must reflect the
+    RETAINED agent — the last KEPT round — NOT a later reverted candidate
+    whose mutation was discarded.
+
+    Rounds: R1 KEEP@0.60, R2 REVERT@0.70 (a tempting-but-discarded higher
+    score). The retained agent is R1's 0.60, so net = 0.60 - 0.50 = +0.10.
+    If the fallback naively took the last evaluated round it would report
+    0.70 / +0.20 — the bite this test guards.
+    """
+    rounds = [
+        {"round_id": 1, "decision": "keep", "action_kind": "edit_skill",
+         "baseline_score": 0.50, "aggregate": 0.60, "score_delta_vs_parent": 0.10},
+        {"round_id": 2, "decision": "revert", "action_kind": "edit_rule",
+         "baseline_score": 0.60, "aggregate": 0.70, "score_delta_vs_parent": 0.10},
+    ]
+    summary = build_improvement_summary(
+        session_meta={},
+        rounds=rounds,
+        frontier=None,
+        finalized=None,
+        baseline={"aggregate": 0.50},
+    )
+    assert summary["final_aggregate"] == 0.60
+    assert summary["net_improvement"] == pytest.approx(0.10)
+
+
+def test_final_aggregate_fallback_all_reverted_is_baseline() -> None:
+    """When NO round was kept (all reverted/noop/infra_fail) and there is no
+    finalized/frontier data, the agent is still the baseline: final ==
+    baseline and net_improvement == 0 — never a discarded candidate's score."""
+    rounds = [
+        {"round_id": 1, "decision": "revert", "action_kind": "edit_skill",
+         "baseline_score": 0.50, "aggregate": 0.70, "score_delta_vs_parent": 0.20},
+        {"round_id": 2, "decision": "infra_fail", "action_kind": "noop",
+         "baseline_score": 0.50, "aggregate": None, "score_delta_vs_parent": None},
+    ]
+    summary = build_improvement_summary(
+        session_meta={},
+        rounds=rounds,
+        frontier=None,
+        finalized=None,
+        baseline={"aggregate": 0.50},
+    )
+    assert summary["final_aggregate"] == 0.50
+    assert summary["net_improvement"] == 0.0
+
+
 # ---------------------------------------------------------------------------
 # (c) best-effort guard
 # ---------------------------------------------------------------------------
@@ -439,3 +487,215 @@ def test_persistence_experiment_overrides_experiments_optimizer(tmp_path: Path) 
     )
     _, experiment = resolve_persistence_settings(scaffold)
     assert experiment == "/Shared/forge/genai/custom-opt"
+
+
+# ---------------------------------------------------------------------------
+# finalize re-log preserves the ORIGINAL session start metadata
+# ---------------------------------------------------------------------------
+
+
+def test_finalize_relog_preserves_started_at(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The held-out summary re-logged at finalize must preserve the original
+    ``started_at`` (captured at task start into SessionData), not blank it.
+
+    Reverting the fix (passing ``started_at=""``) makes this fail: the
+    re-logged ``improvement_summary.json`` would carry an empty start time.
+    """
+    from anvil.orchestrator import app as app_mod
+
+    recording = _RecordingClient()
+
+    def _fake_bind(**kwargs: object) -> OptimizerArtifactSink:
+        return OptimizerArtifactSink(
+            client=recording,
+            run_id=str(kwargs["run_id"]),
+            experiment_id=str(kwargs["experiment_id"]),
+        )
+
+    monkeypatch.setattr(app_mod.OptimizerArtifactSink, "bind", staticmethod(_fake_bind))
+
+    start_ts = "2026-10-02T00:00:00+00:00"
+    sess = app_mod.SessionData(
+        session_id="s1",
+        repo_url="https://example/repo",
+        repo_path=tmp_path,
+        status="finalized",
+        validation={},
+        config={},
+        baseline={"aggregate": 0.50},
+        rounds=[
+            {"round_id": 1, "decision": "keep", "action_kind": "edit_skill",
+             "baseline_score": 0.50, "aggregate": 0.60, "score_delta_vs_parent": 0.10},
+        ],
+        frontier=None,
+        finalized={"aggregate": 0.58},
+        error=None,
+        optimizer_run_id="run-1",
+        optimizer_experiment_id="exp-1",
+        optimizer_started_at=start_ts,
+    )
+
+    app_mod._relog_summary_after_finalize_sync(sess)
+
+    by_path = {c[2]: c[1] for c in recording.texts}
+    summary = json.loads(by_path["improvement_summary.json"])
+    assert summary["session"]["started_at"] == start_ts
+    # The held-out net improvement is also present (finalized aggregate used).
+    assert summary["net_improvement"] == pytest.approx(0.08)
+
+
+# ---------------------------------------------------------------------------
+# finally-block parent-run close must never mask the real task outcome
+# ---------------------------------------------------------------------------
+
+
+def test_task_finally_close_failure_does_not_mask_real_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When a round raises AND the finally-block ``sink.close`` ALSO raises,
+    ``_run_optimization_task`` must still complete normally (no exception
+    escapes) and record the REAL failure (the round error) — the close error
+    must be swallowed, never mask the outcome.
+
+    Reverting the close guard (removing the try/except around
+    ``anyio.to_thread.run_sync(sink.close)``) makes the close exception
+    escape the finally, so the task raises instead of recording the round
+    error — this test bites that.
+    """
+    import asyncio
+
+    from anvil.orchestrator import app as app_mod
+
+    class _ClosesBoom:
+        run_id = "run-1"
+        experiment_id = "exp-1"
+
+        def close(self) -> None:
+            raise RuntimeError("close boom")
+
+    closed: list[bool] = []
+
+    def _fake_close() -> None:
+        closed.append(True)
+        raise RuntimeError("close boom")
+
+    sink = _ClosesBoom()
+    sink.close = _fake_close  # type: ignore[method-assign]
+
+    monkeypatch.setattr(app_mod, "_ensure_parent_branch", lambda *_a, **_k: None)
+    monkeypatch.setattr(app_mod, "_build_baseline_sync", lambda *_a, **_k: {"aggregate": 0.5})
+    monkeypatch.setattr(app_mod, "_open_optimizer_sink_sync", lambda *_a, **_k: sink)
+
+    def _boom_round(**_kwargs: object) -> None:
+        raise RuntimeError("round boom")
+
+    monkeypatch.setattr(app_mod, "run_round", _boom_round)
+
+    session_id = "sess-close-guard"
+    app_mod._sessions[session_id] = app_mod.SessionData(
+        session_id=session_id,
+        repo_url="https://example/repo",
+        repo_path=tmp_path,
+        status="optimizing",
+        validation={},
+        config={},
+        baseline=None,
+        rounds=[],
+        frontier=None,
+        finalized=None,
+        error=None,
+    )
+    try:
+        # Must NOT raise — the close error is swallowed in the finally.
+        asyncio.run(
+            app_mod._run_optimization_task(session_id, None, max_rounds=1, max_turns=1)
+        )
+        sess = app_mod._sessions[session_id]
+        # The REAL failure (the round error) is what the session records.
+        assert sess.status == "error"
+        assert "round boom" in (sess.error or "")
+        assert "close boom" not in (sess.error or "")
+        # The finally-block close was attempted (and its exception swallowed).
+        assert closed == [True]
+    finally:
+        app_mod._sessions.pop(session_id, None)
+
+
+def test_task_finally_close_is_shielded_from_cancellation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cancellation arriving while the task runs must NOT abort the
+    finally-block parent-run close: the close is SHIELDED so it runs to
+    completion, and cancellation is NOT suppressed — ``CancelledError`` still
+    propagates afterward (the task ends cancelled).
+
+    Reverting the shield makes the cancellation abort the close await before
+    it completes (``closed`` stays empty) — this test bites that.
+    """
+    import asyncio
+    import threading
+    import time
+
+    from anvil.orchestrator import app as app_mod
+
+    started = threading.Event()
+    closed: list[bool] = []
+
+    def _blocking_round(**_kwargs: object) -> None:
+        # Signal that the task is inside the (cancellable) round await, then
+        # block briefly so the test can cancel the task at this await point.
+        started.set()
+        time.sleep(0.3)
+
+    def _slow_close() -> None:
+        # Non-trivial so "ran to completion" is observable; must finish even
+        # though the surrounding task is being cancelled (shield).
+        time.sleep(0.05)
+        closed.append(True)
+
+    class _Sink:
+        run_id = "run-1"
+        experiment_id = "exp-1"
+        close = staticmethod(_slow_close)
+
+    monkeypatch.setattr(app_mod, "_ensure_parent_branch", lambda *_a, **_k: None)
+    monkeypatch.setattr(app_mod, "_build_baseline_sync", lambda *_a, **_k: {"aggregate": 0.5})
+    monkeypatch.setattr(app_mod, "_open_optimizer_sink_sync", lambda *_a, **_k: _Sink())
+    monkeypatch.setattr(app_mod, "run_round", _blocking_round)
+
+    session_id = "sess-cancel-shield"
+    app_mod._sessions[session_id] = app_mod.SessionData(
+        session_id=session_id,
+        repo_url="https://example/repo",
+        repo_path=tmp_path,
+        status="optimizing",
+        validation={},
+        config={},
+        baseline=None,
+        rounds=[],
+        frontier=None,
+        finalized=None,
+        error=None,
+    )
+
+    async def _drive() -> None:
+        task = asyncio.create_task(
+            app_mod._run_optimization_task(session_id, None, max_rounds=1, max_turns=1)
+        )
+        # Wait until the task is parked inside the round await, then cancel.
+        while not started.is_set():
+            await asyncio.sleep(0.01)
+        task.cancel()
+        # Cancellation must NOT be suppressed — it propagates after the
+        # shielded close completes.
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    try:
+        asyncio.run(_drive())
+        # The shielded close ran to completion despite the cancellation.
+        assert closed == [True]
+    finally:
+        app_mod._sessions.pop(session_id, None)

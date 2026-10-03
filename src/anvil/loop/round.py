@@ -363,13 +363,18 @@ def run_round(
     # transcript + critique are in hand and BEFORE the round branch may be
     # deleted on REVERT/INFRA_FAIL (which would otherwise drop the artifacts
     # for exactly the failing rounds). Fully best-effort: ``log_round``
-    # swallows any MLflow failure, so a dead sink never fails the round.
+    # swallows any MLflow failure internally, and we ALSO guard the
+    # invocation here so a future sink implementation error can never fail
+    # the round either.
     if artifact_sink is not None:
-        artifact_sink.log_round(
-            round_id=round_id,
-            transcript=transcript or "(empty)\n",
-            critique_md=critique_md,
-        )
+        try:
+            artifact_sink.log_round(
+                round_id=round_id,
+                transcript=transcript or "(empty)\n",
+                critique_md=critique_md,
+            )
+        except Exception as exc:  # noqa: BLE001 — best-effort; never fail the round
+            print(f"[round {round_id}] warning: optimizer artifact log_round failed: {exc}")
 
     # 9. Write round JSON (combines aggregate + decision + delta).
     round_json_path = repo_root / "eval" / "runs" / f"round_{round_id:03d}.json"
