@@ -295,7 +295,8 @@ cannot be deleted.
 2. **Read the failures.** The parent eval JSON (linked from
    `mlflow.run_id`) lists `failures[]` with `example_id`, `category`,
    `judge_failures`, `trace_id`. The exact failure traces are queryable
-   in MLflow under experiment `anvil-exp-eval`.
+   in MLflow under the domain's eval experiment (`experiments.eval`
+   in `harness/config.yaml`, default `/Shared/forge/<domain>/eval`).
 3. **Read what's already there.** Open every active rule and skill
    from `scaffold/harness.yaml`. Check for clashes a new mutation
    would create. Skip a vector that previously got reverted (look in

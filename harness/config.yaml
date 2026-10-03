@@ -92,20 +92,18 @@ optimizer:
 # parent run lands (defaults to ``experiments.optimizer`` below).
 persistence:
   enabled: true
-  # experiment: "/Shared/anvil-optimizer"
+  # experiment: "/Shared/forge/pitcrew/optimizer"   # must stay under experiments.root/<domain>/
 
-# MLflow experiment paths. Stable, declared here, NOT driven by
-# environment variables (which lint/format passes have historically
-# clobbered). The CLI may override per-run via --experiment-suffix
-# but the suffix is appended in-process, never via env-var.
-#
-# Defaults to ``/Shared`` so the harness boots in any workspace.
-# Per-user paths (``/Users/<email>/anvil-runtime``) work too — edit
-# below to taste.
+# MLflow experiments — one set PER DOMAIN, in the Databricks workspace.
+# Each kind resolves to <root>/<eval.engine>/<kind>, here:
+#   /Shared/forge/pitcrew/eval       one trace per eval row (summarize + judge)
+#   /Shared/forge/pitcrew/optimizer  one run per optimize session (transcripts, critiques, summary)
+#   /Shared/forge/pitcrew/runtime    deployed-agent traces
+# Created on first use. A kind may be set explicitly, but only to a path under
+# <root>/<domain>/ — anything else fails at load, so domains never share
+# experiments. Change `root` for a per-user location (/Users/<email>/forge).
 experiments:
-  runtime:   "/Shared/anvil-runtime"
-  eval:      "/Shared/anvil-eval"
-  optimizer: "/Shared/anvil-optimizer"
+  root: /Shared/forge
 
 # Loop configuration — how the ANVIL optimizer schedules itself.
 loop:

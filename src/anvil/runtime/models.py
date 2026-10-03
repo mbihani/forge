@@ -222,12 +222,67 @@ class GateConfig(BaseModel):
         return v
 
 
-class ExperimentsConfig(BaseModel):
-    """MLflow experiment paths. Stable, declared in config.yaml."""
+DEFAULT_EXPERIMENTS_ROOT = "/Shared/forge"
+EXPERIMENT_KINDS = ("runtime", "eval", "optimizer")
 
-    runtime: str
-    eval: str
-    optimizer: str
+
+class ExperimentsConfig(BaseModel):
+    """MLflow experiment paths — one set PER DOMAIN, under ``root``.
+
+    Every optimized domain gets its own experiments at
+    ``<root>/<domain>/<kind>`` (domain = ``eval.engine``), e.g.
+    ``/Shared/forge/pitcrew/eval``, so two agents' traces never mix. Leave a
+    kind unset to use that path; an explicit path must still live under
+    ``<root>/<domain>/`` or the config fails to load. Resolved by
+    :func:`resolve_domain_experiments` when ``harness/config.yaml`` is parsed.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    root: str = DEFAULT_EXPERIMENTS_ROOT
+    runtime: str | None = None
+    eval: str | None = None
+    optimizer: str | None = None
+
+    @field_validator("root")
+    @classmethod
+    def _absolute_root(cls, v: str) -> str:
+        if not v.startswith("/") or v.rstrip("/") == "":
+            raise ValueError(f"experiments.root must be an absolute workspace folder, got {v!r}")
+        return v.rstrip("/")
+
+
+def domain_experiment_folder(root: str, domain: str) -> str:
+    """``<root>/<domain>`` — the folder holding one domain's experiments."""
+    return f"{root.rstrip('/')}/{domain}"
+
+
+def check_domain_experiment(path: str, *, root: str, domain: str, field: str) -> str:
+    """Return ``path`` if it lives under this domain's folder, else raise ``ValueError``."""
+    folder = domain_experiment_folder(root, domain)
+    if not path.rstrip("/").startswith(folder + "/"):
+        raise ValueError(
+            f"{field} = {path!r} is outside domain {domain!r}'s experiment folder {folder}/. "
+            f"Every optimized domain gets its own experiments: remove {field} to use "
+            f"{folder}/<kind>, put it under {folder}/, or change experiments.root."
+        )
+    return path
+
+
+def resolve_domain_experiments(cfg: ExperimentsConfig, domain: str) -> ExperimentsConfig:
+    """Fill unset kinds with ``<root>/<domain>/<kind>``; validate explicit ones."""
+    folder = domain_experiment_folder(cfg.root, domain)
+    resolved: dict[str, str] = {}
+    for kind in EXPERIMENT_KINDS:
+        value = getattr(cfg, kind)
+        resolved[kind] = (
+            f"{folder}/{kind}"
+            if value is None
+            else check_domain_experiment(
+                value, root=cfg.root, domain=domain, field=f"experiments.{kind}"
+            )
+        )
+    return ExperimentsConfig(root=cfg.root, **resolved)
 
 
 class OptimizerBackendConfig(BaseModel):
@@ -593,7 +648,9 @@ class RuntimeYAML(BaseModel):
     runtime_endpoint: str  # FMAPI model for the runtime agent
     optimizer_endpoint: str  # FMAPI model for the optimizer
     judge_endpoint: str  # FMAPI model for the judge
-    experiments: ExperimentsConfig
+    # Per-domain MLflow experiments; unset kinds resolve to
+    # <root>/<eval.engine>/<kind> (see ExperimentsConfig).
+    experiments: ExperimentsConfig = Field(default_factory=ExperimentsConfig)
     loop: LoopConfig = Field(default_factory=LoopConfig)
     eval: EvalConfig = Field(default_factory=EvalConfig)
     gate: GateConfig = Field(default_factory=GateConfig)
@@ -618,6 +675,20 @@ class RuntimeYAML(BaseModel):
     def _lever_names(cls, v: dict[str, LeverSpec]) -> dict[str, LeverSpec]:
         _validate_lever_names(v)
         return v
+
+    @model_validator(mode="after")
+    def _per_domain_experiments(self) -> RuntimeYAML:
+        """Give this domain its own experiments (and keep persistence inside them)."""
+        domain = self.eval.engine
+        self.experiments = resolve_domain_experiments(self.experiments, domain)
+        if self.persistence.experiment:
+            check_domain_experiment(
+                self.persistence.experiment,
+                root=self.experiments.root,
+                domain=domain,
+                field="persistence.experiment",
+            )
+        return self
 
 
 class HarnessConfig(BaseModel):

@@ -43,7 +43,7 @@ _CONFIG = """\
 runtime_endpoint: databricks-claude-sonnet-4-6
 optimizer_endpoint: databricks-claude-opus-4-7
 judge_endpoint: databricks-claude-sonnet-4-6
-experiments: {runtime: /r, eval: /e, optimizer: /o}
+experiments: {root: /Shared/forge}
 loop:
   max_mutations_per_round: %(max_mut)d
 levers:

@@ -129,3 +129,61 @@ def test_engine_trace_rows_false_creates_no_trace(
     )
     traces = mlflow.search_traces(experiment_ids=[exp_id], return_type="list")
     assert len(traces) == 0
+
+
+# --- tracking URI + CLI optimizer sink -------------------------------------
+
+
+def test_configure_tracking_uri_rules(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Named profile → databricks://p; unset + creds → databricks; explicit wins."""
+    from mlflow.tracking._tracking_service import utils as tracking_utils
+
+    from anvil import observability
+
+    calls: list[str] = []
+    monkeypatch.setattr(mlflow, "set_tracking_uri", lambda uri: calls.append(uri))
+    monkeypatch.setattr(mlflow, "get_tracking_uri", lambda: calls[-1] if calls else "sqlite:///x")
+
+    observability.configure_tracking_uri("fevm-stable")
+    assert calls[-1] == "databricks://fevm-stable"
+
+    calls.clear()
+    monkeypatch.setattr(tracking_utils, "is_tracking_uri_set", lambda: False)
+    monkeypatch.setenv("DATABRICKS_HOST", "https://example.cloud.databricks.com")
+    assert observability.configure_tracking_uri(None) == "databricks"
+
+    calls.clear()
+    # An explicitly set URI (e.g. MLFLOW_TRACKING_URI) is never overridden.
+    monkeypatch.setattr(tracking_utils, "is_tracking_uri_set", lambda: True)
+    observability.configure_tracking_uri("DEFAULT")
+    assert calls == []  # an explicit URI is never overridden
+
+
+def test_cli_session_sink_logs_rounds_and_summary(local_mlruns: Path, tmp_path: Path) -> None:
+    from anvil.loop.optimizer_artifacts import close_cli_session_sink, open_cli_session_sink
+
+    repo = tmp_path / "repo"
+    (repo / "scaffold").mkdir(parents=True)
+    (repo / "harness").mkdir()
+    (repo / "harness" / "config.yaml").write_text(
+        "eval: {engine: clitest}\nexperiments: {optimizer: /Shared/forge/clitest/cli-optimizer-test}\n"
+    )
+    runs = repo / "eval" / "runs"
+    runs.mkdir(parents=True)
+    (runs / "round_001.json").write_text(
+        json.dumps({"round_id": 1, "decision": "keep", "aggregate": 0.9})
+    )
+
+    sink = open_cli_session_sink(repo, session_id="cli-test")
+    assert sink is not None
+    sink.log_round(round_id=1, transcript="t", critique_md="c")
+    close_cli_session_sink(sink, repo, round_ids=[1], session_meta={"session_id": "cli-test"})
+
+    client = mlflow.MlflowClient()
+    run = client.get_run(sink.run_id)
+    assert run.info.status == "FINISHED"
+    assert run.data.tags["anvil.surface"] == "cli"
+    files = {a.path for a in client.list_artifacts(sink.run_id)} | {
+        a.path for a in client.list_artifacts(sink.run_id, "rounds")
+    }
+    assert {"improvement_summary.json", "rounds/round_001_transcript.md"} <= files

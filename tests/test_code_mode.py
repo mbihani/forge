@@ -166,7 +166,7 @@ def test_runtime_yaml_mode_defaults_to_prompt() -> None:
         runtime_endpoint="rt",
         optimizer_endpoint="op",
         judge_endpoint="j",
-        experiments={"runtime": "r", "eval": "e", "optimizer": "o"},
+        experiments={"root": "/Shared/forge"},
     )
     assert cfg.mode == "prompt"
     assert cfg.agent_module == "anvil.agents.baseline"
@@ -181,7 +181,7 @@ def test_runtime_yaml_accepts_code_mode() -> None:
         runtime_endpoint="rt",
         optimizer_endpoint="op",
         judge_endpoint="j",
-        experiments={"runtime": "r", "eval": "e", "optimizer": "o"},
+        experiments={"root": "/Shared/forge"},
     )
     assert cfg.mode == "code"
     assert cfg.agent_module == "my.custom.agent"
@@ -198,7 +198,7 @@ def test_runtime_yaml_rejects_invalid_mode() -> None:
             runtime_endpoint="rt",
             optimizer_endpoint="op",
             judge_endpoint="j",
-            experiments={"runtime": "r", "eval": "e", "optimizer": "o"},
+            experiments={"root": "/Shared/forge"},
         )
 
 
@@ -218,7 +218,7 @@ def test_harness_config_mode_flows_through_from_split() -> None:
         runtime_endpoint="rt",
         optimizer_endpoint="op",
         judge_endpoint="j",
-        experiments=ExperimentsConfig(runtime="r", eval="e", optimizer="o"),
+        experiments=ExperimentsConfig(),
     )
     scaffold = ScaffoldYAML()
     merged = HarnessConfig.from_split(scaffold, runtime)
@@ -233,7 +233,7 @@ def test_harness_config_defaults_to_prompt() -> None:
         runtime_endpoint="rt",
         optimizer_endpoint="op",
         judge_endpoint="j",
-        experiments={"runtime": "r", "eval": "e", "optimizer": "o"},
+        experiments={"root": "/Shared/forge"},
     )
     assert cfg.mode == "prompt"
     assert cfg.agent_module == "anvil.agents.baseline"

@@ -59,6 +59,70 @@ _ENV_SCAFFOLD_COMMIT_SHA = "ANVIL_SCAFFOLD_COMMIT_SHA"
 _ENV_SCAFFOLD_BRANCH = "ANVIL_SCAFFOLD_BRANCH"
 
 
+def configure_tracking_uri(profile: str | None = None) -> str:
+    """Point MLflow at the Databricks workspace, not a local file. Returns the URI.
+
+    * A named profile (not the ``"DEFAULT"`` sentinel) → ``databricks://<profile>``,
+      and ``DATABRICKS_CONFIG_PROFILE`` is bound for the gateway client.
+    * Otherwise, if nothing set a tracking URI (no ``MLFLOW_TRACKING_URI``, no
+      earlier ``mlflow.set_tracking_uri``) but Databricks credentials are present
+      (``DATABRICKS_HOST``, ``DATABRICKS_CONFIG_PROFILE``, or ``~/.databrickscfg``)
+      → ``databricks``. Without this, MLflow 3.x silently defaults to a local
+      ``sqlite:///<cwd>/mlflow.db`` — in a sandbox that file is wiped with the
+      sandbox, taking every eval trace and optimizer transcript with it.
+    * An explicitly set URI is always respected (tests, local-file setups).
+
+    Warns when the result is still a local store, so it is visible in the log.
+    """
+    if profile and profile != "DEFAULT":
+        mlflow.set_tracking_uri(f"databricks://{profile}")
+        os.environ["DATABRICKS_CONFIG_PROFILE"] = profile
+    else:
+        from mlflow.tracking._tracking_service.utils import is_tracking_uri_set  # noqa: PLC0415
+
+        has_databricks_creds = bool(
+            os.environ.get("DATABRICKS_HOST")
+            or os.environ.get("DATABRICKS_CONFIG_PROFILE")
+            or Path("~/.databrickscfg").expanduser().is_file()
+        )
+        if not is_tracking_uri_set() and has_databricks_creds:
+            mlflow.set_tracking_uri("databricks")
+    uri = mlflow.get_tracking_uri()
+    if not uri.startswith("databricks"):
+        logger.warning(
+            "MLflow tracking URI is %r — traces and optimizer transcripts stay LOCAL and "
+            "do not reach the Databricks workspace. Set MLFLOW_TRACKING_URI=databricks "
+            "(with DATABRICKS_HOST/TOKEN or a profile) to keep them.",
+            uri,
+        )
+    return uri
+
+
+def ensure_experiment_folder(experiment: str) -> None:
+    """Create the workspace folder an experiment lives in, if it is missing.
+
+    Databricks refuses to create ``/Shared/forge/<domain>/eval`` until
+    ``/Shared/forge/<domain>`` exists ("Parent directory does not exist"), so
+    a domain's first run would silently get no experiment. Only acts when
+    MLflow points at Databricks; uses the profile in the tracking URI
+    (``databricks://<profile>``) or the ambient SDK config. Best-effort — a
+    failure is logged and the experiment creation that follows reports it.
+    """
+    uri = mlflow.get_tracking_uri()
+    if not uri.startswith("databricks"):
+        return
+    parent = experiment.rsplit("/", 1)[0]
+    if not parent:
+        return
+    try:
+        from databricks.sdk import WorkspaceClient  # noqa: PLC0415
+
+        profile = uri.split("://", 1)[1] if "://" in uri else None
+        WorkspaceClient(profile=profile or None).workspace.mkdirs(parent)
+    except Exception as exc:  # noqa: BLE001 - best-effort; set_experiment reports the real error
+        logger.warning("could not create experiment folder %r: %s", parent, exc)
+
+
 def setup_eval_tracing(*, experiment: str, profile: str | None = None) -> str | None:
     """Arm MLflow tracing for an eval run — GENERIC across every engine.
 
@@ -75,14 +139,16 @@ def setup_eval_tracing(*, experiment: str, profile: str | None = None) -> str | 
     SDK's env-var fallback). Returns the experiment id when resolvable, else
     None — best-effort, never raises on a tracking-server hiccup.
     """
-    if profile and profile != "DEFAULT":
-        mlflow.set_tracking_uri(f"databricks://{profile}")
-        os.environ["DATABRICKS_CONFIG_PROFILE"] = profile
+    configure_tracking_uri(profile)
     experiment_id: str | None = None
     try:
+        # Creates the experiment when it does not exist yet (needs write access
+        # to its parent workspace folder, e.g. /Shared or /Users/<you>).
+        if mlflow.get_experiment_by_name(experiment) is None:
+            ensure_experiment_folder(experiment)
         exp = mlflow.set_experiment(experiment)
         experiment_id = getattr(exp, "experiment_id", None)
-    except MlflowException as exc:  # best-effort: tracing is observability
+    except Exception as exc:  # noqa: BLE001 - best-effort: tracing is observability
         logger.warning("setup_eval_tracing: could not set experiment %r: %s", experiment, exc)
     enable_runtime_tracing()
     return experiment_id

@@ -37,8 +37,15 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
+from datetime import UTC, datetime  # noqa: E402
+
 from anvil.loop.git_ops import check_clean_worktree  # noqa: E402
+from anvil.loop.optimizer_artifacts import (  # noqa: E402
+    close_cli_session_sink,
+    open_cli_session_sink,
+)
 from anvil.loop.round import run_round  # noqa: E402
+from anvil.observability import configure_tracking_uri  # noqa: E402
 
 
 def _arg_parser() -> argparse.ArgumentParser:
@@ -110,20 +117,50 @@ def main(argv: list[str] | None = None) -> int:
 
     next_id = args.round_id if args.round_id is not None else _next_round_id(REPO_ROOT)
 
-    for i in range(args.rounds):
-        rid = next_id + i
-        print(f"\n=== round {rid} ===")
-        report = run_round(
-            round_id=rid,
-            repo_root=REPO_ROOT,
-            profile=args.profile,
-            parent_branch=args.parent_branch,
-            eval_mode=args.eval_mode,
-            max_turns=args.max_turns,
-        )
-        print(
-            f"=== round {rid} done · {report.decision} · "
-            f"action={report.action_kind} · Δ={report.score_delta}\n"
+    # Send traces + optimizer transcripts to the Databricks workspace (not a
+    # local mlflow.db that a sandbox wipes), then open ONE parent run for this
+    # session's optimizer transcripts/critiques — the same durable sink the
+    # orchestrator uses. Best-effort: a failed open just skips persistence.
+    print(f"MLflow tracking URI: {configure_tracking_uri(args.profile)}")
+    started_at = datetime.now(UTC).isoformat(timespec="seconds")
+    session_id = f"cli-{datetime.now(UTC):%Y%m%dT%H%M%S}"
+    sink = open_cli_session_sink(REPO_ROOT, session_id=session_id)
+    if sink is not None:
+        print(f"Optimizer transcripts → MLflow run {sink.run_id} (experiment {sink.experiment_id})")
+
+    round_ids: list[int] = []
+    status = "FAILED"
+    try:
+        for i in range(args.rounds):
+            rid = next_id + i
+            print(f"\n=== round {rid} ===")
+            report = run_round(
+                round_id=rid,
+                repo_root=REPO_ROOT,
+                profile=args.profile,
+                parent_branch=args.parent_branch,
+                eval_mode=args.eval_mode,
+                max_turns=args.max_turns,
+                artifact_sink=sink,
+            )
+            round_ids.append(rid)
+            print(
+                f"=== round {rid} done · {report.decision} · "
+                f"action={report.action_kind} · Δ={report.score_delta}\n"
+            )
+        status = "FINISHED"
+    finally:
+        close_cli_session_sink(
+            sink,
+            REPO_ROOT,
+            round_ids=round_ids,
+            session_meta={
+                "session_id": session_id,
+                "surface": "cli",
+                "started_at": started_at,
+                "finished_at": datetime.now(UTC).isoformat(timespec="seconds"),
+            },
+            status=status,
         )
 
     return 0

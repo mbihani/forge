@@ -6,11 +6,11 @@ run) a human- and machine-readable improvement summary — otherwise lives
 only inside the ephemeral ``/tmp/forge-sessions/<id>`` clone, which is
 ``shutil.rmtree``'d on shutdown. This module attaches those artifacts to
 a single parent MLflow run under the ``experiments.optimizer`` experiment
-(``/Shared/anvil-optimizer`` by default) so they SURVIVE session
+(``/Shared/forge/<domain>/optimizer`` by default) so they SURVIVE session
 shutdown.
 
 The parent run is DISTINCT from the per-round eval runs under
-``experiments.eval`` (``/Shared/anvil-eval``): those are created by
+``experiments.eval`` (``/Shared/forge/<domain>/eval``): those are created by
 ``mlflow.genai.evaluate`` and must not be disturbed. We never make the
 optimizer run the *active* MLflow run — all writes go through an explicit
 ``MlflowClient`` keyed on the run id, so the eval runs' active-run stack
@@ -35,6 +35,11 @@ from typing import Any
 import yaml
 
 from anvil.runtime.loader import default_runtime_config_path
+from anvil.runtime.models import (
+    ExperimentsConfig,
+    check_domain_experiment,
+    resolve_domain_experiments,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +49,6 @@ logger = logging.getLogger(__name__)
 # deployment (e.g. the Databricks App) can force-enable or force-disable
 # the sink without editing the cloned target repo's config.yaml.
 _ENV_TOGGLE = "ANVIL_PERSIST_OPTIMIZER_ARTIFACTS"
-# Last-resort experiment path when neither ``persistence.experiment`` nor
-# ``experiments.optimizer`` is set — matches the shipped config default.
-_DEFAULT_OPTIMIZER_EXPERIMENT = "/Shared/anvil-optimizer"
 
 _TRUE = frozenset({"1", "true", "yes", "on"})
 _FALSE = frozenset({"0", "false", "no", "off"})
@@ -76,28 +78,37 @@ def resolve_persistence_settings(scaffold_root: Path | str) -> tuple[bool, str]:
       precedence); otherwise the file's ``persistence.enabled`` (default
       ``True`` — enabled by default so a config without the block keeps
       persisting).
-    * ``experiment_name`` — ``persistence.experiment`` when set, else
-      ``experiments.optimizer`` from the config, else
-      ``/Shared/anvil-optimizer``.
+    * ``experiment_name`` — ``persistence.experiment`` when set, else the
+      domain's optimizer experiment (``experiments.optimizer``, default
+      ``<experiments.root>/<eval.engine>/optimizer``). Both must live in the
+      domain's own folder — the same rule the config loader enforces — so a
+      session never writes into another domain's experiment (``ValueError``).
 
     Only these keys are read here; full-file ``extra="forbid"`` validation
     is enforced by the runtime loader.
     """
     enabled = True
-    experiment = _DEFAULT_OPTIMIZER_EXPERIMENT
+    raw: dict[str, Any] = {}
     path = default_runtime_config_path(Path(scaffold_root))
     if path.is_file():
         raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        persistence = raw.get("persistence")
-        persistence = persistence if isinstance(persistence, dict) else {}
-        if "enabled" in persistence:
-            enabled = bool(persistence["enabled"])
-        experiments = raw.get("experiments")
-        experiments = experiments if isinstance(experiments, dict) else {}
-        if persistence.get("experiment"):
-            experiment = str(persistence["experiment"])
-        elif experiments.get("optimizer"):
-            experiment = str(experiments["optimizer"])
+    persistence = raw.get("persistence")
+    persistence = persistence if isinstance(persistence, dict) else {}
+    if "enabled" in persistence:
+        enabled = bool(persistence["enabled"])
+    eval_cfg = raw.get("eval") if isinstance(raw.get("eval"), dict) else {}
+    domain = str(eval_cfg.get("engine") or "genai")
+    experiments = resolve_domain_experiments(
+        ExperimentsConfig.model_validate(raw.get("experiments") or {}), domain
+    )
+    experiment = experiments.optimizer
+    if persistence.get("experiment"):
+        experiment = check_domain_experiment(
+            str(persistence["experiment"]),
+            root=experiments.root,
+            domain=domain,
+            field="persistence.experiment",
+        )
     env = _env_toggle()
     if env is not None:
         enabled = env
@@ -157,6 +168,9 @@ class OptimizerArtifactSink:
             client = MlflowClient()
             experiment = client.get_experiment_by_name(experiment_name)
             if experiment is None:
+                from anvil.observability import ensure_experiment_folder  # noqa: PLC0415
+
+                ensure_experiment_folder(experiment_name)
                 experiment_id = client.create_experiment(experiment_name)
             else:
                 experiment_id = experiment.experiment_id
@@ -444,3 +458,71 @@ def persist_improvement_summary(
         )
     except Exception as exc:  # noqa: BLE001 — best-effort; never fatal
         logger.warning("optimizer artifact sink: could not persist improvement summary: %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# CLI sessions (scripts/run_round.py) — same durable sink as the orchestrator
+# ---------------------------------------------------------------------------
+
+
+def open_cli_session_sink(
+    repo_root: Path | str, *, session_id: str, tags: dict[str, str] | None = None
+) -> OptimizerArtifactSink | None:
+    """Open the session's parent run for a scripts-driven optimize session.
+
+    Mirrors the orchestrator: honours ``persistence.enabled`` (env
+    ``ANVIL_PERSIST_OPTIMIZER_ARTIFACTS`` authoritative) and the optimizer
+    experiment, creating the experiment if needed. Returns ``None`` when
+    persistence is off or the sink cannot open — never fatal. The caller
+    must point MLflow at the workspace first
+    (:func:`anvil.observability.configure_tracking_uri`).
+    """
+    try:
+        enabled, experiment = resolve_persistence_settings(Path(repo_root) / "scaffold")
+    except Exception as exc:  # noqa: BLE001 — best-effort; never fatal
+        logger.warning("could not resolve optimizer persistence settings: %s", exc)
+        return None
+    if not enabled:
+        logger.info("optimizer-artifact persistence disabled (persistence.enabled / env)")
+        return None
+    return OptimizerArtifactSink.open(
+        experiment_name=experiment,
+        session_id=session_id,
+        tags={"anvil.surface": "cli", **(tags or {})},
+    )
+
+
+def close_cli_session_sink(
+    sink: OptimizerArtifactSink | None,
+    repo_root: Path | str,
+    *,
+    round_ids: list[int],
+    session_meta: dict[str, Any],
+    status: str = "FINISHED",
+) -> None:
+    """Log the improvement summary from on-disk round records, then close the run.
+
+    Reads ``eval/runs/round_NNN.json`` for the session's rounds plus
+    ``frontier.json`` / ``baseline.json``. Best-effort; a ``None`` sink is a
+    no-op.
+    """
+    if sink is None:
+        return
+    runs = Path(repo_root) / "eval" / "runs"
+
+    def _read(path: Path) -> dict[str, Any] | None:
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+
+    rounds = [r for rid in round_ids if (r := _read(runs / f"round_{rid:03d}.json"))]
+    persist_improvement_summary(
+        sink,
+        session_meta=session_meta,
+        rounds=rounds,
+        frontier=_read(runs / "frontier.json"),
+        finalized=_read(runs / "finalized.json"),
+        baseline=_read(runs / "baseline.json"),
+    )
+    sink.close(status=status)

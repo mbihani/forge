@@ -48,7 +48,8 @@ or run the `forge-onboarding` skill from Claude Code in this repo.
 
 - **Scaffold** → `scaffold/` (markdown + YAML, git-tracked).
 - **Mutations log** → `anvil.default.mutations` (Delta append-only).
-- **Traces** → MLflow native Delta sync, experiments
-  `anvil-exp-runtime`, `anvil-exp-eval`, `anvil-exp-optimizer`.
+- **Traces** → MLflow in the Databricks workspace, one experiment set per
+  domain: `/Shared/forge/<domain>/{eval,optimizer,runtime}`
+  (`harness/config.yaml > experiments`).
 - **Per-round eval JSON** → `eval/runs/round_NNN.json`.
 - **Per-round critique** → `scaffold/memory/round_NNN_critique.md`.

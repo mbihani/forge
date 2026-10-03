@@ -50,10 +50,10 @@ next steps, read `docs/plan.md`.
 - When the user wants to start, set up, or resume an optimization run, use
   the **`forge-onboarding`** skill (`.claude/skills/forge-onboarding/`). Run
   its intake — agent repo, objective, models, levers, mutations per round,
-  eval size, budget, workspace, forge repo/branch/account, environment
-  variables (checked by name, never echoed) — and its preflight before writing config
-  or starting any baseline or round. Never assume the objective (quality vs
-  latency/cost); ask.
+  eval size, budget, workspace, forge repo/branch/account, MLflow
+  experiments, environment variables (checked by name, never echoed) — and
+  its preflight before writing config or starting any baseline or round.
+  Never assume the objective (quality vs latency/cost); ask.
 
 ## When proposing architecture changes
 

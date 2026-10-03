@@ -552,9 +552,7 @@ def _write_trace_scaffold(root: Path, snapshot_rel: str) -> tuple[Path, Path]:
         "optimizer_endpoint: model-o\n"
         "judge_endpoint: model-j\n"
         "experiments:\n"
-        "  runtime: /exp/runtime\n"
-        "  eval: /exp/eval\n"
-        "  optimizer: /exp/optimizer\n"
+        "  root: /exp\n"
         "eval:\n"
         "  engine: trace\n"
         "  default_mode: quick\n"
@@ -651,7 +649,7 @@ def test_evaluate_trace_requires_trace_config(tmp_path: Path) -> None:
     # engine: trace but NO trace: block -> must fail loudly.
     (harness / "config.yaml").write_text(
         "runtime_endpoint: r\noptimizer_endpoint: o\njudge_endpoint: j\n"
-        "experiments: {runtime: /r, eval: /e, optimizer: /o}\n"
+        "experiments: {root: /Shared/forge}\n"
         "eval:\n  engine: trace\n  modes:\n    quick: {rows: 1}\n",
         encoding="utf-8",
     )

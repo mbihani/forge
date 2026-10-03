@@ -356,7 +356,7 @@ _MINIMAL_RUNTIME = {
     "runtime_endpoint": "r",
     "optimizer_endpoint": "o",
     "judge_endpoint": "j",
-    "experiments": {"runtime": "/rt", "eval": "/ev", "optimizer": "/opt"},
+    "experiments": {"root": "/Shared/forge"},
 }
 
 
@@ -369,9 +369,9 @@ def test_runtime_yaml_defaults_persistence_enabled() -> None:
 
 
 def test_runtime_yaml_accepts_persistence_block() -> None:
-    cfg = RuntimeYAML(**_MINIMAL_RUNTIME, persistence={"enabled": False, "experiment": "/custom"})
+    cfg = RuntimeYAML(**_MINIMAL_RUNTIME, persistence={"enabled": False, "experiment": "/Shared/forge/genai/custom"})
     assert cfg.persistence.enabled is False
-    assert cfg.persistence.experiment == "/custom"
+    assert cfg.persistence.experiment == "/Shared/forge/genai/custom"
 
 
 def test_persistence_block_forbids_extra_keys() -> None:
@@ -391,18 +391,18 @@ def test_resolve_persistence_settings_defaults(tmp_path: Path) -> None:
     enabled by default, experiment taken from experiments.optimizer."""
     scaffold = _write_config(
         tmp_path,
-        "mode: prompt\nexperiments:\n  optimizer: /Shared/anvil-optimizer\n",
+        "mode: prompt\nexperiments:\n  optimizer: /Shared/forge/genai/opt-x\n",
     )
     enabled, experiment = resolve_persistence_settings(scaffold)
     assert enabled is True
-    assert experiment == "/Shared/anvil-optimizer"
+    assert experiment == "/Shared/forge/genai/opt-x"
 
 
 def test_resolve_persistence_settings_no_config_file(tmp_path: Path) -> None:
-    """No config.yaml at all → enabled default + hardcoded experiment fallback."""
+    """No config.yaml at all → enabled default + the default domain's experiment."""
     enabled, experiment = resolve_persistence_settings(tmp_path / "scaffold")
     assert enabled is True
-    assert experiment == "/Shared/anvil-optimizer"
+    assert experiment == "/Shared/forge/genai/optimizer"
 
 
 def test_resolve_persistence_settings_file_disables(tmp_path: Path) -> None:
@@ -434,8 +434,8 @@ def test_env_override_wins_over_file(tmp_path: Path, monkeypatch: pytest.MonkeyP
 def test_persistence_experiment_overrides_experiments_optimizer(tmp_path: Path) -> None:
     scaffold = _write_config(
         tmp_path,
-        "persistence:\n  experiment: /Shared/custom-opt\n"
-        "experiments:\n  optimizer: /Shared/anvil-optimizer\n",
+        "persistence:\n  experiment: /Shared/forge/genai/custom-opt\n"
+        "experiments:\n  optimizer: /Shared/forge/genai/optimizer\n",
     )
     _, experiment = resolve_persistence_settings(scaffold)
-    assert experiment == "/Shared/custom-opt"
+    assert experiment == "/Shared/forge/genai/custom-opt"

@@ -285,9 +285,7 @@ def test_runtime_yaml_parses_full_mixed_config(tmp_path: Path) -> None:
             optimizer_endpoint: op
             judge_endpoint: j
             experiments:
-              runtime: r
-              eval: e
-              optimizer: o
+              root: /Shared/forge
             eval:
               scorers:
                 - name: correctness

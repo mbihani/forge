@@ -120,6 +120,21 @@ below); otherwise ask in plain text and wait. Record every answer.
 11. **Refresh model prices?** If `model_catalog.sheet_id` is set, offer to
     re-sync now (`scripts/sync_model_catalog.py`, needs
     `gcloud auth application-default login`) and commit the CSV diff.
+12. **Where do this domain's MLflow experiments live?** Every domain gets
+    its own set, derived from `experiments.root` (default `/Shared/forge`) and
+    the engine name — e.g. for `pitcrew`:
+    `/Shared/forge/pitcrew/eval` (one trace per eval row, tagged with the
+    round's branch), `/Shared/forge/pitcrew/optimizer` (one run per session:
+    optimizer transcripts, critiques, improvement summary) and
+    `/Shared/forge/pitcrew/runtime` (deployed agent). Ask only:
+    - **the root** — keep `/Shared/forge`, or a per-user folder such as
+      `/Users/<email>/forge`. They are created on first use if the identity
+      can write that folder. An explicit path outside `<root>/<domain>/`
+      makes the config fail to load, so domains can never share experiments.
+    - **optimizer transcripts on or off** (`persistence.enabled`, default on;
+      `ANVIL_PERSIST_OPTIMIZER_ARTIFACTS` overrides it).
+    - For the `trace` engine, the agent's OWN experiment (the dataset) is a
+      separate, pre-existing one — ask for its id.
 
 ### Group E — Environment variables
 
@@ -133,6 +148,7 @@ sandbox's secret store) rather than pasting it into the chat.
 |---|---|---|
 | `DATABRICKS_CONFIG_PROFILE` | local runs (or pass `--profile`) | Profile in `~/.databrickscfg` for the gateway (runtime + judge) and MLflow |
 | `DATABRICKS_HOST` + `DATABRICKS_TOKEN` | sandbox / no profile | Workspace URL + token for the same. `DATABRICKS_TOKEN` is read by **every** path (runtime, judge, MLflow, and the optimizer's gateway auth). Fine when everything is on one workspace. If the optimizer's gateway is on a different workspace from the agent, do **not** set it — give each side its own auth (profiles); a token for workspace A sent to workspace B's gateway fails silently as an empty optimizer transcript |
+| `MLFLOW_TRACKING_URI` | sandbox without a profile — set `databricks` | Where traces and runs go. forge sets `databricks` itself when it sees Databricks credentials and nothing else chose a URI; if it is set to anything else (`sqlite:`, `file:`, a path), traces stay **local** — in a sandbox they are lost when it is wiped. Ask before accepting a non-Databricks value |
 | `ANVIL_AI_GATEWAY_URL` | `local` optimizer backend — **required** | The optimizer's Anthropic route, `https://<workspace-id>.ai-gateway.cloud.databricks.com/anthropic` (not `<host>/serving-endpoints/anthropic`). Unset ⇒ every round raises at start, unless `ANTHROPIC_BASE_URL` is already set — which it often is, **inherited from the coding harness you are running in** (e.g. Claude Code), silently sending the optimizer to that harness's workspace. If it is set, ask which workspace it points at and whether that is intended |
 | `ANTHROPIC_AUTH_TOKEN` | optional | Overrides the optimizer's gateway auth (normally from the Databricks profile / host) |
 | `OMNIGENT_SERVER_URL`, `OMNIGENT_AUTH_TOKEN` | `omnigent` backend | Server URL and bearer token; override `optimizer.server_url` / `auth_token` |
@@ -202,14 +218,23 @@ Run each check and report pass/fail; fix or go back to the user on any fail.
    allowing `input_mode: text`.
 6. **Prices known** — `scripts/sync_model_catalog.py --check <allowed models>`;
    unpriced models still run, but tell the user their cost will be blank.
-7. **Baseline matches the run** — regenerate it now, live, at the chosen eval
+7. **Traces land in the workspace** — `uv run python -c "from anvil.observability
+   import configure_tracking_uri as c; print(c('<profile or DEFAULT>'))"` must
+   print a URI starting with `databricks` (`run_round.py` prints it too; any
+   path warns when it is local). After the baseline (step 8), confirm in the
+   workspace that the
+   `<root>/<domain>/eval` experiment exists and holds new traces (a local
+   SQLite experiment id is a small integer like `1`; a workspace id is a
+   long number) and, once rounds start, that the `<root>/<domain>/optimizer`
+   experiment has a run tagged `anvil.surface=cli`.
+8. **Baseline matches the run** — regenerate it now, live, at the chosen eval
    size: `uv run python scripts/make_baseline.py --mode <mode>` and commit
    `eval/runs/baseline.json`. Its `mode` must equal the rounds' `--eval-mode`,
    it must be produced by the same scaffold/levers the rounds start from, and
    for a latency objective its `cost_metrics` must contain
    `latency_ms_median`. Never reuse a cached or different-size baseline: the
    gate would compare unlike runs and keep or revert on noise.
-8. **Parent branch** — `anvil/exp` exists at the baseline commit
+9. **Parent branch** — `anvil/exp` exists at the baseline commit
    (`git branch -f anvil/exp HEAD` after committing the baseline).
 
 ## Step 4 — Kick off and report

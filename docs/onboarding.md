@@ -54,7 +54,8 @@ answer maps to config):
 | 9 | Where it runs (local / sandbox / app), which workspace, optimizer backend | `--profile`, `optimizer.backend` |
 | 10 | Forge repo(s), starting branch, parent branch, and push account — each by name | git remotes + credentials, `--parent-branch` |
 | 11 | Re-sync model prices now? | `harness/model_catalog.csv` |
-| 12 | Environment variables for that path (checked by name, never echoed) | see below |
+| 12 | Root folder for the domain's own MLflow experiments (`<root>/<domain>/{eval,optimizer,runtime}`, auto-created) and whether to keep optimizer transcripts | `experiments.root`, `persistence.enabled` |
+| 13 | Environment variables for that path (checked by name, never echoed) | see below |
 
 **Environment variables** (the skill's Group E has the full table):
 
@@ -63,6 +64,10 @@ answer maps to config):
   and the optimizer all read it: fine on one workspace, but if the
   optimizer's gateway is on another workspace, leave `DATABRICKS_TOKEN` unset
   and use per-side auth (a shared token fails as an empty optimizer transcript).
+- **MLflow destination:** `MLFLOW_TRACKING_URI=databricks` — forge sets it itself
+  when it finds Databricks credentials and nothing else picked a URI; any other
+  value (`sqlite:`, `file:`) keeps traces in a local file, which a sandbox
+  loses when it is wiped.
 - **`local` optimizer backend:** `ANVIL_AI_GATEWAY_URL`
   (`https://<workspace-id>.ai-gateway.cloud.databricks.com/anthropic`) —
   required; without it every round fails at start, unless `ANTHROPIC_BASE_URL`
@@ -395,7 +400,7 @@ without hand-writing a scorer.
 
 forge arms MLflow tracing for **every** engine before it dispatches
 (`evaluate_branch` → `anvil.observability.setup_eval_tracing`): it selects the
-eval experiment (`experiments.eval`, default `/Shared/anvil-eval`) and enables
+eval experiment (`experiments.eval`, default `/Shared/forge/<domain>/eval`) and enables
 `mlflow.openai.autolog`. Because the gateway client (`build_gateway_client`) is
 openai-backed, **any** `chat.completions.create` your engine makes is captured
 as a `CHAT_MODEL` span in that experiment — no engine code required.
