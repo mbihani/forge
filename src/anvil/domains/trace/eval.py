@@ -386,14 +386,22 @@ def _parse_verdict(raw: str) -> float:
     return 1.0 if verdict == "pass" else 0.0
 
 
-def build_judge_fn(judge_client: Any, fallback_model: str) -> Callable[..., float]:
+def build_judge_fn(
+    judge_client: Any,
+    fallback_model: str,
+    agent_judges: list[Any] | None = None,
+) -> Callable[..., float]:
     """Return a ``judge_fn`` that re-runs a rubric judge via the gateway.
 
-    DECISION #4: re-run the EXACT judge model recorded in the rubric's
-    ``source_id``; if that model is not reachable through the gateway, fall
-    back to the configured ``judge_endpoint`` and log a warning. All calls
+    When the agent's own judge of the rubric's name was reviewed into
+    ``eval/agent_evals/`` (``agent_judges``), that exact judge scores it.
+    Otherwise (DECISION #4) re-run the judge model recorded in the rubric's
+    ``source_id`` with a rubric prompt rebuilt from its name + rationale; if
+    that model is not reachable through the gateway, fall back to the
+    configured ``judge_endpoint`` and log a warning. All prompt-rebuilt calls
     route through the AI-Gateway client (sole LLM route, fresh SP token).
     """
+    by_name = {j.name: j for j in agent_judges or []}
 
     def _call(model: str, prompt: str) -> str:
         response = judge_client.chat.completions.create(
@@ -405,6 +413,10 @@ def build_judge_fn(judge_client: Any, fallback_model: str) -> Callable[..., floa
         return response.choices[0].message.content or ""
 
     def judge_fn(*, query: str, output: str, rubric: dict[str, Any]) -> float:
+        agent_judge = by_name.get(str(rubric.get("name", "")))
+        if agent_judge is not None:
+            score, _ = agent_judge.score(inputs={"query": query}, outputs=output)
+            return 0.0 if score is None else float(score)
         prompt = _JUDGE_PROMPT_TEMPLATE.format(
             rubric=rubric.get("name", ""),
             rationale=rubric.get("rationale") or "(none)",
@@ -576,11 +588,21 @@ def evaluate_trace(
             runtime_config_path=runtime_config_path,
             runtime_client=runtime_client,
         )
+    agent_judges: list[Any] = []
     if judge_fn is None:
+        from anvil.eval.agent_evals import load_agent_judges  # noqa: PLC0415
         from anvil.runtime.client import build_gateway_client  # noqa: PLC0415
 
         judge_client = judge_client or build_gateway_client()
-        judge_fn = build_judge_fn(judge_client, snapshot.config.judge_endpoint)
+        agent_cfg = cfg.agent_evals
+        agent_judges = (
+            load_agent_judges(repo_root, names=list(agent_cfg.judges))
+            if agent_cfg is not None and agent_cfg.experiment_id
+            else []
+        )
+        judge_fn = build_judge_fn(
+            judge_client, snapshot.config.judge_endpoint, agent_judges=agent_judges
+        )
 
     def _predict_and_score(row: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -638,6 +660,11 @@ def evaluate_trace(
 
     keys = sorted(key_map.values())
     fingerprint = compute_trace_fingerprint(keys, trace_cfg.min_human_weight, snap_hash)
+    if agent_judges:
+        from anvil.eval.agent_evals import read_agent_evals  # noqa: PLC0415
+
+        inventory = read_agent_evals(repo_root)
+        fingerprint += f"+agent_evals:{inventory.fingerprint() if inventory else ''}"
 
     cost_metrics: dict[str, float] = {"n_rows": float(len(scored_rows))}
     latencies = sorted(

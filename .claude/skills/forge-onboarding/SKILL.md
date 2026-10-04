@@ -6,7 +6,9 @@ description: >-
   agent, says "start an optimizer session", "run forge on my agent", "optimize
   for latency/cost/quality", "take me through optimization", wants to set up a
   forge domain / eval engine, prime a baseline, or kick off rounds. ALWAYS runs
-  an intake first: asks the user every decision the run needs (agent repo,
+  an intake first: reviews the agent's EXISTING evals (its judges and human
+  feedback, which then score every round; asks for metrics only if there are
+  none), then asks the user every decision the run needs (agent repo,
   objective, models, levers, mutations per round, eval size, budget,
   workspace, forge repo/branch/account, environment variables), writes the
   config, runs preflight checks, and only then starts.
@@ -59,6 +61,34 @@ below); otherwise ask in plain text and wait. Record every answer.
      new domain to build (Step 2). If the agent is traced at the *function*
      level or takes non-text input (PDFs, images), the `trace` engine cannot
      ingest it — say so and plan a domain instead.
+1b. **The agent's existing evals — review them BEFORE any other question.**
+   An agent brought to forge has usually been evaluated already. Forge never
+   invents its own idea of quality when the agent has one:
+   - Ask for the **MLflow experiment holding the agent's own traces, judges
+     and human feedback** (not forge's `experiments.*`). Set
+     `eval.agent_evals.experiment_id` and run
+     `uv run python scripts/review_agent_evals.py --profile <profile>`. It
+     writes `eval/agent_evals/inventory.json` (the registered judges/scorers,
+     re-loadable exactly) and `eval/agent_evals/review.md`.
+   - **Walk the user through `review.md`**: which judges exist and their exact
+     definitions, which score lowest and why (failing rationales), what the
+     human feedback says, MLflow-detected issues, and the trace input/output
+     shape the judges ran on. Use it to propose the objective (Q2) and the
+     search space (Group B).
+   - **Judges with no signal** (pass or fail on every trace) are listed
+     separately — they may be stale or miscalibrated rather than the agent
+     being wrong. Ask whether to keep, fix, or drop each; record the judges to
+     re-use in `eval.agent_evals.judges` (empty = all). Never silently drop one.
+   - These judges score the baseline and **every round** (the genai and trace
+     engines load them automatically; a domain engine calls
+     `anvil.eval.agent_evals.score_with_agent_judges` with inputs/outputs in
+     the shape the review lists). Only add forge-side metrics on top if the
+     user asks.
+   - **If the agent has no judges** (no experiment, or the review found none),
+     ask the user which metrics the evals should use, and record their answer
+     under `eval.agent_evals.user_metrics` (name + description each) before
+     building any scorer. `make_baseline.py` and `run_round.py` refuse to run
+     until one of the two is true.
 2. **Objective?** This decides the gate, so never assume it:
    - *Quality* — maximize the aggregate (`gate.pareto.enabled: false`).
    - *Latency (or cost) with a quality floor* — Pareto gate: minimize
@@ -209,6 +239,16 @@ Run each check and report pass/fail; fix or go back to the user on any fail.
 3. **Engine loads and config is valid** —
    `uv run python -c "from anvil.eval.engines import load_engine; from anvil.runtime.loader import load_harness; load_engine('<engine>'); s = load_harness('scaffold'); print(s.config.effective_runtime_model, s.config.levers)"`.
    This also validates every lever value against its allowlist.
+3b. **The agent's judges are reviewed and re-loadable** —
+   `eval/agent_evals/{inventory.json,review.md}` exist for
+   `eval.agent_evals.experiment_id` and are committed (or `user_metrics` are
+   recorded because the agent has none), and each re-used judge scores one real
+   output of the agent:
+   `uv run python -c "from anvil.eval.agent_evals import load_agent_judges, score_with_agent_judges; print(score_with_agent_judges(load_agent_judges('.'), inputs=<inputs>, outputs=<outputs>))"`
+   with inputs/outputs in the shape `review.md` lists. A judge that cannot be
+   rebuilt here (e.g. a custom-code scorer needs a Databricks tracking URI)
+   must be fixed or explicitly dropped with the user — never replaced by a
+   forge-invented judge.
 4. **Every allowed model works with the agent's real input** — make one real
    call per model with the agent's actual input shape (not a text-only ping).
    Drop any model that errors and tell the user why. Known traps: GPT and

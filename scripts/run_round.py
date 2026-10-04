@@ -39,6 +39,9 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from datetime import UTC, datetime  # noqa: E402
 
+import yaml  # noqa: E402
+
+from anvil.eval.agent_evals import AgentEvalsNotReady, ensure_agent_evals_ready  # noqa: E402
 from anvil.loop.git_ops import check_clean_worktree  # noqa: E402
 from anvil.loop.optimizer_artifacts import (  # noqa: E402
     close_cli_session_sink,
@@ -46,6 +49,7 @@ from anvil.loop.optimizer_artifacts import (  # noqa: E402
 )
 from anvil.loop.round import run_round  # noqa: E402
 from anvil.observability import configure_tracking_uri  # noqa: E402
+from anvil.runtime.models import RuntimeYAML  # noqa: E402
 
 
 def _arg_parser() -> argparse.ArgumentParser:
@@ -113,6 +117,17 @@ def main(argv: list[str] | None = None) -> int:
     if proc.returncode != 0:
         print(f"ERROR: parent branch {args.parent_branch!r} does not exist.")
         print(f"Create it first: git -C {REPO_ROOT} checkout -b {args.parent_branch} main")
+        return 2
+
+    # Rounds are scored with the agent's own (reviewed) judges — refuse to
+    # optimize before that review exists, or before metrics were agreed.
+    runtime = RuntimeYAML.model_validate(
+        yaml.safe_load((REPO_ROOT / "harness" / "config.yaml").read_text(encoding="utf-8")) or {}
+    )
+    try:
+        ensure_agent_evals_ready(runtime.eval, REPO_ROOT)
+    except AgentEvalsNotReady as exc:
+        print(f"ERROR: {exc}")
         return 2
 
     next_id = args.round_id if args.round_id is not None else _next_round_id(REPO_ROOT)

@@ -143,6 +143,7 @@ def _seed_repo(
                 "modes": {"quick": {"rows": 8}, "standard": {"rows": 12}, "full": {"rows": 20}},
                 "scorers": ["correctness"],
                 "held_out_test": held_out_test,
+                "agent_evals": {"user_metrics": [{"name": "correctness"}]},
             },
             "gate": {"type": "frontier"},
             "loop": {"max_optimizer_turns": 30},
@@ -810,7 +811,7 @@ def test_check_golden_set_still_validates_existing_jsonl(tmp_path: Path) -> None
 def test_validation_invalid_config_still_has_all_checks(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sessions_root: Path
 ) -> None:
-    """W1: when harness/config.yaml is missing, the report still has all 8 checks."""
+    """W1: when harness/config.yaml is missing, the report still has all 9 checks."""
     source = tmp_path / "agent-repo"
     _seed_repo(source, with_config=False)
     monkeypatch.setattr(app_module, "_clone_repo", _mock_clone_factory(source))
@@ -825,6 +826,7 @@ def test_validation_invalid_config_still_has_all_checks(
         "harness_config_yaml",
         "eval_modes",
         "agent_code",
+        "agent_evals",
         "parent_branch",
     }
     assert set(checks.keys()) == expected_names

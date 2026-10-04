@@ -69,6 +69,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Literal
 
 # Default MLflow trace export to synchronous BEFORE mlflow is imported anywhere
@@ -1042,6 +1043,48 @@ def _check_harness_config_yaml(
     )
 
 
+def _check_agent_evals(repo_path: Path, config: dict) -> dict:
+    """The agent's existing evals were reviewed (or metrics agreed with the user).
+
+    Forge scores rounds with the agent's OWN judges, so a session may not
+    optimize until ``scripts/review_agent_evals.py`` has written
+    ``eval/agent_evals/`` for the configured experiment — or, when the agent
+    has no judges, until ``eval.agent_evals.user_metrics`` records the
+    metrics the user chose.
+    """
+    from anvil.eval.agent_evals import (  # noqa: PLC0415
+        AgentEvalsNotReady,
+        ensure_agent_evals_ready,
+    )
+    from anvil.runtime.models import AgentEvalsConfig  # noqa: PLC0415
+
+    raw = (config.get("eval") or {}).get("agent_evals")
+    try:
+        parsed = AgentEvalsConfig.model_validate(raw) if raw is not None else None
+        inv = ensure_agent_evals_ready(SimpleNamespace(agent_evals=parsed), repo_path)
+    except (AgentEvalsNotReady, ValueError) as exc:
+        return {
+            "name": "agent_evals",
+            "status": "fail",
+            "message": str(exc),
+            "remediation": "Review the agent's existing evals first: set "
+            "eval.agent_evals.experiment_id and run scripts/review_agent_evals.py "
+            "(commit eval/agent_evals/). If the agent has no judges, ask the user which "
+            "metrics matter and list them under eval.agent_evals.user_metrics.",
+        }
+    if inv is None:
+        return {
+            "name": "agent_evals",
+            "status": "pass",
+            "message": "No agent judges; scoring with the metrics agreed with the user.",
+        }
+    return {
+        "name": "agent_evals",
+        "status": "pass",
+        "message": f"Re-using the agent's judges: {', '.join(inv.judge_names())}.",
+    }
+
+
 def _check_eval_modes(config: dict) -> dict:
     eval_section = config.get("eval") or {}
     modes = eval_section.get("modes")
@@ -1150,11 +1193,12 @@ def _run_validation(repo_path: Path) -> tuple[dict, dict | None, dict[str, list[
     if config is not None:
         checks.append(_check_eval_modes(config))
         checks.append(_check_agent_code(repo_path, config, findings))
+        checks.append(_check_agent_evals(repo_path, config))
     else:
-        # W1: Always include all 8 checks. When the config prerequisite
+        # W1: Always include all 9 checks. When the config prerequisite
         # failed, mark the dependent checks as skipped/fail so the
-        # report always has exactly 8 entries.
-        for dep_name in ("eval_modes", "agent_code"):
+        # report always has exactly 9 entries.
+        for dep_name in ("eval_modes", "agent_code", "agent_evals"):
             checks.append(
                 {
                     "name": dep_name,

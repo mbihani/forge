@@ -157,6 +157,23 @@ model_catalog:
 
 # Eval configuration.
 eval:
+  # The agent's EXISTING evals — reviewed first, then re-used to score every
+  # round (see docs/onboarding.md §16). Point experiment_id at the MLflow
+  # experiment holding the agent's own traces, judges and human feedback and
+  # run `scripts/review_agent_evals.py`; forge then scores rounds with those
+  # judges. Only when the agent has NO judges, list the metrics agreed with
+  # the user under user_metrics. The stock demo agent has no prior evals, so
+  # its metrics (the scorers below) are recorded here.
+  agent_evals:
+    # experiment_id: "<the agent's own eval experiment>"
+    # judges: []   # subset of the reviewed judges to re-use (empty = all)
+    user_metrics:
+      - name: correctness
+        description: answer matches the golden reference answer
+      - name: retrieval_groundedness
+        description: answer is grounded in the retrieved knowledge-base documents
+      - name: refusal_appropriateness
+        description: out-of-scope questions are refused, in-scope ones answered
   # Permit the one-time held-out evaluation performed by scripts/finalize.py.
   held_out_test: true
   # Default mode for `evaluate_branch`. One of: quick, standard, full.

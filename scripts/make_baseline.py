@@ -36,6 +36,7 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 import yaml  # noqa: E402
 
+from anvil.eval.agent_evals import AgentEvalsNotReady, ensure_agent_evals_ready  # noqa: E402
 from anvil.eval.cache import CachedBaseline, report_to_baseline  # noqa: E402
 from anvil.eval.runner import evaluate_branch  # noqa: E402
 from anvil.runtime.loader import default_runtime_config_path  # noqa: E402
@@ -154,6 +155,19 @@ def build_baseline(
 
 def main(argv: list[str] | None = None) -> int:
     args = _arg_parser().parse_args(argv)
+
+    # Forge starts from the agent's existing evals: refuse to prime a
+    # baseline until they were reviewed (or metrics agreed with the user).
+    scaffold_path = Path(args.scaffold)
+    config_path = default_runtime_config_path(scaffold_path)
+    runtime = RuntimeYAML.model_validate(
+        yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    )
+    try:
+        ensure_agent_evals_ready(runtime.eval, scaffold_path.parent)
+    except AgentEvalsNotReady as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
 
     baseline = build_baseline(
         scaffold_root=args.scaffold,

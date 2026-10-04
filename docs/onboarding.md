@@ -44,6 +44,7 @@ answer maps to config):
 | # | Decision | Sets |
 |---|---|---|
 | 1 | Which agent: source repo (`owner/name` or path, branch, subdirectory, private?) and domain (existing, `trace` engine, or new) | `eval.engine`, domain code |
+| 1b | The agent's EXISTING evals: its MLflow experiment → review its judges, human feedback and issues; which judges to re-use (or, only if it has none, the metrics the user wants) — see §16 | `eval.agent_evals` |
 | 2 | Objective: quality, latency/cost with a quality floor, or both | `gate.pareto` objectives |
 | 3 | What may change: prompt scaffold or agent code | `mode` |
 | 4 | Which runtime models may be tried (each verified on the agent's real input) | `levers.model.allowed` |
@@ -358,13 +359,17 @@ Pattern A (works on merged `main` today):
 4. **Provide the scaffold.** Ensure `scaffold/harness.yaml` exists with ≥1
    `kind: identity` skill, and `data/golden_set.jsonl` (or your engine's own
    data source) is in place.
-5. **Run the session intake + preflight** (the "Session intake" checklist
+5. **Review the agent's existing evals** (§16):
+   `uv run python scripts/review_agent_evals.py --profile <profile>`, walk the
+   user through `eval/agent_evals/review.md`, and commit `eval/agent_evals/`.
+   The baseline and every round are scored with those judges.
+6. **Run the session intake + preflight** (the "Session intake" checklist
    above, or the `forge-onboarding` skill): environment, models verified on real
    inputs, prices, where traces land.
-6. **Prime the baseline** at the size you will run rounds with (§8):
+7. **Prime the baseline** at the size you will run rounds with (§8):
    `uv run python scripts/make_baseline.py --mode <mode>`, then commit it and
    point `anvil/exp` at that commit.
-7. **Run rounds.**
+8. **Run rounds.**
    `uv run python scripts/run_round.py --rounds N --eval-mode <mode> --parent-branch anvil/exp`.
 
 Each round forks `anvil/round-N`, the optimizer mutates the scaffold (or agent
@@ -423,6 +428,8 @@ without hand-writing a scorer.
 | Every row fails after the optimizer picks a new model | That model does not accept the agent's input (e.g. GPT / Gemini reject an Anthropic-style PDF `document` block) | Remove it from `levers.model.allowed`; verify each candidate on a real input before listing it. (A rejected `temperature`/`top_p` is retried automatically.) |
 | Eval raises `input_mode=text needs pymupdf` | A domain lever value whose dependency is not installed | Install it (`uv pip install pymupdf`) or drop the value from the allowlist. |
 | Sound improvements keep reverting | The gain is smaller than the objective's `epsilon` or the eval noise (LLM-judge scores and latency medians wobble on small eval sets) | Use a larger `--eval-mode`, check the epsilon against measured noise, or let near-misses combine via `compound` (§13). |
+| `make_baseline.py` / `run_round.py` exit with `harness/config.yaml has no eval.agent_evals` or `… have not been reviewed` | Forge starts from the agent's existing evals and they were not reviewed for the configured experiment | Set `eval.agent_evals.experiment_id`, run `scripts/review_agent_evals.py`, commit `eval/agent_evals/`. If the agent has no judges, record the metrics the user chose under `eval.agent_evals.user_metrics` (§16). |
+| `list_scorers` raises `AtLeastOneUndeserializableScorerError` / `unexpected keyword argument 'timeout'` | The agent's scorers were registered by a newer MLflow than the one forge runs | Nothing to do — `review_agent_evals.py` reads them via the Databricks scheduled-scorers API and drops fields this MLflow does not know (§16). |
 | `ingest_traces.py` keeps 0 rows, all `skipped_multiturn` | The agent is traced at the function level, or its input is a PDF/image | The `trace` engine cannot use these traces; write a domain (§2–§9). |
 
 ---
@@ -648,6 +655,69 @@ Practical points:
   the quality judge 0 and skip the call — it scores prose, not structure.
 - Keep `predict_fn` / `judge_fn` injectable (`evaluate_trace` does this) so the
   aggregation logic is unit-testable without a gateway.
+
+---
+
+## 16. Start from the agent's existing evals
+
+An agent brought to forge has usually been evaluated already: judges and code
+scorers registered on its MLflow experiment, judge / code / human assessments
+on its traces, MLflow issue-detection findings. **Forge reviews those first and
+scores every round with the same judges**, so "quality held" means quality by
+the agent owner's standard — never a forge-invented rubric.
+
+```yaml
+eval:
+  agent_evals:
+    experiment_id: "<the agent's own eval experiment>"
+    judges: []          # subset of the reviewed judges to re-use (empty = all)
+    max_traces: 200
+    # Only when the agent has NO judges — the metrics agreed with the user:
+    # user_metrics:
+    #   - {name: accuracy, description: "..."}
+```
+
+1. **Review.** `uv run python scripts/review_agent_evals.py --profile <profile>`
+   writes `eval/agent_evals/inventory.json` and `eval/agent_evals/review.md`:
+   - the **judges forge will re-use**: every scorer registered on the
+     experiment, loaded from its exact serialized definition (Databricks
+     scheduled-scorers API first, OSS MLflow registry second). A payload from
+     a newer MLflow is read forward-compatibly (unknown fields dropped). A
+     Guidelines judge that is not registered is rebuilt from the `guideline`
+     metadata its assessments carry;
+   - **what they point towards**: each assessment's mean (1 = pass) lowest
+     first, with failing rationales; **human feedback**; **issues** MLflow
+     detected; judges with **no signal** (pass or fail everywhere — possibly
+     stale, confirm with the user); and the **trace input/output shape** the
+     judges ran on.
+   Walk the user through it, agree which judges to keep, then commit
+   `eval/agent_evals/`.
+2. **Gate.** `make_baseline.py`, `run_round.py` and the orchestrator's
+   `agent_evals` validation check refuse to proceed until the review exists for
+   `experiment_id` — or, when the agent has no judges, until `user_metrics`
+   records what the user asked for.
+3. **Re-use.** The judges score the baseline and every round:
+   - `genai` engine — appended to `mlflow.genai.evaluate`'s scorers (a
+     configured scorer of the same name yields to the agent's judge) and
+     included in the aggregate;
+   - `trace` engine — a rubric whose name matches an agent judge is scored by
+     that exact judge instead of a prompt rebuilt from its rationale;
+   - a domain engine — call the helper with inputs/outputs in the shape the
+     review lists, and merge the result into `per_judge`:
+
+     ```python
+     from anvil.eval.agent_evals import load_agent_judges, score_with_agent_judges
+
+     judges = load_agent_judges(repo_root, names=cfg.eval.agent_evals.judges)
+     per_row = score_with_agent_judges(judges, inputs=row_inputs, outputs=row_outputs)
+     ```
+   The judge definitions are part of the baseline fingerprint, so changing a
+   judge forces a new baseline.
+4. **Optimizer context.** Every round prompt includes `review.md`, so the
+   optimizer targets what the agent's judges and human feedback point to.
+
+Custom-code scorers only load under a Databricks tracking URI (an MLflow
+security rule); `review_agent_evals.py` and the eval path set one.
 
 ## See also
 

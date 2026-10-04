@@ -248,6 +248,10 @@ optimizer_endpoint: databricks-claude-opus-4-7
 judge_endpoint: databricks-claude-sonnet-4-6
 experiments:
   root: "/Shared/forge"
+eval:
+  agent_evals:
+    user_metrics:
+      - name: correctness
 """
 
 

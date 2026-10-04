@@ -71,6 +71,7 @@ except ImportError:
 
 from anvil.agents.memory_system import MemorySystem
 from anvil.data import load_golden_set, select_subset
+from anvil.eval.agent_evals import AgentJudge, load_agent_judges, read_agent_evals
 from anvil.eval.cache import compute_scorer_fingerprint
 from anvil.eval.engines import GENAI_ENGINE, load_engine
 from anvil.eval.scorers import build_scorers
@@ -249,6 +250,14 @@ def _build_dataset(examples: list[dict]) -> list[dict]:
             }
         )
     return rows
+
+
+def _agent_judges_for(cfg: EvalConfig, repo_root: Path) -> list[AgentJudge]:
+    """The agent's reviewed judges to score with (``[]`` when none apply)."""
+    agent_cfg = cfg.agent_evals
+    if agent_cfg is None or not agent_cfg.experiment_id:
+        return []
+    return load_agent_judges(repo_root, names=list(agent_cfg.judges))
 
 
 def _coerce_score(raw: Any) -> float | None:
@@ -883,6 +892,23 @@ def evaluate_branch(
         scorer_configs=active_scorer_configs,
         evaluator_path=evaluator_path,
     )
+    # Score with the agent's OWN judges (reviewed into eval/agent_evals/) so
+    # rounds are judged by the standard the agent was evaluated with. A
+    # configured scorer of the same name yields to the agent's judge.
+    agent_judges = _agent_judges_for(cfg, scaffold_path.parent)
+    if agent_judges:
+        agent_names = {j.name for j in agent_judges}
+        kept = [i for i, n in enumerate(active_scorer_names) if n not in agent_names]
+        scorers = [scorers[i] for i in kept] + [j.scorer for j in agent_judges]
+        active_scorer_names = [active_scorer_names[i] for i in kept] + [
+            j.name for j in agent_judges
+        ]
+        aggregate_scorer_names = [n for n in aggregate_scorer_names if n not in agent_names] + [
+            j.name for j in agent_judges
+        ]
+        weights = {**weights, **{j.name: 1.0 for j in agent_judges}}
+        inventory = read_agent_evals(scaffold_path.parent)
+        scorer_fingerprint += f"+agent_evals:{inventory.fingerprint() if inventory else ''}"
     dataset = _build_dataset(selected)
 
     # Wire anvil's ``eval.n_workers`` into mlflow's parallel predict/score

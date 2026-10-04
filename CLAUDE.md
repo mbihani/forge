@@ -54,6 +54,12 @@ next steps, read `docs/plan.md`.
   experiments, environment variables (checked by name, never echoed) — and
   its preflight before writing config or starting any baseline or round.
   Never assume the objective (quality vs latency/cost); ask.
+- **Start from the agent's existing evals.** Before any baseline or round,
+  review the judges and human feedback already on the agent's MLflow
+  experiment (`scripts/review_agent_evals.py` → `eval/agent_evals/`) and score
+  every round with THOSE judges. Never invent a judge when the agent has one;
+  only if it has none, ask the user which metrics to use
+  (`eval.agent_evals.user_metrics`). See `docs/onboarding.md` §16.
 
 ## When proposing architecture changes
 

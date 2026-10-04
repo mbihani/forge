@@ -52,10 +52,17 @@ The most-failed examples in the parent run (read the full list in
 
 {levers_block}
 
+## What the agent's existing evals say
+
+{agent_evals_block}
+
 ## What you must do
 
 1. Read ``prompts/anvil-round.md`` — the action contract.
 2. Read ``eval/runs/baseline.json`` and the failure traces it points to.
+   The round is scored by the agent's OWN judges listed above (from
+   ``eval/agent_evals/review.md``) — target what they and the human
+   feedback point to, not your own idea of quality.
 3. Read every active rule + skill from ``scaffold/harness.yaml`` (and
    the most recent ~3 critiques in ``scaffold/memory/``) so your
    mutation does not clash with what's already there.
@@ -115,6 +122,7 @@ def build_round_prompt(
     critiques_block = _format_critiques(repo_root, critique_lookback)
     objectives_block = _format_objectives(repo_root, baseline, objectives)
     levers_block = _format_levers(repo_root, lever_specs or {}, lever_values or {}, model_prices)
+    agent_evals_block = _format_agent_evals(repo_root)
 
     if max_mutations <= 1:
         mutation_budget = "ONE structural mutation"
@@ -138,6 +146,7 @@ def build_round_prompt(
         pick_instruction=pick_instruction,
         max_turns=max_turns,
         levers_block=levers_block,
+        agent_evals_block=agent_evals_block,
         round_id=round_id,
         baseline_aggregate=baseline_aggregate,
         baseline_mode=baseline_mode,
@@ -151,6 +160,31 @@ def build_round_prompt(
         critique_lookback=critique_lookback,
         critiques_block=critiques_block,
     )
+
+
+_AGENT_EVALS_PROMPT_CHARS = 4000
+
+
+def _format_agent_evals(repo_root: Path) -> str:
+    """The reviewed agent evals (``eval/agent_evals/review.md``), truncated.
+
+    Tells the optimizer which judges score the round and what they and the
+    human feedback point to. Absent review → say so (the run then relies on
+    the metrics agreed with the user in ``eval.agent_evals.user_metrics``).
+    """
+    path = repo_root / "eval" / "agent_evals" / "review.md"
+    if not path.is_file():
+        return (
+            "(no reviewed agent evals — the round is scored with the metrics agreed with "
+            "the user in harness/config.yaml > eval.agent_evals.user_metrics)"
+        )
+    text = path.read_text(encoding="utf-8").strip()
+    if len(text) > _AGENT_EVALS_PROMPT_CHARS:
+        text = (
+            text[:_AGENT_EVALS_PROMPT_CHARS].rstrip()
+            + "\n\n(truncated — read ``eval/agent_evals/review.md`` for the rest)"
+        )
+    return text
 
 
 def _failure_summary_from_baseline(baseline: dict) -> str:

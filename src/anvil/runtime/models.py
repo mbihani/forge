@@ -493,6 +493,35 @@ class TraceEvalConfig(BaseModel):
         return v
 
 
+class UserMetric(BaseModel):
+    """A metric the user chose because the agent had no judges of its own."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    description: str = ""
+
+
+class AgentEvalsConfig(BaseModel):
+    """The agent's EXISTING evals, which forge reviews and re-uses.
+
+    ``experiment_id`` is the MLflow experiment holding the agent's own
+    traces, judges and human feedback (not forge's ``experiments.*``).
+    ``scripts/review_agent_evals.py`` reads it into
+    ``eval/agent_evals/{inventory.json,review.md}``; every round is then
+    scored with those judges (``judges`` narrows them; empty = all).
+    ``user_metrics`` records the metrics agreed with the user — required
+    only when the agent has no judges forge can re-run.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    experiment_id: str | None = None
+    max_traces: int = Field(default=200, ge=1)
+    judges: list[str] = Field(default_factory=list)
+    user_metrics: list[UserMetric] = Field(default_factory=list)
+
+
 class EvalConfig(BaseModel):
     """Eval-side configuration."""
 
@@ -525,6 +554,10 @@ class EvalConfig(BaseModel):
     # the genai and savesage engines. Optional so existing configs that
     # never set it validate unchanged.
     trace: TraceEvalConfig | None = None
+    # The agent's own evals (judges + human feedback) that forge reviews
+    # first and re-uses to score every round. Required by the baseline and
+    # round entrypoints (``anvil.eval.agent_evals.ensure_agent_evals_ready``).
+    agent_evals: AgentEvalsConfig | None = None
     scorers: list[ScorerConfig] = Field(
         default_factory=lambda: [
             ScorerConfig(name="correctness"),
