@@ -282,6 +282,16 @@ def test_gate_no_judges_requires_user_metrics(tmp_path: Path) -> None:
     assert ensure_agent_evals_ready(_cfg(user_metrics=metrics), tmp_path) is None
 
 
+@pytest.mark.skipif(
+    (
+        __import__("yaml")
+        .safe_load((Path(__file__).resolve().parent.parent / "harness" / "config.yaml").read_text())
+        .get("eval")
+        or {}
+    ).get("engine", "genai")
+    != "genai",
+    reason="asserts the stock genai instance's config; this branch ships a domain instance",
+)
 def test_shipped_demo_config_passes_gate() -> None:
     from anvil.runtime.loader import load_harness
 
@@ -363,3 +373,45 @@ def test_runner_uses_agent_judges_only_with_an_experiment(tmp_path: Path) -> Non
     assert _agent_judges_for(no_exp, tmp_path) == []
     with_exp = EvalConfig(agent_evals=AgentEvalsConfig(experiment_id="123"))
     assert [j.name for j in _agent_judges_for(with_exp, tmp_path)] == ["summary_quality"]
+
+
+def test_guideline_override_rebuilds_judge_and_changes_fingerprint(tmp_path: Path) -> None:
+    from anvil.eval.agent_evals import fingerprint_judges
+    from anvil.runtime.models import GuidelineOverride
+
+    write_agent_evals(
+        tmp_path,
+        discover_agent_evals("123", traces=TRACES, scorer_payloads=[_guidelines_payload()]),
+    )
+    plain = load_agent_judges(tmp_path)
+    fixed = load_agent_judges(
+        tmp_path,
+        overrides={"summary_quality": GuidelineOverride(guidelines=["Corrected."], reason="stale")},
+    )
+    (judge,) = fixed
+    assert judge.spec.guidelines == ["Corrected."]
+    assert judge.spec.source == "registered_scorer+forge_override"
+    assert type(judge.scorer).__name__ == "Guidelines"
+    assert fingerprint_judges(plain) != fingerprint_judges(fixed)
+    with pytest.raises(ValueError, match="not found"):
+        load_agent_judges(tmp_path, overrides={"nope": {"guidelines": ["x"], "reason": "r"}})
+
+
+def test_guideline_override_rejects_non_guidelines_judge(tmp_path: Path) -> None:
+    from mlflow.genai.scorers import Safety
+
+    write_agent_evals(
+        tmp_path,
+        discover_agent_evals("123", traces=[], scorer_payloads=[Safety().model_dump()]),
+    )
+    with pytest.raises(ValueError, match="only a Guidelines judge"):
+        load_agent_judges(tmp_path, overrides={"safety": {"guidelines": ["x"], "reason": "r"}})
+
+
+def test_review_lists_guideline_overrides() -> None:
+    inv = discover_agent_evals("123", traces=TRACES, scorer_payloads=[_guidelines_payload()])
+    md = render_review(
+        inv, {"summary_quality": {"guidelines": ["Corrected."], "reason": "stale text"}}
+    )
+    assert "Forge-side guideline overrides" in md
+    assert "stale text" in md and "Corrected." in md

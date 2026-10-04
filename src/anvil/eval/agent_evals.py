@@ -443,8 +443,13 @@ def _fmt_mean(mean: float | None) -> str:
     return "—" if mean is None else f"{mean:.2f}"
 
 
-def render_review(inv: AgentEvalInventory) -> str:
-    """Markdown review: which judges exist and what they + humans point to."""
+def render_review(inv: AgentEvalInventory, overrides: dict[str, Any] | None = None) -> str:
+    """Markdown review: which judges exist and what they + humans point to.
+
+    ``overrides`` (``eval.agent_evals.guideline_overrides``) are listed so
+    the reader — and the optimizer — know which guideline text actually
+    scores the rounds.
+    """
     lines = [
         f"# Existing evals for this agent (experiment `{inv.experiment_id}`)",
         "",
@@ -466,6 +471,12 @@ def render_review(inv: AgentEvalInventory) -> str:
             "**No judges found.** Ask the user which metrics the evals should use and "
             "record them under `eval.agent_evals.user_metrics` before optimizing."
         )
+
+    if overrides:
+        lines += ["", "### Forge-side guideline overrides (score the rounds instead)", ""]
+        for name, ov in sorted(overrides.items()):
+            lines.append(f"- `{name}` — {_override_field(ov, 'reason')}")
+            lines += [f"  - {g}" for g in _override_field(ov, "guidelines")]
 
     worst = sorted(
         (a for a in inv.assessments if a.mean is not None and a.source_type != _HUMAN_SOURCE),
@@ -534,14 +545,18 @@ def agent_evals_dir(repo_root: Path | str) -> Path:
     return Path(repo_root) / AGENT_EVALS_DIR
 
 
-def write_agent_evals(repo_root: Path | str, inv: AgentEvalInventory) -> tuple[Path, Path]:
+def write_agent_evals(
+    repo_root: Path | str,
+    inv: AgentEvalInventory,
+    overrides: dict[str, Any] | None = None,
+) -> tuple[Path, Path]:
     """Write ``inventory.json`` + ``review.md`` under ``eval/agent_evals/``."""
     out = agent_evals_dir(repo_root)
     out.mkdir(parents=True, exist_ok=True)
     inv_path = out / INVENTORY_FILENAME
     inv_path.write_text(json.dumps(inv.to_dict(), indent=2, default=str) + "\n", encoding="utf-8")
     review_path = out / REVIEW_FILENAME
-    review_path.write_text(render_review(inv), encoding="utf-8")
+    review_path.write_text(render_review(inv, overrides), encoding="utf-8")
     return inv_path, review_path
 
 
@@ -560,10 +575,15 @@ def read_agent_evals(repo_root: Path | str) -> AgentEvalInventory | None:
 class AgentJudge:
     """One of the agent's own judges, rebuilt and ready to score a round."""
 
-    def __init__(self, spec: JudgeSpec, scorer: Any | None = None) -> None:
+    def __init__(
+        self, spec: JudgeSpec, scorer: Any | None = None, model: str | None = None
+    ) -> None:
         self.spec = spec
         self.name = spec.name
         self._scorer = scorer
+        # Judge model for a Guidelines judge rebuilt from text (None = the
+        # MLflow default judge, as for a registered scorer with no model set).
+        self._model = model
 
     @property
     def scorer(self) -> Any:
@@ -574,7 +594,10 @@ class AgentJudge:
             elif self.spec.kind == "guidelines" and self.spec.guidelines:
                 from mlflow.genai.scorers import Guidelines  # noqa: PLC0415
 
-                self._scorer = Guidelines(name=self.spec.name, guidelines=self.spec.guidelines)
+                kwargs = {"model": self._model} if self._model else {}
+                self._scorer = Guidelines(
+                    name=self.spec.name, guidelines=self.spec.guidelines, **kwargs
+                )
             else:
                 raise ValueError(f"judge {self.spec.name!r} has no definition to rebuild")
         return self._scorer
@@ -613,19 +636,71 @@ def load_agent_judges(
     *,
     names: list[str] | None = None,
     inventory: AgentEvalInventory | None = None,
+    overrides: dict[str, Any] | None = None,
 ) -> list[AgentJudge]:
-    """The agent's judges from the reviewed inventory (optionally a subset)."""
+    """The agent's judges from the reviewed inventory (optionally a subset).
+
+    ``overrides`` maps a Guidelines judge's name to a corrected
+    ``guidelines`` list (``eval.agent_evals.guideline_overrides``); that judge
+    is rebuilt with the corrected text and the same name and judge model.
+    """
     inv = inventory if inventory is not None else read_agent_evals(repo_root)
     if inv is None:
         return []
     wanted = set(names or [])
-    unknown = wanted - set(inv.judge_names())
+    unknown = (wanted | set(overrides or {})) - set(inv.judge_names())
     if unknown:
         raise ValueError(
-            f"eval.agent_evals.judges names {sorted(unknown)} not found in the reviewed "
+            f"eval.agent_evals judge names {sorted(unknown)} not found in the reviewed "
             f"inventory (available: {inv.judge_names()})"
         )
-    return [AgentJudge(j) for j in inv.judges if not wanted or j.name in wanted]
+    judges: list[AgentJudge] = []
+    for spec in inv.judges:
+        if wanted and spec.name not in wanted:
+            continue
+        override = (overrides or {}).get(spec.name)
+        if override is not None:
+            if spec.kind != "guidelines":
+                raise ValueError(
+                    f"guideline_overrides[{spec.name!r}]: only a Guidelines judge can be "
+                    f"overridden (this one is {spec.kind!r})"
+                )
+            model = ((spec.payload or {}).get("builtin_scorer_pydantic_data") or {}).get("model")
+            spec = dataclasses.replace(
+                spec,
+                source=f"{spec.source}+forge_override",
+                guidelines=list(_override_field(override, "guidelines")),
+                payload=None,
+                description=f"forge override: {_override_field(override, 'reason')}",
+            )
+            judges.append(AgentJudge(spec, scorer=None, model=model))
+            continue
+        judges.append(AgentJudge(spec))
+    return judges
+
+
+def _override_field(override: Any, name: str) -> Any:
+    return override[name] if isinstance(override, dict) else getattr(override, name)
+
+
+def load_configured_agent_judges(eval_cfg: Any, repo_root: Path | str) -> list[AgentJudge]:
+    """The judges ``eval.agent_evals`` selects (``[]`` without an experiment)."""
+    cfg = getattr(eval_cfg, "agent_evals", None)
+    if cfg is None or not cfg.experiment_id:
+        return []
+    return load_agent_judges(
+        repo_root, names=list(cfg.judges), overrides=dict(cfg.guideline_overrides)
+    )
+
+
+def fingerprint_judges(judges: Iterable[AgentJudge]) -> str:
+    """Hash of the effective judge definitions (overrides included)."""
+    blob = json.dumps(
+        sorted((dataclasses.asdict(j.spec) for j in judges), key=lambda d: d["name"]),
+        sort_keys=True,
+        default=str,
+    )
+    return hashlib.sha256(blob.encode()).hexdigest()[:16]
 
 
 def score_with_agent_judges(
@@ -705,5 +780,10 @@ def ensure_agent_evals_ready(eval_cfg: Any, repo_root: Path | str) -> AgentEvalI
             "which metrics the evals should use and record them under "
             "eval.agent_evals.user_metrics."
         )
-    load_agent_judges(repo_root, names=list(cfg.judges), inventory=inv)  # validates subset
+    load_agent_judges(  # validates the subset + overrides
+        repo_root,
+        names=list(cfg.judges),
+        inventory=inv,
+        overrides=dict(cfg.guideline_overrides),
+    )
     return inv

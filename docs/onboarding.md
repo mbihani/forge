@@ -692,6 +692,27 @@ eval:
      judges ran on.
    Walk the user through it, agree which judges to keep, then commit
    `eval/agent_evals/`.
+   A judge whose definition turns out to be **stale** (it fails correct
+   output because it no longer describes the agent's contract) is the user's
+   call: keep it, drop it (`judges`), or — for a Guidelines judge — score with
+   a corrected copy in forge only. The registered scorer is never changed:
+
+   ```yaml
+   eval:
+     agent_evals:
+       guideline_overrides:
+         <judge_name>:
+           reason: "why the registered guideline is stale"
+           guidelines: ["corrected guideline 1", "corrected guideline 2"]
+   ```
+
+   The override keeps the judge's name and judge model, is listed in
+   `review.md` (so the optimizer knows which text scores the rounds), and is
+   part of the judge fingerprint (changing it forces a new baseline). Tell the
+   judge's owner so the registered scorer gets fixed at the source.
+   If a judge fails only because of the **shape** it is given (e.g. the
+   agent's traces appended run metadata to the output), fix the inputs /
+   outputs your engine passes rather than the judge.
 2. **Gate.** `make_baseline.py`, `run_round.py` and the orchestrator's
    `agent_evals` validation check refuse to proceed until the review exists for
    `experiment_id` — or, when the agent has no judges, until `user_metrics`

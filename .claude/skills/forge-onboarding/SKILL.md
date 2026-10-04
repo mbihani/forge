@@ -77,8 +77,14 @@ below); otherwise ask in plain text and wait. Record every answer.
      search space (Group B).
    - **Judges with no signal** (pass or fail on every trace) are listed
      separately — they may be stale or miscalibrated rather than the agent
-     being wrong. Ask whether to keep, fix, or drop each; record the judges to
-     re-use in `eval.agent_evals.judges` (empty = all). Never silently drop one.
+     being wrong. First check whether it fails on the **shape** it was given
+     (re-score a real output with only the part the judge was written for) or
+     on its **definition** (it fails even correct output). Ask whether to keep,
+     fix, or drop each; record the judges to re-use in `eval.agent_evals.judges`
+     (empty = all). A stale Guidelines judge can be scored with a corrected copy
+     in forge only (`eval.agent_evals.guideline_overrides`, with a `reason`) —
+     never edit the agent's registered scorer without the user's go-ahead.
+     Never silently drop one.
    - These judges score the baseline and **every round** (the genai and trace
      engines load them automatically; a domain engine calls
      `anvil.eval.agent_evals.score_with_agent_judges` with inputs/outputs in

@@ -590,16 +590,11 @@ def evaluate_trace(
         )
     agent_judges: list[Any] = []
     if judge_fn is None:
-        from anvil.eval.agent_evals import load_agent_judges  # noqa: PLC0415
+        from anvil.eval.agent_evals import load_configured_agent_judges  # noqa: PLC0415
         from anvil.runtime.client import build_gateway_client  # noqa: PLC0415
 
         judge_client = judge_client or build_gateway_client()
-        agent_cfg = cfg.agent_evals
-        agent_judges = (
-            load_agent_judges(repo_root, names=list(agent_cfg.judges))
-            if agent_cfg is not None and agent_cfg.experiment_id
-            else []
-        )
+        agent_judges = load_configured_agent_judges(cfg, repo_root)
         judge_fn = build_judge_fn(
             judge_client, snapshot.config.judge_endpoint, agent_judges=agent_judges
         )
@@ -661,10 +656,9 @@ def evaluate_trace(
     keys = sorted(key_map.values())
     fingerprint = compute_trace_fingerprint(keys, trace_cfg.min_human_weight, snap_hash)
     if agent_judges:
-        from anvil.eval.agent_evals import read_agent_evals  # noqa: PLC0415
+        from anvil.eval.agent_evals import fingerprint_judges  # noqa: PLC0415
 
-        inventory = read_agent_evals(repo_root)
-        fingerprint += f"+agent_evals:{inventory.fingerprint() if inventory else ''}"
+        fingerprint += f"+agent_evals:{fingerprint_judges(agent_judges)}"
 
     cost_metrics: dict[str, float] = {"n_rows": float(len(scored_rows))}
     latencies = sorted(

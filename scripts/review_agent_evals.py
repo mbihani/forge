@@ -91,7 +91,8 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"Reviewing evals in experiment {experiment_id} (max {max_traces} traces)...")
     inv = discover_agent_evals(str(experiment_id), max_traces=max_traces)
-    inv_path, review_path = write_agent_evals(REPO_ROOT, inv)
+    overrides = dict(cfg.guideline_overrides) if cfg else {}
+    inv_path, review_path = write_agent_evals(REPO_ROOT, inv, overrides)
 
     print(review_path.read_text(encoding="utf-8"))
     print(f"Wrote {inv_path}\nWrote {review_path}")

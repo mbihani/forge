@@ -502,6 +502,21 @@ class UserMetric(BaseModel):
     description: str = ""
 
 
+class GuidelineOverride(BaseModel):
+    """A forge-side correction to one of the agent's Guidelines judges.
+
+    Used only when a reviewed judge's guideline is stale (it no longer
+    describes the agent's real contract) and the user chose to score with a
+    corrected copy. The agent's registered scorer is left untouched; ``reason``
+    records why, and is shown in the review.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    guidelines: list[str] = Field(min_length=1)
+    reason: str = Field(min_length=1)
+
+
 class AgentEvalsConfig(BaseModel):
     """The agent's EXISTING evals, which forge reviews and re-uses.
 
@@ -512,6 +527,8 @@ class AgentEvalsConfig(BaseModel):
     scored with those judges (``judges`` narrows them; empty = all).
     ``user_metrics`` records the metrics agreed with the user — required
     only when the agent has no judges forge can re-run.
+    ``guideline_overrides`` swaps in corrected guidelines for a stale
+    Guidelines judge, by name.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -520,6 +537,9 @@ class AgentEvalsConfig(BaseModel):
     max_traces: int = Field(default=200, ge=1)
     judges: list[str] = Field(default_factory=list)
     user_metrics: list[UserMetric] = Field(default_factory=list)
+    # Judge name -> corrected guidelines, for a stale Guidelines judge the user
+    # chose to fix in forge only (the registered scorer is not changed).
+    guideline_overrides: dict[str, GuidelineOverride] = Field(default_factory=dict)
 
 
 class EvalConfig(BaseModel):
