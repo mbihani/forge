@@ -47,3 +47,6 @@ eval/scratch/
 mlflow.db
 databricks.yml
 deploy/.databricks/
+
+# SaveSage golden set: cardholder PII, never committed.
+data/savesage_golden_set.jsonl

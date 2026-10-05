@@ -6,6 +6,7 @@ from collections import Counter
 from pathlib import Path
 
 import pytest
+import yaml
 
 from anvil.data import load_golden_set
 from anvil.eval import runner
@@ -84,6 +85,16 @@ def test_split_enabled_routes_dev_modes_to_dev_and_test_mode_to_test(
     assert runner._select_mode_examples([], cfg=cfg, selected_mode="test") == test
 
 
+@pytest.mark.skipif(
+    (
+        yaml.safe_load(
+            (Path(__file__).resolve().parent.parent / "harness" / "config.yaml").read_text()
+        ).get("eval")
+        or {}
+    ).get("engine", "genai")
+    != "genai",
+    reason="asserts the stock genai instance's data/scaffold; this branch ships a domain instance",
+)
 def test_split_modes_run_against_shipped_golden_set() -> None:
     examples = load_golden_set(REPO_ROOT / "data" / "golden_set.jsonl")
     cfg = load_harness(REPO_ROOT / "scaffold").config.eval.model_copy(

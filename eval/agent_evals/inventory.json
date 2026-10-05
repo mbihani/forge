@@ -1,0 +1,310 @@
+{
+  "experiment_id": "967014443183055",
+  "fetched_at": "2026-10-05T11:51:41+00:00",
+  "n_traces": 300,
+  "n_traces_with_assessments": 186,
+  "judges": [],
+  "assessments": [
+    {
+      "name": "field_feedback",
+      "source_type": "HUMAN",
+      "n": 10,
+      "mean": 1.0,
+      "failing_rationales": [
+        "ACCEPT: transactions.2.date",
+        "ACCEPT: transactions.2.description",
+        "ACCEPT: rewards.closingPoints",
+        "ACCEPT: cards.0.cardMeta.lastFourDigit",
+        "ACCEPT: cards.1.cardMeta.cardDisplayName"
+      ]
+    },
+    {
+      "name": "human_feedback_statementMeta_issuerName",
+      "source_type": "HUMAN",
+      "n": 1,
+      "mean": 1.0,
+      "failing_rationales": []
+    },
+    {
+      "name": "human_feedback_statementMeta_rawStatementId",
+      "source_type": "HUMAN",
+      "n": 1,
+      "mean": 0.0,
+      "failing_rationales": []
+    },
+    {
+      "name": "judge_bonusPointsThisCycle",
+      "source_type": "LLM_JUDGE",
+      "n": 152,
+      "mean": 0.6666666666666666,
+      "failing_rationales": []
+    },
+    {
+      "name": "judge_cardAvailableCreditLimit",
+      "source_type": "LLM_JUDGE",
+      "n": 152,
+      "mean": 1.0,
+      "failing_rationales": []
+    },
+    {
+      "name": "judge_cardCreditLimit",
+      "source_type": "LLM_JUDGE",
+      "n": 152,
+      "mean": 1.0,
+      "failing_rationales": []
+    },
+    {
+      "name": "judge_cardDisplayName",
+      "source_type": "LLM_JUDGE",
+      "n": 277,
+      "mean": 0.9642857142857143,
+      "failing_rationales": []
+    },
+    {
+      "name": "judge_cardNetwork",
+      "source_type": "LLM_JUDGE",
+      "n": 152,
+      "mean": 0.75,
+      "failing_rationales": []
+    },
+    {
+      "name": "judge_cardProductFamily",
+      "source_type": "LLM_JUDGE",
+      "n": 152,
+      "mean": 0.85,
+      "failing_rationales": []
+    },
+    {
+      "name": "judge_closingPoints",
+      "source_type": "LLM_JUDGE",
+      "n": 277,
+      "mean": 0.7037037037037037,
+      "failing_rationales": []
+    },
+    {
+      "name": "judge_dueDate",
+      "source_type": "LLM_JUDGE",
+      "n": 152,
+      "mean": 1.0,
+      "failing_rationales": []
+    },
+    {
+      "name": "judge_issuerName",
+      "source_type": "LLM_JUDGE",
+      "n": 152,
+      "mean": 0.9655172413793104,
+      "failing_rationales": []
+    },
+    {
+      "name": "judge_lastFourDigit",
+      "source_type": "LLM_JUDGE",
+      "n": 277,
+      "mean": 0.9963898916967509,
+      "failing_rationales": []
+    },
+    {
+      "name": "judge_openingPoints",
+      "source_type": "LLM_JUDGE",
+      "n": 152,
+      "mean": 1.0,
+      "failing_rationales": []
+    },
+    {
+      "name": "judge_overall_forgiven",
+      "source_type": "LLM_JUDGE",
+      "n": 276,
+      "mean": 0.9833871629207535,
+      "failing_rationales": []
+    },
+    {
+      "name": "judge_overall_strict",
+      "source_type": "LLM_JUDGE",
+      "n": 277,
+      "mean": 0.9807813535903676,
+      "failing_rationales": []
+    },
+    {
+      "name": "judge_per_field",
+      "source_type": "CODE",
+      "n": 104,
+      "mean": null,
+      "failing_rationales": []
+    },
+    {
+      "name": "judge_pointsEarnedThisCycle",
+      "source_type": "LLM_JUDGE",
+      "n": 277,
+      "mean": 0.9923371647509579,
+      "failing_rationales": []
+    },
+    {
+      "name": "judge_pointsExpiringNext30Days",
+      "source_type": "LLM_JUDGE",
+      "n": 152,
+      "mean": 1.0,
+      "failing_rationales": []
+    },
+    {
+      "name": "judge_pointsExpiringNext60Days",
+      "source_type": "LLM_JUDGE",
+      "n": 152,
+      "mean": 1.0,
+      "failing_rationales": []
+    },
+    {
+      "name": "judge_pointsRedeemedThisCycle",
+      "source_type": "LLM_JUDGE",
+      "n": 152,
+      "mean": 1.0,
+      "failing_rationales": []
+    },
+    {
+      "name": "judge_programType",
+      "source_type": "LLM_JUDGE",
+      "n": 152,
+      "mean": 0.10714285714285714,
+      "failing_rationales": []
+    },
+    {
+      "name": "judge_statementDate",
+      "source_type": "LLM_JUDGE",
+      "n": 152,
+      "mean": 1.0,
+      "failing_rationales": []
+    },
+    {
+      "name": "judge_statementPeriodEnd",
+      "source_type": "LLM_JUDGE",
+      "n": 152,
+      "mean": 0.9565217391304348,
+      "failing_rationales": []
+    },
+    {
+      "name": "judge_statementPeriodStart",
+      "source_type": "LLM_JUDGE",
+      "n": 152,
+      "mean": 0.9565217391304348,
+      "failing_rationales": []
+    },
+    {
+      "name": "judge_stmt_availableCreditLimit",
+      "source_type": "LLM_JUDGE",
+      "n": 152,
+      "mean": 1.0,
+      "failing_rationales": []
+    },
+    {
+      "name": "judge_stmt_totalAmountDue",
+      "source_type": "LLM_JUDGE",
+      "n": 152,
+      "mean": 0.9793103448275862,
+      "failing_rationales": []
+    },
+    {
+      "name": "judge_stmt_totalCreditLimit",
+      "source_type": "LLM_JUDGE",
+      "n": 152,
+      "mean": 1.0,
+      "failing_rationales": []
+    },
+    {
+      "name": "judge_stmt_totalMinimumAmountDue",
+      "source_type": "LLM_JUDGE",
+      "n": 152,
+      "mean": 1.0,
+      "failing_rationales": []
+    },
+    {
+      "name": "judge_transactions_amount",
+      "source_type": "LLM_JUDGE",
+      "n": 276,
+      "mean": 1.0,
+      "failing_rationales": []
+    },
+    {
+      "name": "judge_transactions_date",
+      "source_type": "LLM_JUDGE",
+      "n": 277,
+      "mean": 0.9995487364620939,
+      "failing_rationales": []
+    },
+    {
+      "name": "judge_transactions_description",
+      "source_type": "LLM_JUDGE",
+      "n": 276,
+      "mean": 0.9873417409369504,
+      "failing_rationales": []
+    },
+    {
+      "name": "judge_transactions_direction",
+      "source_type": "LLM_JUDGE",
+      "n": 152,
+      "mean": 0.9982773471145564,
+      "failing_rationales": []
+    },
+    {
+      "name": "judge_transactions_rewardPointsOnThisTransaction",
+      "source_type": "LLM_JUDGE",
+      "n": 151,
+      "mean": 0.9997737556561086,
+      "failing_rationales": []
+    }
+  ],
+  "issues": [
+    {
+      "name": "Incomplete LLM judge evaluation coverage for KOTAK and batch ICICI traces",
+      "severity": "medium",
+      "rationale": "44 of 100 traces (44%) have no LLM_JUDGE assessment scores, leaving their extraction quality unevaluated. All 3 KOTAK bank traces receive only CODE-type assessments with N/A values, suggesting the evaluation pipeline lacks expected-output ground truth for KOTAK statements. Additionally, 41 ICICI traces from the Aug 21 04:47-04:55 batch window were never scored by any evaluation run, while other IC",
+      "n": 136
+    },
+    {
+      "name": "Systematic programType extraction failure across ICICI and one HDFC statement",
+      "severity": "medium",
+      "rationale": "The extract span produces completely wrong programType (judge_programType=0) across 37 ICICI and 1 HDFC trace. Same root cause as previously reported but now at 38 vs original 3 traces, and extends to HDFC.",
+      "n": 76
+    },
+    {
+      "name": "Incorrect issuerName and programType extraction for ICICI and GENERIC banks",
+      "severity": "medium",
+      "rationale": "The extract span produces wrong values for the issuerName and programType metadata fields on non-HDFC bank statements. LLM judges score programType at 0 (completely wrong) across ICICI traces, and issuerName at 0 on at least one ICICI and one GENERIC trace. The issue also affects one HDFC trace (tr-75e35c57) where programType is scored 0, extending beyond the originally reported scope.",
+      "n": 50
+    },
+    {
+      "name": "Rewards points closing balance arithmetic violation in HDFC statements",
+      "severity": "medium",
+      "rationale": "The extract span produces reward point values where closingPoints does not equal openingPoints + earnedThisCycle + bonusThisCycle minus redeemedThisCycle. The validate span catches this with an explicit arithmetic-violation exception, but the trace still completes with OK status, meaning incorrect extraction data is persisted downstream.",
+      "n": 28
+    },
+    {
+      "name": "Card and reward metadata extraction failures in ICICI and multi-card statements",
+      "severity": "medium",
+      "rationale": "The extract span produces incorrect values for card-level and reward-level metadata fields (closingPoints, cardDisplayName, cardProductFamily, pointsEarnedThisCycle, cardNetwork) in certain ICICI and HDFC layouts. These are distinct from the known issuerName/programType and transaction-field failures, clustering around multi-card statements.",
+      "n": 26
+    },
+    {
+      "name": "Transaction description extraction degradation across banks",
+      "severity": "medium",
+      "rationale": "The extract span partially misidentifies transaction descriptions across multiple bank formats with LLM judge scores dropping to 0.50-0.86, correlated with statements containing many transactions or multi-line descriptions. Two additional traces (GENERIC tr-569a1dea and HDFC tr-c74646f0) also exhibit this but could not be linked here due to assessment limits.",
+      "n": 4
+    },
+    {
+      "name": "Degraded transaction field extraction accuracy across banks",
+      "severity": "medium",
+      "rationale": "The extract span partially misidentifies transaction-level fields including descriptions, directions, and bonus points across GENERIC and HDFC formats. LLM judge scores drop to 0.57-0.89 on transaction description and direction fields while statement-level metadata scores remain at 1.0. Additional affected traces (tr-569a1dea GENERIC, tr-c74646f0 HDFC) could not be linked due to assessment limits.",
+      "n": 3
+    }
+  ],
+  "io_shape": {
+    "request": [
+      "bank",
+      "filename",
+      "request_id"
+    ],
+    "response": [
+      "extraction",
+      "outcome",
+      "schema_valid"
+    ]
+  },
+  "warnings": []
+}

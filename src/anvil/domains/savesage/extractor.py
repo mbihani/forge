@@ -24,6 +24,8 @@ import hashlib
 import json
 import logging
 import os
+import shutil
+import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -74,12 +76,36 @@ def _profile_token_provider(profile: str) -> Callable[[], str]:
     return _provide
 
 
+INPUT_MODES = ("pdf", "text")
+
+
+def pdf_to_text(pdf: bytes) -> str:
+    """Layout-preserving text of a statement PDF (poppler ``pdftotext -layout``).
+
+    The ``text`` input mode for models that reject native-PDF ``file`` blocks
+    (GLM, DeepSeek). Runs per call, so its time counts toward the row latency.
+    """
+    exe = shutil.which("pdftotext")
+    if exe is None:
+        raise RuntimeError("input_mode 'text' needs poppler's pdftotext on PATH")
+    out = subprocess.run(
+        [exe, "-layout", "-enc", "UTF-8", "-", "-"],
+        input=pdf,
+        capture_output=True,
+        check=True,
+        timeout=60,
+    )
+    return out.stdout.decode("utf-8", errors="replace")
+
+
 def _build_adapter(
     composed_prompt: str,
     token_provider: Callable[[], str] | None = None,
     *,
-    reasoning_effort: str = "medium",
+    reasoning_effort: str | None = "medium",
     max_tokens: int = 96_000,
+    model: str | None = None,
+    input_mode: str = "pdf",
 ):
     """Construct the prompt-injected Luna adapter (lazy import of the bridge).
 
@@ -91,8 +117,16 @@ def _build_adapter(
     code-mode agent tunes. They override the production payload's hardcoded
     ``reasoning_effort="medium"`` / ``max_tokens=96_000`` for THIS adapter only
     (no edit to the shared ``statement-agent`` transport); prompt-mode callers
-    keep the production defaults.
+    keep the production defaults. ``reasoning_effort=None`` omits the field.
+
+    ``model`` overrides the serving endpoint (default: the production
+    ``extraction_endpoint``, GPT-5.6 Luna). ``input_mode`` ``"pdf"`` sends the
+    production native-PDF ``file`` block; ``"text"`` sends the
+    :func:`pdf_to_text` extraction instead, ahead of the same prompt, schema
+    and response format.
     """
+    if input_mode not in INPUT_MODES:
+        raise ValueError(f"input_mode {input_mode!r} not in {INPUT_MODES}")
     ensure_importable()
     from harness.extraction_adapter import (  # noqa: PLC0415 - lazy, see bridge
         ExtractionError,
@@ -127,12 +161,22 @@ def _build_adapter(
             # max_tokens as an arg and hardcodes reasoning_effort="medium", so
             # we set the max_tokens arg and patch reasoning_effort on the dict.
             settings = self._settings_obj()
-            url = settings.endpoint_url(settings.extraction_endpoint)
+            url = settings.endpoint_url(model or settings.extraction_endpoint)
             pdf = _read_pdf(request)
             payload = extraction_payload(
                 pdf, request.filename, prompt, schema, max_tokens=self._max_tokens
             )
-            payload["reasoning_effort"] = self._reasoning_effort
+            if input_mode == "text":
+                # Same message, prompt and schema; only the PDF block becomes text.
+                content = payload["messages"][0]["content"]
+                content[0] = {
+                    "type": "text",
+                    "text": "Statement text (extracted from the PDF):\n\n" + pdf_to_text(pdf),
+                }
+            if self._reasoning_effort is None:
+                payload.pop("reasoning_effort", None)
+            else:
+                payload["reasoning_effort"] = self._reasoning_effort
             body = json.dumps(payload).encode()
             token = self._token_provider()
             return urllib.request.Request(
@@ -236,8 +280,10 @@ class SavesageIciciExtractor:
         *,
         cache_root: str | Path | None = None,
         luna_profile: str | None = None,
-        reasoning_effort: str = "medium",
+        reasoning_effort: str | None = "medium",
         max_tokens: int = 96_000,
+        model: str | None = None,
+        input_mode: str = "pdf",
     ) -> None:
         self._prompt = composed_prompt
         profile = (
@@ -251,6 +297,8 @@ class SavesageIciciExtractor:
             token_provider=token_provider,
             reasoning_effort=reasoning_effort,
             max_tokens=max_tokens,
+            model=model,
+            input_mode=input_mode,
         )
         self._cache = LunaCache(cache_root, composed_prompt) if cache_root else None
 
@@ -281,8 +329,18 @@ class SavesageIciciExtractor:
 
         The code-mode / latency path: NEVER cache-served (a cache hit returns
         in ~0 ms and would fabricate the latency signal), so this always issues
-        a live cold Luna call and reports its real wall-clock latency (measured
-        by the adapter and carried on ``ExtractionResult.latency_ms``).
+        a live cold call and reports its real wall-clock latency.
+        """
+        parsed, latency_ms, _usage = self.extract_with_usage(sid=sid, pdf_path=pdf_path)
+        return parsed, latency_ms
+
+    def extract_with_usage(
+        self, *, sid: str, pdf_path: str | Path
+    ) -> tuple[dict, float, dict[str, int]]:
+        """Like :meth:`extract_with_latency`, plus ``{input_tokens, output_tokens}``.
+
+        ``latency_ms`` is the wall time of the whole extraction — request build
+        (PDF read, and ``pdftotext`` in text mode) plus the model call.
         """
         ensure_importable()
         from contracts.models import Bank, ParseRequest  # noqa: PLC0415
@@ -293,6 +351,16 @@ class SavesageIciciExtractor:
             bank=Bank.ICICI,
             request_id=f"savesage-{sid}",
         )
+        t0 = time.perf_counter()
         result = self._adapter.extract(request)
+        latency_ms = (time.perf_counter() - t0) * 1000.0
         parsed = result.payload if isinstance(result.payload, dict) else {}
-        return parsed, float(result.latency_ms)
+        usage = result.token_usage
+        return (
+            parsed,
+            latency_ms,
+            {
+                "input_tokens": int(getattr(usage, "input_tokens", 0) or 0),
+                "output_tokens": int(getattr(usage, "output_tokens", 0) or 0),
+            },
+        )

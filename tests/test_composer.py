@@ -12,6 +12,7 @@ from pathlib import Path
 from textwrap import dedent
 
 import pytest
+import yaml
 
 from anvil.runtime.composer import (
     MissingIdentitySkillError,
@@ -266,6 +267,16 @@ def test_missing_referenced_file_raises(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skipif(
+    (
+        yaml.safe_load(
+            (Path(__file__).resolve().parent.parent / "harness" / "config.yaml").read_text()
+        ).get("eval")
+        or {}
+    ).get("engine", "genai")
+    != "genai",
+    reason="asserts the stock genai instance's data/scaffold; this branch ships a domain instance",
+)
 def test_real_scaffold_composes_clean(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Smoke: the actual repo scaffold composes for both audiences.
 

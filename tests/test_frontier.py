@@ -631,7 +631,11 @@ def test_real_harness_config_parses_with_gate() -> None:
     cfg = RuntimeYAML.model_validate(raw)
     assert cfg.gate.type == "frontier"
     assert cfg.gate.epsilon == 0.0
-    assert cfg.gate.pareto == ParetoConfig(enabled=False)
+    # This savesage instance enables the latency Pareto gate.
+    assert cfg.gate.pareto.enabled is True
+    by_name = {o.name: o for o in cfg.gate.pareto.objectives}
+    assert by_name["accuracy"].source == "aggregate" and by_name["accuracy"].epsilon == 0.005
+    assert by_name["latency"].source == "latency" and by_name["latency"].direction == "minimize"
 
 
 def test_gate_config_parses_structured_pareto_objectives() -> None:

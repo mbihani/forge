@@ -217,11 +217,32 @@ actions above (`add_skill`, `edit_skill`, `add_rule`, etc.) are
 #### `write_agent`
 
 Write or replace a Python agent module in `agents/`. The file must
-implement the `MemorySystem` ABC (see `src/anvil/agents/memory_system.py`).
-The applier validates the code — AST denylist (no references to test,
-eval, solution, golden, answer-key, or ground-truth data) plus an
-isolated import — **before** writing it to disk. Invalid code is
-rejected and nothing is written.
+implement the base class the active engine loads — `MemorySystem`
+(`src/anvil/agents/memory_system.py`) for the built-in genai engine, or
+the domain's agent base for a domain engine. The applier validates the
+code — AST denylist (no references to test, eval, solution, golden,
+answer-key, or ground-truth data) plus an isolated import — **before**
+writing it to disk. Invalid code is rejected and nothing is written.
+
+**savesage engine (`eval.engine: savesage`):** rewrite the active module
+`agents/savesage_agent.py` in place (only that file is evaluated). It must
+define exactly ONE concrete subclass of
+`anvil.domains.savesage.agent_base.SavesageAgent` implementing
+`predict(self, *, sid, pdf_path) -> (extraction_dict, meta)`. Call
+`self.extract(sid=sid, pdf_path=pdf_path, model=..., input_mode=...,
+reasoning_effort=..., max_tokens=...)` for each extraction and return its
+`meta` (combine several with `self.merge_meta(...)`). Your levers: `model`
+(any of `self.allowed_models`; `self.model` is the round's model),
+`input_mode` (`"pdf"` = native PDF, only models in `NATIVE_PDF_MODELS`;
+`"text"` = `pdftotext -layout` text, any model), `reasoning_effort`
+(`"minimal"`/`"low"`/`"medium"`/`"high"`; DeepSeek needs one set) and
+`max_tokens` (a truncated completion fails the whole statement). You may
+route per statement on cheap signals: PDF byte size, page count, the
+co-brand token in the filename. The eval times the whole `predict` call,
+so extra calls and local steps cost latency. `predict` runs on several
+threads at once: keep per-statement state local. Scoring is SaveSage's
+production field judge vs Opus GT (accuracy over 26 fields; the stale-GT
+`programType` / `productFamily` are excluded) — do not tune for them.
 
 ```json-action
 {
