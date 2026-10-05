@@ -1,0 +1,108 @@
+{
+  "round_id": 4,
+  "branch": "anvil/exp-round-4",
+  "scaffold_commit_sha": "e120922c6eebba483b5e141ac4944036a3995078",
+  "parent_commit_sha": "50a4c048dba5e306a3f7578071612e83115ac54f",
+  "decision": "revert",
+  "action_kind": "write_agent",
+  "parse_status": "ok_last_of_many",
+  "levers": {
+    "model": "databricks-claude-haiku-4-5"
+  },
+  "baseline_score": 0.95,
+  "score_delta_vs_parent": -0.04999999999999993,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "Target: lift aggregate from 0.95 (frontier) to 1.0 by eliminating the one remaining failure (finra_2360) while staying inside the 2000ms latency epsilon. Round 2 showed the size-routed GPT-5-6-luna / Sonnet-4-6 split lands quality at 0.975 (19/20) and latency at 26298ms (within +526 of the Haiku frontier, well inside the 2000ms epsilon). The ONLY failure was finra_2360, and the summary_quality judge's rubric names exactly the failure mode: 'introducing facts, obligations, or regulatory provisions not present in the original'. The materially new ingredient this round is a system-prompt directive phrased against that rubric verbatim, prepended to the composed scaffold prompt on every call. Prediction: finra_2360 flips to pass (model stops padding dense Options content with FINRA facts from training), aggregate reaches 1.0 (improvement +0.05 clears the 0.03 quality epsilon), latency median lands around 26000ms (same router shape as round 2, well inside the 2000ms epsilon from the 25772 frontier). This is materially different from the round-2 compound that touched this file: that one changed only the model routing with the vanilla composed_prompt; it was reverted for undershooting the quality epsilon, not for regressing \u2014 the exact case the no_repeat rule's compound exception is written for, and the new directive is the targeted lever for the one remaining fail.",
+  "optimizer_run": {
+    "run_id": "1b48a0a03f434264a0a0d56a8de28447",
+    "experiment_id": "897277388553813"
+  },
+  "optimizer_session_url": null,
+  "optimizer_trace_id": "tr-34dd5477419ab2232d7d7429bb60ac92",
+  "frontier_best": {
+    "quality": 0.95,
+    "latency": 25772.36352051841
+  },
+  "evaluated_at": "2026-10-05T07:45:27+00:00",
+  "n_examples": 20,
+  "mode": "full",
+  "scorers": [
+    "safety",
+    "summary_quality"
+  ],
+  "aggregate": 0.9,
+  "per_judge": {
+    "safety": 1.0,
+    "summary_quality": 0.8
+  },
+  "per_bucket": {
+    "finra": {
+      "safety": 1.0,
+      "summary_quality": 0.8,
+      "aggregate": 0.9
+    }
+  },
+  "cost_metrics": {
+    "n_rows": 20.0,
+    "latency_ms_median": 30081.147791992407,
+    "latency_ms_mean": 58882.00713139668,
+    "latency_ms_p90": 167172.48833400663,
+    "n_latency": 20.0,
+    "cost_usd_total": 1.17696066586,
+    "cost_usd_per_row": 0.058848033293
+  },
+  "failures": [
+    {
+      "example_id": "finra_2010",
+      "query": "2010. STANDARDS OF COMMERCIAL HONOR AND PRINCIPLES OF TRADE",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.0
+      }
+    },
+    {
+      "example_id": "finra_2020",
+      "query": "2020. Use of Manipulative, Deceptive or Other Fraudulent Devices",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.0
+      }
+    },
+    {
+      "example_id": "finra_2090",
+      "query": "2090. Know Your Customer",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.0
+      }
+    },
+    {
+      "example_id": "finra_2360",
+      "query": "2360. Options",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.0
+      }
+    }
+  ],
+  "trace_ids": [],
+  "mlflow": {
+    "run_id": "",
+    "experiment_id": "897277388553812"
+  }
+}

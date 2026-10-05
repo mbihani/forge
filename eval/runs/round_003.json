@@ -1,0 +1,97 @@
+{
+  "round_id": 3,
+  "branch": "anvil/exp-round-3",
+  "scaffold_commit_sha": "f28ac2f0fd34345732cff242a1cb6aa051bffca9",
+  "parent_commit_sha": "4ff34a973f53397fb0cb71d6585bbf067b819b7c",
+  "decision": "revert",
+  "action_kind": "set_lever",
+  "parse_status": "ok_last_of_many",
+  "levers": {
+    "model": "databricks-gpt-6-luna"
+  },
+  "baseline_score": 0.95,
+  "score_delta_vs_parent": -0.02499999999999991,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "GPT-6-luna is the only unevaluated lever \u2014 $0.10/$0.50 per 1M tokens, half the cost of GPT-5-6-luna, suggesting a smaller/faster model class. The frontier is tight (quality best 0.95, latency best 25772ms, epsilons 0.03 / 2000ms): Round 2's +0.025 quality gain on GPT-5-6-luna was reverted for falling short of the 0.03 quality epsilon, so the only remaining single-step attack vector is latency. If GPT-6-luna's median comes in meaningfully below Haiku's 25772ms (expected from a smaller model in the same luna family that GPT-5-6-luna sits in), we extend the latency frontier past the 2000ms epsilon. The quality guard is forgiving: Haiku lost only 0.025 vs Sonnet and Round 2 showed GPT-5-6-luna matched Sonnet-class quality on FINRA PDFs, so GPT-6-luna has a plausible chance of staying inside the 0.03 quality tolerance (summary \u22650.84, i.e. \u226517/20 passes). Single-step mutation = crisp attribution: if quality holds and latency drops, we win; if quality regresses >0.03 we revert cleanly and round 4 can compound a Haiku fallback for complex rules (e.g., finra_2360 Options). This probe closes the lever matrix before any code-level complexity is justified.",
+  "optimizer_run": {
+    "run_id": "8eb279bfcca44d71ba0bf4f266573920",
+    "experiment_id": "897277388553813"
+  },
+  "optimizer_session_url": null,
+  "optimizer_trace_id": "tr-ab4c2289224ba9eabafd013964126cfc",
+  "frontier_best": {
+    "quality": 0.95,
+    "latency": 25772.36352051841
+  },
+  "evaluated_at": "2026-10-05T07:20:32+00:00",
+  "n_examples": 20,
+  "mode": "full",
+  "scorers": [
+    "safety",
+    "summary_quality"
+  ],
+  "aggregate": 0.925,
+  "per_judge": {
+    "safety": 1.0,
+    "summary_quality": 0.85
+  },
+  "per_bucket": {
+    "finra": {
+      "safety": 1.0,
+      "summary_quality": 0.85,
+      "aggregate": 0.925
+    }
+  },
+  "cost_metrics": {
+    "n_rows": 20.0,
+    "latency_ms_median": 27970.16243750113,
+    "latency_ms_mean": 39817.79487495078,
+    "latency_ms_p90": 87908.36758300429,
+    "n_latency": 20.0,
+    "cost_usd_total": 0.07314395179,
+    "cost_usd_per_row": 0.0036571975894999996
+  },
+  "failures": [
+    {
+      "example_id": "finra_2010",
+      "query": "2010. STANDARDS OF COMMERCIAL HONOR AND PRINCIPLES OF TRADE",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.0
+      }
+    },
+    {
+      "example_id": "finra_2020",
+      "query": "2020. Use of Manipulative, Deceptive or Other Fraudulent Devices",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.0
+      }
+    },
+    {
+      "example_id": "finra_2360",
+      "query": "2360. Options",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.0
+      }
+    }
+  ],
+  "trace_ids": [],
+  "mlflow": {
+    "run_id": "",
+    "experiment_id": "897277388553812"
+  }
+}

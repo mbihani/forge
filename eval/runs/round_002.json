@@ -1,0 +1,75 @@
+{
+  "round_id": 2,
+  "branch": "anvil/exp-round-2",
+  "scaffold_commit_sha": "9b11c410d2a0a3a5e2c1ab4c1d67b70b36a1ec74",
+  "parent_commit_sha": "4ff34a973f53397fb0cb71d6585bbf067b819b7c",
+  "decision": "revert",
+  "action_kind": "compound",
+  "parse_status": "ok_last_of_many",
+  "levers": {
+    "model": "databricks-gpt-5-6-luna"
+  },
+  "baseline_score": 0.95,
+  "score_delta_vs_parent": 0.025000000000000022,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "Round 1 kept Haiku 4-5 at quality 0.925 (summary_quality 0.85) and latency 25772ms (median). The frontier is quality=0.95 (Sonnet) and latency=25772 (Haiku). To extend the latency frontier past the 2000ms epsilon we need the median-position PDF to run on a model meaningfully faster than Haiku, which means moving the small/medium PDFs to GPT-luna. GPT-5-6-luna (the mid-tier GPT option: 5x cheaper than Haiku, less risky than GPT-6-luna's 10x bet) is the right first probe. The write_agent step installs a tiny size-based router that keeps the 4 largest, most structurally complex rules on Sonnet 4-6 for quality insurance. Thresholds and models are chosen for clean attribution: a later round can tighten the byte threshold or shift the fallback to Haiku once we have a measured quality number for GPT-5-6-luna. No clash with existing scaffold rules/skills (no sampling or prompt changes).",
+  "optimizer_run": {
+    "run_id": "8eb279bfcca44d71ba0bf4f266573920",
+    "experiment_id": "897277388553813"
+  },
+  "optimizer_session_url": null,
+  "optimizer_trace_id": "tr-cb908fa51fa63a8a8b381db382f4c2e1",
+  "frontier_best": {
+    "quality": 0.95,
+    "latency": 25772.36352051841
+  },
+  "evaluated_at": "2026-10-05T07:11:23+00:00",
+  "n_examples": 20,
+  "mode": "full",
+  "scorers": [
+    "safety",
+    "summary_quality"
+  ],
+  "aggregate": 0.975,
+  "per_judge": {
+    "safety": 1.0,
+    "summary_quality": 0.95
+  },
+  "per_bucket": {
+    "finra": {
+      "safety": 1.0,
+      "summary_quality": 0.95,
+      "aggregate": 0.975
+    }
+  },
+  "cost_metrics": {
+    "n_rows": 20.0,
+    "latency_ms_median": 26298.274020460667,
+    "latency_ms_mean": 60450.97344375099,
+    "latency_ms_p90": 188016.1004170077,
+    "n_latency": 20.0,
+    "cost_usd_total": 1.49933150535,
+    "cost_usd_per_row": 0.0749665752675
+  },
+  "failures": [
+    {
+      "example_id": "finra_2360",
+      "query": "2360. Options",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.0
+      }
+    }
+  ],
+  "trace_ids": [],
+  "mlflow": {
+    "run_id": "",
+    "experiment_id": "897277388553812"
+  }
+}

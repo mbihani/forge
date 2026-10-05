@@ -1,0 +1,108 @@
+{
+  "round_id": 5,
+  "branch": "anvil/exp-round-5",
+  "scaffold_commit_sha": "dd1203cc487bcdc10b6842b361e6dad503d54946",
+  "parent_commit_sha": "50a4c048dba5e306a3f7578071612e83115ac54f",
+  "decision": "revert",
+  "action_kind": "write_agent",
+  "parse_status": "ok_last_of_many",
+  "levers": {
+    "model": "databricks-claude-haiku-4-5"
+  },
+  "baseline_score": 0.95,
+  "score_delta_vs_parent": -0.04999999999999993,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "Latency axis attack. The current composed prompt (via scaffold/skills/citations.md + output_schema.md) requires a per-section `citations` array containing a 15-40 word quoted phrase + page_numbers. Across a 10-section FINRA PDF this is ~400-800 extra output tokens per call \u2014 pure generation time on Haiku-4-5 (the active lever) at ~100 tok/s. The active `summary_quality` judge scores only the summary strings against the source document; `schema_adherence` and `output_json_valid` are deprecated per harness.config.yaml and NOT in the score aggregate. Removing the citations field is therefore invisible to the gate's quality objective but should shave 4-8s off median generation. Prediction: latency median 25772 \u2192 ~18-20s (clears the 2000ms epsilon by a wide margin); quality holds at 0.92-0.95 (summaries are unchanged, no new directive \u2014 Round 4 showed anti-padding directives regress quality). Clean single-action attribution: if latency drops as predicted the frontier extends; if quality unexpectedly moves, we know exactly which lever caused it. No clash with scaffold rules (no_repeat_failed_mutations) \u2014 this is structurally different from R2's size router, R3's model swap, and R4's prepended directive. Current `model` lever (Haiku-4-5) is kept because it is the only configuration with a measured 0.925 quality floor.",
+  "optimizer_run": {
+    "run_id": "1b48a0a03f434264a0a0d56a8de28447",
+    "experiment_id": "897277388553813"
+  },
+  "optimizer_session_url": null,
+  "optimizer_trace_id": "tr-4283b8871a7f6710315039b7cb9ef9fd",
+  "frontier_best": {
+    "quality": 0.95,
+    "latency": 25772.36352051841
+  },
+  "evaluated_at": "2026-10-05T07:57:00+00:00",
+  "n_examples": 20,
+  "mode": "full",
+  "scorers": [
+    "safety",
+    "summary_quality"
+  ],
+  "aggregate": 0.9,
+  "per_judge": {
+    "safety": 1.0,
+    "summary_quality": 0.8
+  },
+  "per_bucket": {
+    "finra": {
+      "safety": 1.0,
+      "summary_quality": 0.8,
+      "aggregate": 0.9
+    }
+  },
+  "cost_metrics": {
+    "n_rows": 20.0,
+    "latency_ms_median": 20117.16091647395,
+    "latency_ms_mean": 33983.86374780093,
+    "latency_ms_p90": 70540.4687920236,
+    "n_latency": 20.0,
+    "cost_usd_total": 0.60251556736,
+    "cost_usd_per_row": 0.030125778368
+  },
+  "failures": [
+    {
+      "example_id": "finra_2010",
+      "query": "2010. STANDARDS OF COMMERCIAL HONOR AND PRINCIPLES OF TRADE",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.0
+      }
+    },
+    {
+      "example_id": "finra_2020",
+      "query": "2020. Use of Manipulative, Deceptive or Other Fraudulent Devices",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.0
+      }
+    },
+    {
+      "example_id": "finra_2090",
+      "query": "2090. Know Your Customer",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.0
+      }
+    },
+    {
+      "example_id": "finra_2360",
+      "query": "2360. Options",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.0
+      }
+    }
+  ],
+  "trace_ids": [],
+  "mlflow": {
+    "run_id": "",
+    "experiment_id": "897277388553812"
+  }
+}

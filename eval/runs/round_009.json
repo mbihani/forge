@@ -1,0 +1,26 @@
+{
+  "round_id": 9,
+  "branch": "anvil/exp-round-9",
+  "scaffold_commit_sha": "409285c75a5853013ae69737767d27f555881c1e",
+  "parent_commit_sha": "409285c75a5853013ae69737767d27f555881c1e",
+  "decision": "noop",
+  "action_kind": "noop",
+  "parse_status": "apply_rejected",
+  "levers": {
+    "model": "databricks-gpt-5-6-luna"
+  },
+  "baseline_score": 0.95,
+  "score_delta_vs_parent": 0.0,
+  "notes": "applier rejected action: forbidden reference in string literal at line 1",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "applier rejected write_agent: forbidden reference in string literal at line 1",
+  "optimizer_run": {
+    "run_id": "1b48a0a03f434264a0a0d56a8de28447",
+    "experiment_id": "897277388553813"
+  },
+  "optimizer_session_url": null,
+  "optimizer_trace_id": "tr-a279125c214ce292e505095a9afb42ac",
+  "frontier_best": null
+}

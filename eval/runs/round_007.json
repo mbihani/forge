@@ -1,0 +1,108 @@
+{
+  "round_id": 7,
+  "branch": "anvil/exp-round-7",
+  "scaffold_commit_sha": "400e05ced0efdb3ba53c2e3745ee76b133c6b176",
+  "parent_commit_sha": "409285c75a5853013ae69737767d27f555881c1e",
+  "decision": "revert",
+  "action_kind": "write_agent",
+  "parse_status": "ok_last_of_many",
+  "levers": {
+    "model": "databricks-gpt-5-6-luna"
+  },
+  "baseline_score": 0.95,
+  "score_delta_vs_parent": -0.04999999999999993,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "Round 6 kept gpt-5-6-luna + concise(1-2 sentence)+citations at 0.925 quality / 22904ms median \u2014 frontier latency axis. The 3 failures (finra_2010, 2020, 2360) all hit SHORT rules where a 1-2 sentence budget strips the verbatim legal references the summary_quality judge rewards (round 2's plain-prompt gpt-5-6-luna scored 0.975 with only finra_2360 failing). Two co-moving edits: widen the sentence budget to 2-3 (restores quality on short rules; the finra_2010/2020 failure mode) AND drop the citations output field (saves ~15-40 word quote \u00d7 ~10 sections = several hundred output tokens per PDF; the active judges don't look at citations). Predicted: latency drops below 20904ms (clears 2000ms epsilon vs frontier 22904), quality recovers to 0.95-0.975 (well above 0.92 floor). no_repeat exception: round 5 dropped citations but on Haiku-4-5 (quality ceiling 0.925) and REGRESSED \u2014 materially different model class here (gpt-5-6-luna's 0.975 ceiling) plus a widened sentence budget.",
+  "optimizer_run": {
+    "run_id": "1b48a0a03f434264a0a0d56a8de28447",
+    "experiment_id": "897277388553813"
+  },
+  "optimizer_session_url": null,
+  "optimizer_trace_id": "tr-7e82f773e0a0b7d07dfc2cbf9aef41ea",
+  "frontier_best": {
+    "quality": 0.95,
+    "latency": 22904.252708540298
+  },
+  "evaluated_at": "2026-10-05T08:15:23+00:00",
+  "n_examples": 20,
+  "mode": "full",
+  "scorers": [
+    "safety",
+    "summary_quality"
+  ],
+  "aggregate": 0.9,
+  "per_judge": {
+    "safety": 1.0,
+    "summary_quality": 0.8
+  },
+  "per_bucket": {
+    "finra": {
+      "safety": 1.0,
+      "summary_quality": 0.8,
+      "aggregate": 0.9
+    }
+  },
+  "cost_metrics": {
+    "n_rows": 20.0,
+    "latency_ms_median": 19055.808562523453,
+    "latency_ms_mean": 31975.794962592772,
+    "latency_ms_p90": 76497.51516600372,
+    "n_latency": 20.0,
+    "cost_usd_total": 0.10875906678000001,
+    "cost_usd_per_row": 0.0054379533390000005
+  },
+  "failures": [
+    {
+      "example_id": "finra_2010",
+      "query": "2010. STANDARDS OF COMMERCIAL HONOR AND PRINCIPLES OF TRADE",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.0
+      }
+    },
+    {
+      "example_id": "finra_2020",
+      "query": "2020. Use of Manipulative, Deceptive or Other Fraudulent Devices",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.0
+      }
+    },
+    {
+      "example_id": "finra_2090",
+      "query": "2090. Know Your Customer",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.0
+      }
+    },
+    {
+      "example_id": "finra_2360",
+      "query": "2360. Options",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.0
+      }
+    }
+  ],
+  "trace_ids": [],
+  "mlflow": {
+    "run_id": "",
+    "experiment_id": "897277388553812"
+  }
+}

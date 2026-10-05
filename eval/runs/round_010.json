@@ -1,0 +1,26 @@
+{
+  "round_id": 10,
+  "branch": "anvil/exp-round-10",
+  "scaffold_commit_sha": "409285c75a5853013ae69737767d27f555881c1e",
+  "parent_commit_sha": "409285c75a5853013ae69737767d27f555881c1e",
+  "decision": "noop",
+  "action_kind": "noop",
+  "parse_status": "ok_last_of_many",
+  "levers": {
+    "model": "databricks-gpt-5-6-luna"
+  },
+  "baseline_score": 0.95,
+  "score_delta_vs_parent": 0.0,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "Pareto frontier at (quality 0.95, latency 22904ms) is well-defended after 9 rounds. All 4 model levers measured (gpt-5-6-luna is already fastest + highest-quality in measured history). Both improvement paths are blocked: (A) Quality>0.98 requires 20/20 summary_quality, but finra_2360 fails on every model class (Sonnet R2+R8, Haiku R1, Luna R2+R6+R7); even fixing finra_2010/2020 via verbose-for-short-rules yields at best 19/20 = aggregate 0.975 (+0.025 < 0.03 \u03b5). (B) Latency<20904ms (needs -2000ms) requires removing citations (R5+R7 proved citations are the grounding mechanism \u2014 dropping them regresses quality to 0.9, breaking the 0.03 \u03b5 floor); shortening citation quotes alone yields <2s savings. Round 6 compound (kept) and round 7-8 reverts have exhausted the single-step and compound combinations within the current levers. A risky prompt tweak this round would most likely join R3-R5-R7-R8 as reverts without new information \u2014 all those vectors already have attribution. Preferring noop over a guess, per the round prompt. Unblockers for later rounds: (i) a judge-side investigation of why finra_2360 fails on Sonnet (currently unexplained \u2014 would clarify whether the quality ceiling is 0.975 or 1.0), or (ii) a new lever (e.g., prompt caching via cache_control, or splitting the long PDF into chunked summarize calls that run concurrently).",
+  "optimizer_run": {
+    "run_id": "1b48a0a03f434264a0a0d56a8de28447",
+    "experiment_id": "897277388553813"
+  },
+  "optimizer_session_url": null,
+  "optimizer_trace_id": "tr-16e3c41187d85d9350bdf71c021e9f35",
+  "frontier_best": null
+}

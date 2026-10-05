@@ -1,0 +1,97 @@
+{
+  "round_id": 6,
+  "branch": "anvil/exp-round-6",
+  "scaffold_commit_sha": "4502546697b987e97668c5ec348585980402e928",
+  "parent_commit_sha": "50a4c048dba5e306a3f7578071612e83115ac54f",
+  "decision": "keep",
+  "action_kind": "compound",
+  "parse_status": "ok_last_of_many",
+  "levers": {
+    "model": "databricks-gpt-5-6-luna"
+  },
+  "baseline_score": 0.95,
+  "score_delta_vs_parent": -0.02499999999999991,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "Round 6 target: cross the latency epsilon (<23772ms median) while staying inside the 0.92 quality floor. The only measured model with headroom above 0.92 to absorb a prompt-trim risk is gpt-5-6-luna (0.975). Decode time is the dominant latency component on 20 FINRA PDFs with long sectioned outputs, so a prompt that bounds section summaries to 1-2 sentences (while preserving verbatim legal terms and citations the summary_quality judge checks) is the lowest-risk way to cut output tokens. Attribution: if the compound is kept, follow-ups can probe whether gpt-5-6-luna or the prompt-trim carries the win by regressing one step at a time.",
+  "optimizer_run": {
+    "run_id": "1b48a0a03f434264a0a0d56a8de28447",
+    "experiment_id": "897277388553813"
+  },
+  "optimizer_session_url": null,
+  "optimizer_trace_id": "tr-db6387f09b4196f520d4114c833d1fa1",
+  "frontier_best": {
+    "quality": 0.95,
+    "latency": 22904.252708540298
+  },
+  "evaluated_at": "2026-10-05T08:06:50+00:00",
+  "n_examples": 20,
+  "mode": "full",
+  "scorers": [
+    "safety",
+    "summary_quality"
+  ],
+  "aggregate": 0.925,
+  "per_judge": {
+    "safety": 1.0,
+    "summary_quality": 0.85
+  },
+  "per_bucket": {
+    "finra": {
+      "safety": 1.0,
+      "summary_quality": 0.85,
+      "aggregate": 0.925
+    }
+  },
+  "cost_metrics": {
+    "n_rows": 20.0,
+    "latency_ms_median": 22904.252708540298,
+    "latency_ms_mean": 36040.56101869792,
+    "latency_ms_p90": 85207.16424996499,
+    "n_latency": 20.0,
+    "cost_usd_total": 0.1253535892,
+    "cost_usd_per_row": 0.00626767946
+  },
+  "failures": [
+    {
+      "example_id": "finra_2010",
+      "query": "2010. STANDARDS OF COMMERCIAL HONOR AND PRINCIPLES OF TRADE",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.0
+      }
+    },
+    {
+      "example_id": "finra_2020",
+      "query": "2020. Use of Manipulative, Deceptive or Other Fraudulent Devices",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.0
+      }
+    },
+    {
+      "example_id": "finra_2360",
+      "query": "2360. Options",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.0
+      }
+    }
+  ],
+  "trace_ids": [],
+  "mlflow": {
+    "run_id": "",
+    "experiment_id": "897277388553812"
+  }
+}

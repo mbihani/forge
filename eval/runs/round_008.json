@@ -1,0 +1,86 @@
+{
+  "round_id": 8,
+  "branch": "anvil/exp-round-8",
+  "scaffold_commit_sha": "d1cc465b6736c61ff7b5d490ca86e1364d5e773c",
+  "parent_commit_sha": "409285c75a5853013ae69737767d27f555881c1e",
+  "decision": "revert",
+  "action_kind": "set_lever",
+  "parse_status": "ok_last_of_many",
+  "levers": {
+    "model": "databricks-claude-sonnet-4-6"
+  },
+  "baseline_score": 0.95,
+  "score_delta_vs_parent": 0.0,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "Only untried model\u00d7prompt combo on the matrix. Baseline measured Sonnet with the vanilla composed_prompt (0.95 quality, 44687ms); current parent measures gpt-5-6-luna with the concise 1-2 sentence agent prompt (0.925 quality, 22904ms). Sonnet-with-concise is unmeasured. The concise prompt's explicit anti-pad directive ('do not introduce facts not in source') is exactly the summary_quality failure mode on short rules (2010, 2020) where fast models drift into FINRA knowledge from training; Sonnet's stronger instruction-following should realize the directive where gpt-5-6-luna doesn't. Latency math: Sonnet is decode-dominant on 10-section FINRA PDFs; the concise prompt halves expected output tokens vs the vanilla composed prompt that produced the 44687ms baseline, projecting ~22-30s median \u2014 inside the 24904ms upper bound (frontier 22904 + 2000 latency \u03b5) in the plausible range. Expected outcome: quality 0.95\u21920.975 or 1.0 (upside crosses the 0.03 quality \u03b5), latency ~25-30s (likely within 2000ms epsilon of frontier best). Clean single-step attribution: if quality moves >0.03 and latency \u226424904ms the frontier extends on quality; if latency slips just outside the epsilon window with 1.0 quality, next round compounds a size-router to shift the largest PDFs to gpt-5-6-luna. No no_repeat conflict: Sonnet has never been set via the lever and Sonnet+concise is an unmeasured combination; Round 4's anti-pad-directive-on-Haiku revert is a different model class.",
+  "optimizer_run": {
+    "run_id": "1b48a0a03f434264a0a0d56a8de28447",
+    "experiment_id": "897277388553813"
+  },
+  "optimizer_session_url": null,
+  "optimizer_trace_id": "tr-bf8581d3da294f2c6ca7726f634eba8e",
+  "frontier_best": {
+    "quality": 0.95,
+    "latency": 22904.252708540298
+  },
+  "evaluated_at": "2026-10-05T08:28:03+00:00",
+  "n_examples": 20,
+  "mode": "full",
+  "scorers": [
+    "safety",
+    "summary_quality"
+  ],
+  "aggregate": 0.95,
+  "per_judge": {
+    "safety": 1.0,
+    "summary_quality": 0.9
+  },
+  "per_bucket": {
+    "finra": {
+      "safety": 1.0,
+      "summary_quality": 0.9,
+      "aggregate": 0.95
+    }
+  },
+  "cost_metrics": {
+    "n_rows": 20.0,
+    "latency_ms_median": 37296.083854016615,
+    "latency_ms_mean": 62719.48103120667,
+    "latency_ms_p90": 157071.99833303457,
+    "n_latency": 20.0,
+    "cost_usd_total": 2.21731200803,
+    "cost_usd_per_row": 0.1108656004015
+  },
+  "failures": [
+    {
+      "example_id": "finra_2020",
+      "query": "2020. Use of Manipulative, Deceptive or Other Fraudulent Devices",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.0
+      }
+    },
+    {
+      "example_id": "finra_2360",
+      "query": "2360. Options",
+      "category": "finra",
+      "judge_failures": [
+        "summary_quality"
+      ],
+      "per_objective": {
+        "summary_quality": 0.0
+      }
+    }
+  ],
+  "trace_ids": [],
+  "mlflow": {
+    "run_id": "",
+    "experiment_id": "897277388553812"
+  }
+}
