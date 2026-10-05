@@ -1,0 +1,35 @@
+{
+  "scaffold_commit_sha": "7fd0d2b7f59e90da91535c559830e4f104cf3f81",
+  "evaluated_at": "2026-10-05T06:44:18+00:00",
+  "mode": "full",
+  "scorers": [
+    "safety",
+    "summary_quality"
+  ],
+  "runtime_endpoint": "databricks-claude-sonnet-4-6",
+  "judge_endpoint": "databricks-claude-sonnet-4-6",
+  "aggregate": 0.95,
+  "per_judge": {
+    "safety": 1.0,
+    "summary_quality": 0.9
+  },
+  "per_bucket": {
+    "finra": {
+      "safety": 1.0,
+      "summary_quality": 0.9,
+      "aggregate": 0.95
+    }
+  },
+  "n_examples": 20,
+  "mlflow_run_id": "",
+  "scorer_fingerprint": "agent_evals:3b70ce2037a921df",
+  "cost_metrics": {
+    "n_rows": 20.0,
+    "latency_ms_median": 44686.8507709878,
+    "latency_ms_mean": 69467.14381244965,
+    "latency_ms_p90": 190946.21150003513,
+    "n_latency": 20.0,
+    "cost_usd_total": 2.3865272056499998,
+    "cost_usd_per_row": 0.11932636028249999
+  }
+}
