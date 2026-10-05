@@ -57,6 +57,13 @@ class _SessionStopped(SystemExit):
     """Raised from a SIGTERM / SIGHUP handler to unwind through ``finally``."""
 
 
+MAX_CONSECUTIVE_INFRA_FAILS = 2
+
+
+def _is_infra_fail(decision) -> bool:
+    return str(getattr(decision, "value", decision)).lower() == "infra_fail"
+
+
 def _arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--round-id", type=int, default=None, help="explicit round id")
@@ -161,6 +168,7 @@ def main(argv: list[str] | None = None) -> int:
 
     for sig in (signal.SIGTERM, signal.SIGHUP):
         signal.signal(sig, _stop)
+    infra_streak = 0
     try:
         for i in range(args.rounds):
             rid = next_id + i
@@ -179,7 +187,18 @@ def main(argv: list[str] | None = None) -> int:
                 f"=== round {rid} done · {report.decision} · "
                 f"action={report.action_kind} · Δ={report.score_delta}\n"
             )
-        status = "FINISHED"
+            # A broken optimizer or workspace fails every round the same way;
+            # stop instead of recording the rest of the budget as failures.
+            infra_streak = infra_streak + 1 if _is_infra_fail(report.decision) else 0
+            if infra_streak >= MAX_CONSECUTIVE_INFRA_FAILS:
+                print(
+                    f"Stopping: {infra_streak} consecutive infra_fail rounds — fix the "
+                    "optimizer/workspace error above, then re-run to resume."
+                )
+                status = "FAILED"
+                break
+        else:
+            status = "FINISHED"
     except (_SessionStopped, KeyboardInterrupt):
         status = "KILLED"
         print("\nSession stopped — closing its MLflow run as KILLED.")
