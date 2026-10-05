@@ -594,6 +594,31 @@ The `trace` engine's *input* experiment (§10, `eval.trace.experiment_id`) is
 separate: it is the agent's own, pre-existing experiment that supplies the
 dataset, and forge only reads it.
 
+### Optimizer sessions as traces
+
+Each round's optimizer session is also logged as an MLflow **trace** in
+`<root>/<domain>/optimizer` (Traces tab), linked to the session's run:
+
+- root span `forge_optimizer_session` (AGENT): the round prompt in; the
+  decision, action, rationale and parse status out; `optimizer.num_turns`,
+  `duration_ms`, `total_cost_usd` and token `usage` as attributes;
+- one `tool:<name>` span (TOOL) per tool call the optimizer made — its input
+  and result, ERROR status when the tool failed;
+- one span per assistant message and thinking block (LLM).
+
+Traces are tagged `round`, `scaffold_branch`, `decision`, `action`, `mode`;
+the round JSON records `optimizer_trace_id`. The same session is written as
+`rounds/round_NNN_session.md` on the run (every turn, readable without the
+trace UI) next to `round_NNN_transcript.md` (final text only). The session is
+recorded during the run and replayed into the trace afterwards, so tracing
+can never break the SDK session; it is skipped when persistence is off and
+on the omnigent backend (its server keeps the conversation).
+
+A stopped session closes its run: Ctrl-C, SIGTERM and SIGHUP mark it
+`KILLED`. A SIGKILLed session cannot clean up, so each CLI run records its
+host + pid and the next session start marks any `RUNNING` run whose process
+is gone as `KILLED` (tag `forge.reaped`).
+
 ## 15. Wiring levers, latency, cost, and tracing into your engine
 
 The features above need a few lines in your `eval.py`. A sketch of the

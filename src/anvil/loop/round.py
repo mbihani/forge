@@ -44,6 +44,7 @@ from anvil.loop.git_ops import (
     ff_merge,
 )
 from anvil.loop.mutations_log import MutationRecord, append_mutation
+from anvil.loop.optimizer_trace import log_optimizer_trace, render_session_markdown
 from anvil.optimizer import (
     BackendConfig,
     NoopAction,
@@ -148,15 +149,13 @@ def run_round(
         model_prices=_model_prices_for_prompt(scaffold_root, lever_specs),
     )
 
-    # NOTE: optimizer-side MLflow tracing is intentionally disabled for
-    # now. The Databricks docs for Claude Code + MLflow GenAI require an
-    # async-context-manager wrapping pattern that interacts subtly with
-    # the SDK; we'd rather have rounds execute reliably than have a
-    # half-working trace. The transcript still lives at
-    # ``scaffold/memory/round_NNN_transcript.md`` for diagnostic.
-    # Re-enable by passing experiment_name + round_id when the
-    # async-tracing pattern is validated. See:
-    # https://docs.databricks.com/aws/en/mlflow3/genai/tracing/integrations/claude-code
+    # Optimizer-side MLflow tracing does NOT wrap the async SDK session
+    # (MLflow's async tracing interacts badly with ``claude-agent-sdk``; see
+    # https://docs.databricks.com/aws/en/mlflow3/genai/tracing/integrations/claude-code).
+    # Instead the local backend records the session as plain events
+    # (``session_record``) and step 8c replays them into a trace after the
+    # session returns. The final text also lives at
+    # ``scaffold/memory/round_NNN_transcript.md``.
     optimizer_cfg = _read_optimizer_config(scaffold_root)
     # ``optimizer_error`` is set only when the optimizer BACKEND itself
     # failed (auth/401, SSO redirect, connection error, ...). The local
@@ -171,6 +170,9 @@ def run_round(
     # optimizer session's transcript on the Omnigent server. None on the
     # local backend. Recorded into the round JSON for discoverability.
     optimizer_session_url: str | None = None
+    # The local backend fills this with the full turn-by-turn session, which
+    # step 8b replays into an MLflow trace (see loop/optimizer_trace.py).
+    session_record: dict = {}
     if selected_backend == "omnigent":
         resolved_optimizer_server_url = _resolve_omnigent_backend_url(optimizer_cfg)
         action, transcript, parse_result, optimizer_error, optimizer_session_url = asyncio.run(
@@ -191,6 +193,7 @@ def run_round(
                 max_turns=max_turns,
                 profile=profile,
                 optimizer_endpoint=optimizer_endpoint,
+                session_record=session_record,
             )
         )
 
@@ -376,6 +379,45 @@ def run_round(
         except Exception as exc:  # noqa: BLE001 — best-effort; never fail the round
             print(f"[round {round_id}] warning: optimizer artifact log_round failed: {exc}")
 
+    # 8c. Replay the recorded optimizer session (local backend) into an
+    # MLflow trace in the optimizer experiment, linked to the session run,
+    # plus a turn-by-turn markdown artifact. Synchronous and after the
+    # session — no async tracing inside the SDK. Best-effort.
+    optimizer_trace_id: str | None = None
+    events = session_record.get("events") or []
+    decision_str = str(getattr(decision, "value", decision))
+    if artifact_sink is not None and events:
+        try:
+            artifact_sink.log_session(
+                round_id=round_id,
+                session_md=render_session_markdown(
+                    events, title=f"Optimizer session — round {round_id} ({branch})"
+                ),
+            )
+            optimizer_trace_id = log_optimizer_trace(
+                events=events,
+                prompt=prompt,
+                experiment_id=artifact_sink.experiment_id,
+                started_ns=session_record.get("started_ns"),
+                ended_ns=session_record.get("ended_ns"),
+                tags={
+                    "round": str(round_id),
+                    "scaffold_branch": branch,
+                    "decision": decision_str,
+                    "action": action.action,
+                    "mode": str(mode),
+                },
+                outputs={
+                    "decision": decision_str,
+                    "action": action.action,
+                    "rationale": action.rationale,
+                    "parse_status": parse_result.parse_status,
+                },
+                source_run_id=artifact_sink.run_id,
+            )
+        except Exception as exc:  # noqa: BLE001 — best-effort; never fail the round
+            print(f"[round {round_id}] warning: optimizer session trace failed: {exc}")
+
     # 9. Write round JSON (combines aggregate + decision + delta).
     round_json_path = repo_root / "eval" / "runs" / f"round_{round_id:03d}.json"
     round_json_path.parent.mkdir(parents=True, exist_ok=True)
@@ -406,6 +448,7 @@ def run_round(
                 optimizer_run_id=artifact_sink.run_id if artifact_sink else None,
                 optimizer_experiment_id=artifact_sink.experiment_id if artifact_sink else None,
                 optimizer_session_url=optimizer_session_url,
+                optimizer_trace_id=optimizer_trace_id,
             ),
             indent=2,
         )
@@ -836,6 +879,7 @@ def _build_round_json(
     optimizer_run_id: str | None = None,
     optimizer_experiment_id: str | None = None,
     optimizer_session_url: str | None = None,
+    optimizer_trace_id: str | None = None,
     levers: dict[str, Any] | None = None,
 ) -> dict:
     payload: dict = {
@@ -882,6 +926,9 @@ def _build_round_json(
             else None
         ),
         "optimizer_session_url": optimizer_session_url,
+        # MLflow trace of the full optimizer session (local backend; None
+        # when persistence is off or the omnigent backend ran the round).
+        "optimizer_trace_id": optimizer_trace_id,
         # Best-so-far per objective after this round's decision (frontier
         # gate only; None for the legacy delta gate / noop / infra-fail).
         # The decision is driven by this, not by ``score_delta_vs_parent``.

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -50,6 +51,10 @@ from anvil.loop.optimizer_artifacts import (  # noqa: E402
 from anvil.loop.round import run_round  # noqa: E402
 from anvil.observability import configure_tracking_uri  # noqa: E402
 from anvil.runtime.models import RuntimeYAML  # noqa: E402
+
+
+class _SessionStopped(SystemExit):
+    """Raised from a SIGTERM / SIGHUP handler to unwind through ``finally``."""
 
 
 def _arg_parser() -> argparse.ArgumentParser:
@@ -145,6 +150,17 @@ def main(argv: list[str] | None = None) -> int:
 
     round_ids: list[int] = []
     status = "FAILED"
+
+    # A stopped session must close its MLflow run instead of leaving it
+    # RUNNING with no artifacts: SIGTERM / SIGHUP (e.g. a task manager
+    # stopping the job) raise so the ``finally`` below runs and records
+    # KILLED. SIGKILL cannot be caught — the next session start reaps those
+    # runs (``reap_orphaned_cli_sessions``).
+    def _stop(signum, _frame):  # noqa: ANN001
+        raise _SessionStopped(128 + signum)
+
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, _stop)
     try:
         for i in range(args.rounds):
             rid = next_id + i
@@ -164,6 +180,10 @@ def main(argv: list[str] | None = None) -> int:
                 f"action={report.action_kind} · Δ={report.score_delta}\n"
             )
         status = "FINISHED"
+    except (_SessionStopped, KeyboardInterrupt):
+        status = "KILLED"
+        print("\nSession stopped — closing its MLflow run as KILLED.")
+        raise
     finally:
         close_cli_session_sink(
             sink,

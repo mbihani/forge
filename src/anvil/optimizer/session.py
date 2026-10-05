@@ -39,7 +39,7 @@ import contextlib
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Any, Protocol
 
 import mlflow
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
@@ -90,6 +90,13 @@ class OptimizerResult:
     # ``NoopAction``: a backend failure must surface as a failure, not be
     # silently disguised as a clean noop. ``None`` on every success path.
     optimizer_error: str | None = None
+    # The full turn-by-turn session as plain dicts (see
+    # :func:`message_events`), with wall-clock bounds in ns. Recorded by
+    # the local backend so the loop can replay the session into an MLflow
+    # trace AFTER it returns (no async tracing inside the SDK session).
+    events: list[dict[str, Any]] = field(default_factory=list)
+    started_ns: int | None = None
+    ended_ns: int | None = None
 
 
 class OptimizerBackend(Protocol):
@@ -218,16 +225,20 @@ class LocalBackend:
             can_use_tool=_allow_all_tool_calls,
         )
 
+        events: list[dict[str, Any]] = []
+
         async def _drain_session() -> str:
             parts: list[str] = []
             async with ClaudeSDKClient(options=options) as client:
                 await client.query(prompt)
                 async for message in client.receive_response():
+                    events.extend(message_events(message))
                     text = extract_message_text(message)
                     if text:
                         parts.append(text)
             return "\n\n".join(parts)
 
+        started_ns = time.time_ns()
         start = time.monotonic()
         if self.experiment_name:
             with mlflow.start_span(name="anvil_optimizer_round") as span:
@@ -256,6 +267,9 @@ class LocalBackend:
             mlflow_trace_url=None,
             turns_used=None,
             duration_s=duration_s,
+            events=events,
+            started_ns=started_ns,
+            ended_ns=time.time_ns(),
         )
 
 
@@ -269,6 +283,7 @@ async def run_optimizer_session(
     optimizer_endpoint: str | None = None,
     experiment_name: str | None = None,
     round_id: int | None = None,
+    session_record: dict[str, Any] | None = None,
 ) -> tuple[OptimizerAction, str, ParseResult]:
     """Open one ``ClaudeSDKClient`` session, drain it, parse the action.
 
@@ -297,6 +312,10 @@ async def run_optimizer_session(
             inside the Claude Code subprocess becomes a child span.
             Disable in tests by passing ``None`` (default).
         round_id: Tag value for the ``round`` trace tag. Optional.
+        session_record: When a dict is passed, it is filled with the full
+            turn-by-turn session (``events``, ``started_ns``, ``ended_ns``)
+            so the caller can replay it into an MLflow trace. The 3-tuple
+            return shape is unchanged.
 
     Returns:
         A 3-tuple ``(action, transcript, parse_result)`` where ``action``
@@ -318,6 +337,10 @@ async def run_optimizer_session(
         max_turns=max_turns,
         model=optimizer_endpoint,
     )
+    if session_record is not None:
+        session_record.update(
+            events=result.events, started_ns=result.started_ns, ended_ns=result.ended_ns
+        )
     return result.action, result.transcript, result.parse_result
 
 
@@ -361,6 +384,97 @@ def extract_message_text(message) -> str:
                 parts.append(text)
 
     return "\n".join(parts)
+
+
+# Cap on the text kept per recorded event: tool results can be whole files
+# and a written agent module can be large; traces stay readable and small.
+_EVENT_TEXT_CAP = 20_000
+
+
+def _cap(value: Any) -> Any:
+    if isinstance(value, str) and len(value) > _EVENT_TEXT_CAP:
+        return value[:_EVENT_TEXT_CAP] + f"\n…(truncated, {len(value)} chars)"
+    if isinstance(value, dict):
+        return {k: _cap(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_cap(v) for v in value]
+    return value
+
+
+def _tool_result_text(content: Any) -> Any:
+    """A tool result's content as text where possible (list of text blocks)."""
+    if isinstance(content, list):
+        texts = [
+            c.get("text") if isinstance(c, dict) else getattr(c, "text", None) for c in content
+        ]
+        if all(isinstance(t, str) for t in texts):
+            return "\n".join(texts)
+    return content
+
+
+def message_events(message: Any) -> list[dict[str, Any]]:
+    """Plain-dict events for one ``claude-agent-sdk`` message, timestamped.
+
+    Duck-typed like :func:`extract_message_text` (no hard SDK imports).
+    Kinds: ``text`` / ``thinking`` (assistant), ``tool_use`` (id, name,
+    input), ``tool_result`` (tool_use_id, content, is_error) and ``result``
+    (the session's final stats: turns, duration, cost, usage). Long text is
+    capped at ``_EVENT_TEXT_CAP`` chars.
+    """
+    t_ns = time.time_ns()
+    kind = type(message).__name__
+    out: list[dict[str, Any]] = []
+    if kind == "ResultMessage" or (
+        hasattr(message, "num_turns") and hasattr(message, "total_cost_usd")
+    ):
+        out.append(
+            {
+                "kind": "result",
+                "t_ns": t_ns,
+                "subtype": getattr(message, "subtype", None),
+                "is_error": getattr(message, "is_error", None),
+                "num_turns": getattr(message, "num_turns", None),
+                "duration_ms": getattr(message, "duration_ms", None),
+                "total_cost_usd": getattr(message, "total_cost_usd", None),
+                "usage": _cap(getattr(message, "usage", None)),
+                "text": _cap(getattr(message, "result", None)),
+            }
+        )
+        return out
+    content = getattr(message, "content", None)
+    if isinstance(content, str):
+        role = "user" if kind == "UserMessage" else "assistant"
+        return [{"kind": "text", "role": role, "t_ns": t_ns, "text": _cap(content)}]
+    if not isinstance(content, list):
+        return out
+    for block in content:
+        if hasattr(block, "tool_use_id"):
+            out.append(
+                {
+                    "kind": "tool_result",
+                    "t_ns": t_ns,
+                    "tool_use_id": getattr(block, "tool_use_id", None),
+                    "is_error": bool(getattr(block, "is_error", False)),
+                    "content": _cap(_tool_result_text(getattr(block, "content", None))),
+                }
+            )
+        elif isinstance(getattr(block, "thinking", None), str):
+            out.append({"kind": "thinking", "t_ns": t_ns, "text": _cap(block.thinking)})
+        elif hasattr(block, "name") and hasattr(block, "input"):
+            out.append(
+                {
+                    "kind": "tool_use",
+                    "t_ns": t_ns,
+                    "id": getattr(block, "id", None),
+                    "name": str(getattr(block, "name", "")),
+                    "input": _cap(getattr(block, "input", None)),
+                }
+            )
+        elif isinstance(getattr(block, "text", None), str):
+            out.append(
+                {"kind": "text", "role": "assistant", "t_ns": t_ns, "text": _cap(block.text)}
+            )
+    return out
 
 
 async def _allow_all_tool_calls(_tool_name: str, _tool_input: dict, _ctx) -> dict:

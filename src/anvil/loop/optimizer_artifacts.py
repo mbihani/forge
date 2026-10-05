@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import socket
 from pathlib import Path
 from typing import Any
 
@@ -240,6 +241,15 @@ class OptimizerArtifactSink:
         """
         self._log_text(transcript or "(empty)\n", f"rounds/round_{round_id:03d}_transcript.md")
         self._log_text(critique_md or "(empty)\n", f"rounds/round_{round_id:03d}_critique.md")
+
+    def log_session(self, *, round_id: int, session_md: str) -> None:
+        """Persist one round's full turn-by-turn optimizer session.
+
+        ``rounds/round_NNN_session.md`` — every assistant message, tool call
+        (input + result) and the session's final stats, unlike
+        ``round_NNN_transcript.md`` which holds only the final text.
+        """
+        self._log_text(session_md or "(empty)\n", f"rounds/round_{round_id:03d}_session.md")
 
     def log_improvement_summary(self, *, summary: dict[str, Any], summary_md: str) -> None:
         """Persist the run-level improvement summary (JSON + markdown)."""
@@ -495,11 +505,72 @@ def open_cli_session_sink(
     if not enabled:
         logger.info("optimizer-artifact persistence disabled (persistence.enabled / env)")
         return None
-    return OptimizerArtifactSink.open(
+    sink = OptimizerArtifactSink.open(
         experiment_name=experiment,
         session_id=session_id,
-        tags={"anvil.surface": "cli", **(tags or {})},
+        tags={
+            "anvil.surface": "cli",
+            _HOST_TAG: socket.gethostname(),
+            _PID_TAG: str(os.getpid()),
+            **(tags or {}),
+        },
     )
+    if sink is not None:
+        reap_orphaned_cli_sessions(sink.client, sink.experiment_id, keep_run_id=sink.run_id)
+    return sink
+
+
+_HOST_TAG = "forge.host"
+_PID_TAG = "forge.pid"
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:  # exists, owned by someone else
+        return True
+    return True
+
+
+def reap_orphaned_cli_sessions(
+    client: Any, experiment_id: str, *, keep_run_id: str | None = None
+) -> list[str]:
+    """Mark CLI session runs whose process is gone as ``KILLED``.
+
+    A session killed with SIGKILL (or a crashed host process) never reaches
+    its ``finally`` and leaves its parent run ``RUNNING`` with no artifacts.
+    At the next session start, any ``RUNNING`` CLI run recorded on THIS host
+    whose pid no longer exists is terminated (runs from other hosts, or
+    without a pid tag, are left alone — they may be live). Best-effort;
+    returns the reaped run ids.
+    """
+    reaped: list[str] = []
+    try:
+        host = socket.gethostname()
+        runs = client.search_runs(
+            [experiment_id],
+            filter_string=(
+                "attributes.status = 'RUNNING' and tags.`anvil.surface` = 'cli' "
+                f"and tags.`{_HOST_TAG}` = '{host}'"
+            ),
+            max_results=100,
+        )
+        for run in runs:
+            if run.info.run_id == keep_run_id:
+                continue
+            pid = str(run.data.tags.get(_PID_TAG, ""))
+            if not pid.isdigit() or _pid_alive(int(pid)):
+                continue
+            client.set_tag(run.info.run_id, "forge.reaped", "orphaned session (process gone)")
+            client.set_terminated(run.info.run_id, status="KILLED")
+            reaped.append(run.info.run_id)
+    except Exception as exc:  # noqa: BLE001 — best-effort; never fatal
+        logger.warning("could not reap orphaned optimizer session runs: %s", exc)
+    if reaped:
+        logger.info("marked %d orphaned optimizer session run(s) KILLED", len(reaped))
+    return reaped
 
 
 def close_cli_session_sink(
