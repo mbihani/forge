@@ -1,24 +1,19 @@
-"""Savesage ICICI extraction agent (code-mode), round 6: text pass + output-free identity pass, wider grace.
+"""Savesage ICICI extraction agent (code-mode), round 7: GLM Flash text pass + raced Luna identity.
 
-Two concurrent low-effort Luna calls per statement:
+Round 6 (kept): Luna low-effort text pass for every field, plus an output-free
+page-1 native-PDF Luna identity pass merged in by last-four (6s grace after the
+text pass). Accuracy 0.9812, median 13.7s. Luna text alone runs ~12.9s median
+(round 3), so the median cannot fall under ~12.7s while Luna writes the
+transactions. Both critical-path calls have to get faster.
 
-* text pass: input_mode='text' over the full statement, used for every field
-  (round 3: 12.9s median, all non-card fields at or above native PDF).
-* identity pass: native PDF of page 1 only (pdfseparate, same filename) with
-  the composed prompt plus a suffix that asks for EMPTY transaction arrays.
-  Output is just statementMeta + card blocks.
+This round:
 
-Round 4 (wait for identity unconditionally, identity still listed page-1
-transactions): accuracy 0.9864, median 16.0s. Round 5 (this structure, 2.5s
-grace): median 13.1s but cardDisplayName misses rose 7 -> 17 rows, i.e. the
-identity pass usually lands just after the text pass and a 2.5s grace cut it
-off on ~10 rows. This round widens the grace to 6s so those rows get their
-card identity back while the wait stays bounded.
-
-Card identity (cardDisplayName / network / productFamily) and non-null card
-limits are copied from the identity pass by last-four match. If the text
-result fails or is empty, a native-PDF full extraction (low, then medium)
-runs instead.
+* main pass: input_mode='text' on GLM 5.3 Flash (text-only flash model) at low
+  effort. Card identity and card limits still come from the Luna identity pass.
+* identity pass: the same page-1, output-free Luna PDF call as round 6, issued
+  twice concurrently; the first usable result wins (cuts Luna's latency tail).
+* identity wait: until max(main_done + 6s, t0 + 13s).
+* fallbacks: GLM raises or is unusable -> Luna text (low) -> native-PDF chain.
 """
 
 from __future__ import annotations
@@ -28,7 +23,7 @@ import subprocess
 import tempfile
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 
 from anvil.domains.savesage.agent_base import (
@@ -40,8 +35,11 @@ from anvil.domains.savesage.agent_base import (
 
 FAST_EFFORT = 'low'
 PDF_MODEL = 'databricks-gpt-5-6-luna'
+FAST_TEXT_MODEL = 'databricks-glm-5-3-flash'
 IDENTITY_MAX_TOKENS = 32_000
+IDENTITY_RACERS = 2
 IDENTITY_GRACE_S = 6.0
+IDENTITY_FLOOR_S = 13.0
 
 IDENTITY_SUFFIX = (
     '\n\n## IDENTITY-ONLY PASS (overrides any earlier instruction about listing transactions)\n'
@@ -65,6 +63,32 @@ def _cards(parsed) -> list:
     if not isinstance(cards, list):
         return []
     return [c for c in cards if isinstance(c, dict)]
+
+
+def _n_transactions(parsed) -> int:
+    if not isinstance(parsed, dict):
+        return 0
+    n = 0
+    top = parsed.get('transactions')
+    if isinstance(top, list):
+        n += len(top)
+    for c in _cards(parsed):
+        tx = c.get('transactions')
+        if isinstance(tx, list):
+            n += len(tx)
+    return n
+
+
+def _usable_main(parsed) -> bool:
+    if _looks_empty(parsed):
+        return False
+    if not parsed.get('statementMeta') or not parsed.get('statementLevelSummary'):
+        return False
+    return _n_transactions(parsed) > 0
+
+
+def _usable_identity(parsed) -> bool:
+    return bool(_cards(parsed))
 
 
 def _last4(card):
@@ -130,8 +154,8 @@ def _first_page(pdf_path, tmpdir: str):
     return None
 
 
-class TextPlusIdentitySavesageAgent(SavesageAgent):
-    """Low-effort text extraction, with card identity from an output-free page-1 PDF pass."""
+class GlmTextPlusRacedIdentitySavesageAgent(SavesageAgent):
+    """GLM Flash text extraction, with card identity from raced output-free page-1 Luna PDF passes."""
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -179,10 +203,11 @@ class TextPlusIdentitySavesageAgent(SavesageAgent):
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
-    def _text_pass(self, sid, pdf_path):
+    def _text_pass(self, sid, pdf_path, model):
         return self.extract(
             sid=sid,
             pdf_path=pdf_path,
+            model=model,
             input_mode='text',
             reasoning_effort=FAST_EFFORT,
             max_tokens=DEFAULT_MAX_TOKENS,
@@ -209,30 +234,66 @@ class TextPlusIdentitySavesageAgent(SavesageAgent):
                 return parsed
         return {}
 
+    def _main_pass(self, sid, pdf_path, calls: list):
+        models = []
+        if FAST_TEXT_MODEL in self.allowed_models:
+            models.append(FAST_TEXT_MODEL)
+        luna_text = PDF_MODEL if PDF_MODEL in self.allowed_models else self.model
+        if luna_text not in models:
+            models.append(luna_text)
+        for model in models:
+            try:
+                parsed, meta = self._text_pass(sid, pdf_path, model)
+            except Exception:
+                continue
+            calls.extend(meta.get('calls', []))
+            if _usable_main(parsed):
+                return parsed
+        return self._pdf_fallback(sid, pdf_path, calls)
+
+    def _wait_identity(self, futs, deadline, calls: list):
+        pending = set(futs)
+        while pending:
+            remaining = deadline - time.perf_counter()
+            if remaining <= 0:
+                return None
+            done, pending = wait(pending, timeout=remaining, return_when=FIRST_COMPLETED)
+            if not done:
+                return None
+            for f in done:
+                try:
+                    ident, call = f.result()
+                except Exception:
+                    continue
+                calls.append(call)
+                if isinstance(ident, dict) and _usable_identity(ident):
+                    return ident
+        return None
+
     def predict(self, *, sid: str, pdf_path: str) -> tuple[dict, dict]:
         t0 = time.perf_counter()
         calls: list = []
         can_identity = PDF_MODEL in self.allowed_models and PDF_MODEL in NATIVE_PDF_MODELS
-        pool = ThreadPoolExecutor(max_workers=2)
+        n_id = IDENTITY_RACERS if can_identity else 0
+        pool = ThreadPoolExecutor(max_workers=n_id + 1)
         try:
-            id_fut = pool.submit(self._identity_pass, sid, pdf_path) if can_identity else None
-            text_fut = pool.submit(self._text_pass, sid, pdf_path)
-            parsed = None
+            id_futs = [pool.submit(self._identity_pass, sid, pdf_path) for _ in range(n_id)]
+            main_fut = pool.submit(self._main_pass, sid, pdf_path, calls)
             try:
-                parsed, tmeta = text_fut.result()
-                calls.extend(tmeta.get('calls', []))
+                parsed = main_fut.result()
             except Exception:
                 parsed = None
-            if parsed is None or _looks_empty(parsed):
-                parsed = self._pdf_fallback(sid, pdf_path, calls)
-            elif id_fut is not None:
+            if not isinstance(parsed, dict):
+                parsed = {}
+            if id_futs and parsed:
+                now = time.perf_counter()
+                deadline = max(now + IDENTITY_GRACE_S, t0 + IDENTITY_FLOOR_S)
                 try:
-                    ident, call = id_fut.result(timeout=IDENTITY_GRACE_S)
-                    calls.append(call)
-                    if isinstance(ident, dict) and ident:
-                        parsed = _merge_identity(parsed, ident)
+                    ident = self._wait_identity(id_futs, deadline, calls)
                 except Exception:
-                    pass
+                    ident = None
+                if ident is not None:
+                    parsed = _merge_identity(parsed, ident)
         finally:
             pool.shutdown(wait=False)
         return parsed, {'latency_ms': (time.perf_counter() - t0) * 1000.0, 'calls': calls}
