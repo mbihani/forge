@@ -53,6 +53,7 @@ from anvil.optimizer import (
     run_optimizer_session,
 )
 from anvil.optimizer.applier import ApplyError
+from anvil.optimizer.code_validation import CodeValidationError
 from anvil.optimizer.omnigent_backend import OmnigentBackend
 from anvil.optimizer.omnigent_client import resolve_omnigent_server_url
 from anvil.runtime.loader import default_runtime_config_path
@@ -200,14 +201,15 @@ def run_round(
     # 3. Apply the action (writes scaffold files, edits harness.yaml).
     #
     # An action the applier rejects (a lever value outside its allowlist, a
-    # compound over loop.max_mutations_per_round, an edit of a missing file)
-    # is recorded as a noop with the reason, instead of crashing the whole
-    # multi-round run. Compound actions restore scaffold/ + agents/ on
+    # compound over loop.max_mutations_per_round, an edit of a missing file,
+    # agent code that fails the AST denylist / isolated import) is recorded
+    # as a noop with the reason, instead of crashing the whole multi-round
+    # run. Compound actions restore scaffold/ + agents/ on
     # failure, so nothing half-applied is left behind.
     apply_error: str | None = None
     try:
         apply_result = apply_action(action, scaffold_root, mode=mode, repo_root=repo_root)
-    except ApplyError as exc:
+    except (ApplyError, CodeValidationError) as exc:
         apply_error = f"{exc}"
         print(f"[round {round_id}] applier rejected {action.action}: {apply_error}")
         action = NoopAction(rationale=f"applier rejected {action.action}: {apply_error}"[:2000])

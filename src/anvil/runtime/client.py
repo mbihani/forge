@@ -32,6 +32,7 @@ this module never requires the SDK to be installed.
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -195,14 +196,23 @@ _DROPPABLE_PARAMS = ("temperature", "top_p")
 def _drop_rejected_params(exc: Exception, kwargs: dict[str, Any]) -> dict[str, Any] | None:
     """kwargs minus the param(s) a 400 says the model does not support, else None.
 
-    Matches the gateway's "does not support the <param> parameter" message.
+    Matches the gateway's "does not support the <param> parameter" message
+    (Claude) and OpenAI's "Unsupported value: '<param>' does not support 0.0
+    with this model" (GPT reasoning models, e.g. databricks-gpt-6-luna).
     Returns None when the error is not that, or names no param we sent — the
     caller then re-raises the original error.
     """
     message = str(exc).lower()
     if "does not support" not in message:
         return None
-    dropped = {p for p in _DROPPABLE_PARAMS if p in kwargs and f"{p} parameter" in message}
+    # The OpenAI wording quotes the param, and the SDK's str(exc) is a dict
+    # repr that may backslash-escape those quotes (\'temperature\').
+    dropped = {
+        p
+        for p in _DROPPABLE_PARAMS
+        if p in kwargs
+        and (f"{p} parameter" in message or re.search(rf"['\"]{p}\\?['\"]", message))
+    }
     if not dropped:
         return None
     return {k: v for k, v in kwargs.items() if k not in dropped}
