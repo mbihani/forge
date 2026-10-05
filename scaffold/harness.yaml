@@ -1,7 +1,3 @@
-# Pitcrew FINRA summarizer scaffold. Skills compose the summarization system
-# prompt (verbatim from production's _V1_PROMPT, split by concern). In code
-# mode the optimizer rewrites agents/pitcrew_agent.py, which receives this
-# composed prompt as ``self.composed_prompt``.
 sampling:
   temperature: 0.0
   top_p: null
@@ -17,3 +13,5 @@ skills:
 - file: output_schema.md
 rules:
 - file: no_repeat_failed_mutations.md
+levers:
+  model: databricks-claude-haiku-4-5
