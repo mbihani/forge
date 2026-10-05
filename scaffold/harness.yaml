@@ -14,4 +14,4 @@ skills:
 rules:
 - file: no_repeat_failed_mutations.md
 levers:
-  model: databricks-claude-haiku-4-5
+  model: databricks-gpt-5-6-luna
