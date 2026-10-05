@@ -1,0 +1,228 @@
+{
+  "experiment_id": "564904921314257",
+  "fetched_at": "2026-10-05T06:25:31+00:00",
+  "n_traces": 21,
+  "n_traces_with_assessments": 21,
+  "judges": [
+    {
+      "name": "safety",
+      "source": "registered_scorer",
+      "kind": "builtin",
+      "description": "Ensure that the agent's responses do not contain harmful, offensive, or toxic content.",
+      "guidelines": [],
+      "payload": {
+        "name": "safety",
+        "aggregations": null,
+        "description": "Ensure that the agent's responses do not contain harmful, offensive, or toxic content.",
+        "is_session_level_scorer": false,
+        "timeout": 0,
+        "mlflow_version": "3.16.1",
+        "serialization_version": 1,
+        "builtin_scorer_class": "Safety",
+        "builtin_scorer_pydantic_data": {
+          "name": "safety",
+          "aggregations": null,
+          "description": "Ensure that the agent's responses do not contain harmful, offensive, or toxic content.",
+          "timeout": null,
+          "required_columns": [
+            "outputs",
+            "inputs"
+          ],
+          "inference_params": null,
+          "extra_headers": null,
+          "model": null,
+          "instructions": "Ensures responses do not contain harmful, offensive, or toxic content."
+        },
+        "call_source": null,
+        "call_signature": null,
+        "original_func_name": null,
+        "instructions_judge_pydantic_data": null,
+        "memory_augmented_judge_data": null,
+        "third_party_scorer_data": null,
+        "ensemble_scorer_data": null
+      }
+    },
+    {
+      "name": "summary_quality",
+      "source": "registered_scorer",
+      "kind": "guidelines",
+      "description": "Evaluate whether the agent's response follows specific constraints or instructions provided in the guidelines.",
+      "guidelines": [
+        "The summary must accurately reflect the content of the source document without introducing facts, obligations, or regulatory provisions not present in the original.",
+        "Each section summary should capture the key requirements, prohibitions, or obligations described in that section.",
+        "The summary must not omit major sections or subsections that exist in the source document."
+      ],
+      "payload": {
+        "name": "summary_quality",
+        "aggregations": null,
+        "description": "Evaluate whether the agent's response follows specific constraints or instructions provided in the guidelines.",
+        "is_session_level_scorer": false,
+        "timeout": 0,
+        "mlflow_version": "3.16.1",
+        "serialization_version": 1,
+        "builtin_scorer_class": "Guidelines",
+        "builtin_scorer_pydantic_data": {
+          "name": "summary_quality",
+          "aggregations": null,
+          "description": "Evaluate whether the agent's response follows specific constraints or instructions provided in the guidelines.",
+          "timeout": null,
+          "required_columns": [
+            "outputs",
+            "inputs"
+          ],
+          "inference_params": null,
+          "extra_headers": null,
+          "guidelines": [
+            "The summary must accurately reflect the content of the source document without introducing facts, obligations, or regulatory provisions not present in the original.",
+            "Each section summary should capture the key requirements, prohibitions, or obligations described in that section.",
+            "The summary must not omit major sections or subsections that exist in the source document."
+          ],
+          "model": null,
+          "instructions": "Given the following set of guidelines and some inputs, please assess whether the inputs fully comply with all the provided guidelines. Only focus on the provided guidelines and not the correctness, relevance, or effectiveness of the inputs.\n\n<guidelines>\n{{guidelines}}\n</guidelines>\n{{guidelines_context}}"
+        },
+        "call_source": null,
+        "call_signature": null,
+        "original_func_name": null,
+        "instructions_judge_pydantic_data": null,
+        "memory_augmented_judge_data": null,
+        "third_party_scorer_data": null,
+        "ensemble_scorer_data": null
+      }
+    },
+    {
+      "name": "schema_adherence",
+      "source": "registered_scorer",
+      "kind": "guidelines",
+      "description": "Evaluate whether the agent's response follows specific constraints or instructions provided in the guidelines.",
+      "guidelines": [
+        "The output must be a valid JSON array containing objects with exactly these fields: document_title (string), sections (array of objects).",
+        "Each section object must have: id (string), title (string), level (integer), summary (string).",
+        "Section id values for subsections should use the subsection letter from the source document (e.g., 'a', 'b', 'c'). For single-section documents with no subsection letters, the id should consistently use 'root'."
+      ],
+      "payload": {
+        "name": "schema_adherence",
+        "aggregations": null,
+        "description": "Evaluate whether the agent's response follows specific constraints or instructions provided in the guidelines.",
+        "is_session_level_scorer": false,
+        "timeout": 0,
+        "mlflow_version": "3.16.1",
+        "serialization_version": 1,
+        "builtin_scorer_class": "Guidelines",
+        "builtin_scorer_pydantic_data": {
+          "name": "schema_adherence",
+          "aggregations": null,
+          "description": "Evaluate whether the agent's response follows specific constraints or instructions provided in the guidelines.",
+          "timeout": null,
+          "required_columns": [
+            "outputs",
+            "inputs"
+          ],
+          "inference_params": null,
+          "extra_headers": null,
+          "guidelines": [
+            "The output must be a valid JSON array containing objects with exactly these fields: document_title (string), sections (array of objects).",
+            "Each section object must have: id (string), title (string), level (integer), summary (string).",
+            "Section id values for subsections should use the subsection letter from the source document (e.g., 'a', 'b', 'c'). For single-section documents with no subsection letters, the id should consistently use 'root'."
+          ],
+          "model": null,
+          "instructions": "Given the following set of guidelines and some inputs, please assess whether the inputs fully comply with all the provided guidelines. Only focus on the provided guidelines and not the correctness, relevance, or effectiveness of the inputs.\n\n<guidelines>\n{{guidelines}}\n</guidelines>\n{{guidelines_context}}"
+        },
+        "call_source": null,
+        "call_signature": null,
+        "original_func_name": null,
+        "instructions_judge_pydantic_data": null,
+        "memory_augmented_judge_data": null,
+        "third_party_scorer_data": null,
+        "ensemble_scorer_data": null
+      }
+    },
+    {
+      "name": "output_json_valid",
+      "source": "registered_scorer",
+      "kind": "custom_code",
+      "description": "",
+      "guidelines": [],
+      "payload": {
+        "name": "output_json_valid",
+        "aggregations": null,
+        "description": null,
+        "is_session_level_scorer": false,
+        "timeout": null,
+        "mlflow_version": "3.16.1",
+        "serialization_version": 1,
+        "builtin_scorer_class": null,
+        "builtin_scorer_pydantic_data": null,
+        "call_source": "try:\n    # outputs should be a list of section objects\n    if not isinstance(outputs, list):\n        return Feedback(value=False, rationale=f\"Output is not a list, got {type(outputs).__name__}\")\n\n    if len(outputs) == 0:\n        return Feedback(value=False, rationale=\"Output is an empty list\")\n\n    issues = []\n    for i, item in enumerate(outputs):\n        if not isinstance(item, dict):\n            issues.append(f\"Item {i} is not a dict\")\n            continue\n\n        # Check required top-level fields\n        for field in [\"document_title\", \"sections\"]:\n            if field not in item:\n                issues.append(f\"Item {i} missing '{field}'\")\n\n        # Check sections structure\n        sections = item.get(\"sections\", [])\n        if not isinstance(sections, list):\n            issues.append(f\"Item {i}: 'sections' is not a list\")\n        else:\n            for j, sec in enumerate(sections):\n                if not isinstance(sec, dict):\n                    issues.append(f\"Item {i}, section {j}: not a dict\")\n                    continue\n                for sec_field in [\"id\", \"title\", \"level\", \"summary\"]:\n                    if sec_field not in sec:\n                        issues.append(f\"Item {i}, section {j}: missing '{sec_field}'\")\n\n    if issues:\n        return Feedback(value=False, rationale=\"; \".join(issues[:5]))\n\n    return Feedback(value=True, rationale=f\"Valid JSON schema with {len(outputs)} document(s) and {sum(len(d.get('sections', [])) for d in outputs)} total sections\")\nexcept Exception as e:\n    return Feedback(value=False, rationale=f\"Validation error: {str(e)}\")",
+        "call_signature": "(outputs) -> mlflow.entities.assessment.Feedback",
+        "original_func_name": "output_json_valid",
+        "instructions_judge_pydantic_data": null,
+        "memory_augmented_judge_data": null,
+        "third_party_scorer_data": null,
+        "ensemble_scorer_data": null
+      }
+    }
+  ],
+  "assessments": [
+    {
+      "name": "output_json_valid",
+      "source_type": "CODE",
+      "n": 46,
+      "mean": 0.0,
+      "failing_rationales": [
+        "Item 1 missing 'document_title'; Item 1 missing 'sections'"
+      ]
+    },
+    {
+      "name": "safety",
+      "source_type": "LLM_JUDGE",
+      "n": 46,
+      "mean": 1.0,
+      "failing_rationales": []
+    },
+    {
+      "name": "schema_adherence",
+      "source_type": "LLM_JUDGE",
+      "n": 46,
+      "mean": 0.0,
+      "failing_rationales": [
+        "The output is a valid JSON object, but it does not conform to the required structure of a JSON array. The guidelines specify that the output must be a valid JSON array containing objects with specific fields. In this case, the output is a single object rather than an array. Additionally, the section objects contain a 'citations' field, which is not mentioned in the guidelines. Therefore, the outpu",
+        "The first guideline requires the output to be a valid JSON array containing objects with exactly these fields: document_title (string), sections (array of objects). The provided output is a JSON object, not a JSON array, so it does not satisfy this guideline. The second guideline requires each section object to have id (string), title (string), level (integer), and summary (string). The section ob",
+        "The first guideline requires the output to be a valid JSON array containing objects with exactly these fields: document_title (string), sections (array of objects). The provided response is a JSON object, not a JSON array, so it does not satisfy this guideline. The second guideline requires each section object to have id (string), title (string), level (integer), and summary (string). The section ",
+        "The output is a valid JSON object, but it does not conform to the required structure of a JSON array. The guidelines specify that the output must be a valid JSON array containing objects with specific fields. The response provided is a JSON object with fields 'document_title' and 'sections', rather than an array. Therefore, it does not satisfy the first guideline. Additionally, the section IDs for",
+        "The output is a valid JSON object, but it does not conform to the required structure of a JSON array. The guidelines specify that the output must be a JSON array containing objects with specific fields. In this case, the output is a single object instead of an array. Additionally, the section IDs for subsections do not follow the specified format, as they should use the subsection letter from the "
+      ]
+    },
+    {
+      "name": "summary_quality",
+      "source_type": "LLM_JUDGE",
+      "n": 46,
+      "mean": 0.9534883720930233,
+      "failing_rationales": [
+        "The summary provided accurately reflects the content of the source document by stating that members must observe high standards of commercial honor and just and equitable principles of trade. It does not introduce any new facts or obligations not present in the original document, thus complying with the first guideline. The summary captures the key requirement described in the section, which is to"
+      ]
+    }
+  ],
+  "issues": [
+    {
+      "name": "Inconsistent section ID format for single-section documents",
+      "severity": "low",
+      "rationale": "When summarizing regulatory documents that have a single top-level section, the LLM produces inconsistent id values in the output JSON schema. The majority of single-section documents receive id \"root\", but some receive \"main\" or the rule number (e.g., \"2010\"). Multi-section documents consistently use the subsection letter (e.g., \"a\", \"b\"). This inconsistency in the single-section case affects dow",
+      "n": 2
+    },
+    {
+      "name": "Missing LLM span instrumentation in serving-environment traces",
+      "severity": "medium",
+      "rationale": "The serving deployment of the summarize_document agent (uvicorn-based) does not capture the ChatDatabricks LLM call as a child span. The entire trace is recorded as a single root span with no token usage, cost metrics, or LLM-level timing. The batch-job deployment correctly instruments the LLM call as a separate ChatDatabricks child span across all its traces. This gap makes it impossible to monit",
+      "n": 1
+    }
+  ],
+  "io_shape": {
+    "request": [
+      "filename",
+      "pdf_bytes",
+      "prompt_version"
+    ],
+    "response": "list[dict]"
+  },
+  "warnings": []
+}

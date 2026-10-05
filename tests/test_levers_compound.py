@@ -351,3 +351,16 @@ def test_drop_rejected_params() -> None:
     assert _drop_rejected_params(exc, {"temperature": 0, "max_tokens": 5}) == {"max_tokens": 5}
     assert _drop_rejected_params(Exception("rate limited"), {"temperature": 0}) is None
     assert _drop_rejected_params(exc, {"max_tokens": 5}) is None  # nothing we sent
+
+
+def test_drop_rejected_params_openai_unsupported_value() -> None:
+    # GPT reasoning models reject temperature=0 with OpenAI's "Unsupported
+    # value" wording; the live SDK error is a dict repr with escaped quotes.
+    live = Exception(
+        "{'message': 'Unsupported value: \\'temperature\\' does not support 0.0 with this model.'}"
+    )
+    assert _drop_rejected_params(live, {"temperature": 0.0, "max_tokens": 5}) == {"max_tokens": 5}
+    plain = Exception("Unsupported value: 'temperature' does not support 0.0 with this model.")
+    assert _drop_rejected_params(plain, {"temperature": 0.0}) == {}
+    other = Exception("Unsupported value: 'top_k' does not support 0.0 with this model.")
+    assert _drop_rejected_params(other, {"temperature": 0.0}) is None

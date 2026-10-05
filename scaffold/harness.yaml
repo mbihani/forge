@@ -1,34 +1,19 @@
+# Pitcrew FINRA summarizer scaffold. Skills compose the summarization system
+# prompt (verbatim from production's _V1_PROMPT, split by concern). In code
+# mode the optimizer rewrites agents/pitcrew_agent.py, which receives this
+# composed prompt as ``self.composed_prompt``.
 sampling:
-  temperature: 0.3
+  temperature: 0.0
   top_p: null
-  max_tokens: 2048
+  max_tokens: 32000
   tool_choice: auto
-  max_tool_calls: 3
+  max_tool_calls: 0
 skills:
 - file: identity.md
-- file: greeting.md
-- file: classification.md
-- file: escalation.md
-- file: refund.md
+- file: hierarchy.md
+- file: section_summary.md
+- file: citations.md
+- file: exclusions.md
+- file: output_schema.md
 rules:
 - file: no_repeat_failed_mutations.md
-- file: answer_scope_discipline.md
-tools:
-- name: search_knowledge_base
-  description: 'Search the knowledge base by natural-language query.
-
-    Returns the top-k matching documents, each with doc_id, title,
-
-    and a snippet of the body. Use whenever the user asks about the
-
-    platform — features, pricing, API, integrations, rate limits,
-
-    service tiers, data regions, account setup, SLAs, or support
-
-    plans. If the result is "No matching policy documents." the
-
-    question is out of scope for this knowledge base and you should
-
-    say so.
-
-    '

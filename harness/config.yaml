@@ -20,8 +20,10 @@
 #            composing a prompt from scaffold/. When code, set
 #            agent_module below (or accept the default
 #            anvil.agents.baseline).
-mode: prompt
-# agent_module: anvil.agents.baseline
+mode: code
+# pitcrew: the optimizer rewrites this PitcrewAgent subclass
+# (src/anvil/domains/pitcrew/agent_base.py) to cut latency at a quality floor.
+agent_module: agents/pitcrew_agent.py
 
 # LLM model names (FMAPI) routed through the Databricks AI Gateway.
 # All three paths (runtime, optimizer, judge) use the same gateway
@@ -106,7 +108,7 @@ persistence:
 # (/Users/<email>/forge) if you cannot write to /Shared. See
 # docs/onboarding.md §14.
 experiments:
-  root: /Shared/forge
+  root: /Shared/forge-v3
 
 # Loop configuration — how the ANVIL optimizer schedules itself.
 loop:
@@ -126,7 +128,7 @@ loop:
   max_optimizer_turns: 30
   # Max mutations one round may apply together via a `compound` action
   # (gated as one unit). 1 = classic single-mutation rounds. Max 5.
-  max_mutations_per_round: 1
+  max_mutations_per_round: 2
 
 # Runtime levers the optimizer may set with `set_lever` (the choice lives in
 # scaffold/harness.yaml > levers). Only values listed here are accepted.
@@ -136,6 +138,19 @@ loop:
 #   <name> — any other name is opaque to core and read by your engine via
 #            snapshot.config.levers (e.g. an input-format switch).
 # See docs/onboarding.md §13.
+# pitcrew: all four verified live on fevm-stable with a real FINRA PDF and the
+# real decode settings (Claude via the `document` block, GPT via `file`).
+levers:
+  model:
+    allowed:
+      - databricks-claude-sonnet-4-6
+      - databricks-claude-haiku-4-5
+      - databricks-gpt-5-6-luna
+      - databricks-gpt-6-luna
+    description: >-
+      runtime model for the summarize call (a code-mode agent may also pick any of
+      these per PDF via summarize(model=...))
+# Example:
 # levers:
 #   model:
 #     allowed: [databricks-claude-sonnet-4-6, databricks-claude-haiku-4-5]
@@ -164,20 +179,24 @@ eval:
   # judges. Only when the agent has NO judges, list the metrics agreed with
   # the user under user_metrics. The stock demo agent has no prior evals, so
   # its metrics (the scorers below) are recorded here.
+  # Pluggable eval engine: re-runs the pitcrew summarizer over the FINRA corpus
+  # and scores with pitcrew's own judges (src/anvil/domains/pitcrew/).
+  engine: pitcrew
+  # Pitcrew's existing evals (its production MLflow experiment), reviewed into
+  # eval/agent_evals/ by scripts/review_agent_evals.py. Decided with the user
+  # on 2026-10-05: re-use summary_quality + safety only; schema_adherence
+  # (stale guideline: asks for a JSON array, omits citations) and
+  # output_json_valid (fails on production's [summary, metadata] trace shape)
+  # are dropped.
   agent_evals:
-    # experiment_id: "<the agent's own eval experiment>"
-    # judges: []   # subset of the reviewed judges to re-use (empty = all)
-    user_metrics:
-      - name: correctness
-        description: answer matches the golden reference answer
-      - name: retrieval_groundedness
-        description: answer is grounded in the retrieved knowledge-base documents
-      - name: refusal_appropriateness
-        description: out-of-scope questions are refused, in-scope ones answered
+    experiment_id: "564904921314257"
+    judges:
+      - summary_quality
+      - safety
   # Permit the one-time held-out evaluation performed by scripts/finalize.py.
   held_out_test: true
   # Default mode for `evaluate_branch`. One of: quick, standard, full.
-  default_mode: quick
+  default_mode: full
   # Anti-overfit data split. When enabled, the golden set is partitioned
   # into train (reserved for optimizer-visible use; currently not scored),
   # dev (round-by-round eval), and test (held-out finalization only). Split is
@@ -189,10 +208,10 @@ eval:
   #   seed: 42
   # Row count per mode (deterministic sub-set of the golden set).
   modes:
-    quick:    {rows: 8,  buckets: {direct: 2, multi_hop: 2, distractor: 2, out_of_scope: 2}}
-    standard: {rows: 12, buckets: {direct: 4, multi_hop: 4, distractor: 2, out_of_scope: 2}}
-    full:     {rows: 20, buckets: {direct: 6, multi_hop: 6, distractor: 4, out_of_scope: 4}}
-    test:     {rows: 20, buckets: {direct: 6, multi_hop: 6, distractor: 4, out_of_scope: 4}}
+    quick:    {rows: 8,  buckets: {finra: 8}}
+    standard: {rows: 12, buckets: {finra: 12}}
+    full:     {rows: 20, buckets: {finra: 20}}
+    test:     {rows: 20, buckets: {finra: 20}}
   # Parallelism for predict_fn rows. Tune down if TPM saturates.
   n_workers: 4
   # Cooldown seconds between row tasks inside the thread pool when
@@ -282,7 +301,17 @@ gate:
   # Multi-objective optimization (only used when type: frontier). Disabled
   # preserves the single aggregate objective used by older configurations.
   pareto:
-    enabled: false
+    enabled: true
+    # pitcrew: minimize latency while holding quality within 0.03 of best.
+    objectives:
+      - name: quality
+        direction: maximize
+        source: aggregate
+        epsilon: 0.03
+      - name: latency
+        direction: minimize
+        source: latency
+        epsilon: 2000
     # Example:
     # objectives:
     #   - name: quality

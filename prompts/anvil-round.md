@@ -217,11 +217,28 @@ actions above (`add_skill`, `edit_skill`, `add_rule`, etc.) are
 #### `write_agent`
 
 Write or replace a Python agent module in `agents/`. The file must
-implement the `MemorySystem` ABC (see `src/anvil/agents/memory_system.py`).
-The applier validates the code — AST denylist (no references to test,
-eval, solution, golden, answer-key, or ground-truth data) plus an
-isolated import — **before** writing it to disk. Invalid code is
-rejected and nothing is written.
+implement the base class the active engine loads — `MemorySystem`
+(`src/anvil/agents/memory_system.py`) for the built-in genai engine, or
+the domain's agent base for a domain engine. The applier validates the
+code — AST denylist (no references to test, eval, solution, golden,
+answer-key, or ground-truth data) plus an isolated import — **before**
+writing it to disk. Invalid code is rejected and nothing is written.
+
+**pitcrew engine (`eval.engine: pitcrew`):** rewrite the active module
+`agents/pitcrew_agent.py` in place (only that file is evaluated). It must
+define exactly ONE concrete subclass of
+`anvil.domains.pitcrew.agent_base.PitcrewAgent` implementing
+`predict(self, *, pdf_bytes) -> (summary_json_text, meta)`. Call
+`self.summarize(pdf_bytes, model=..., system_prompt=..., max_tokens=...)`
+for each LLM call and return its `meta` (combine several with
+`self.merge_meta(...)`). Your levers: `model` (any of
+`self.allowed_models`; `self.model` is the round's model), `max_tokens`
+(the largest rules need long JSON — truncation breaks parsing and the
+judges fail that PDF), and the system prompt (`self.composed_prompt`,
+which you may trim or restructure). The eval times the whole `predict`
+call, so extra calls cost latency. `predict` runs on several threads at
+once: keep per-PDF state local. The round is scored by pitcrew's own
+judges (see the review in the round prompt), not by any forge rubric.
 
 ```json-action
 {

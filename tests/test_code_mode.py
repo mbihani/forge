@@ -239,19 +239,19 @@ def test_harness_config_defaults_to_prompt() -> None:
     assert cfg.agent_module == "anvil.agents.baseline"
 
 
-def test_real_config_has_mode_prompt() -> None:
-    """The repo's harness/config.yaml must have mode: prompt (backward
-    compatible with all existing rounds)."""
+def test_real_config_has_mode_code() -> None:
+    """This instance runs pitcrew in code mode against agents/pitcrew_agent.py."""
     import yaml
 
     from anvil.runtime.models import RuntimeYAML
 
     config_path = REPO_ROOT / "harness" / "config.yaml"
     raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    assert raw["mode"] == "prompt"
+    assert raw["mode"] == "code"
     cfg = RuntimeYAML.model_validate(raw)
-    assert cfg.mode == "prompt"
-    assert cfg.agent_module == "anvil.agents.baseline"
+    assert cfg.mode == "code"
+    assert cfg.agent_module == "agents/pitcrew_agent.py"
+    assert (REPO_ROOT / cfg.agent_module).is_file()
 
 
 def test_mode_in_runtime_fields() -> None:
