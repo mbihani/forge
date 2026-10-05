@@ -383,3 +383,38 @@ def test_commit_all_commits_when_scaffold_actually_staged(tmp_path: Path) -> Non
     assert sha != head_before
     changed = _git(repo, "diff-tree", "--no-commit-id", "--name-only", "-r", sha)
     assert "scaffold/harness.yaml" in changed
+
+
+def test_run_round_code_validation_rejection_is_a_noop_not_a_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Agent code that fails the AST denylist must be recorded as an
+    ``apply_rejected`` noop. Regression: ``CodeValidationError`` is not an
+    ``ApplyError``, so it escaped run_round and aborted a multi-round run."""
+    from anvil.optimizer.actions import WriteAgentAction
+
+    repo = _init_repo(tmp_path)
+
+    import anvil.loop.round as round_mod
+
+    action = WriteAgentAction(
+        target_file="agents/candidate.py",
+        content='"""See eval/ for the scorer."""\nX = 1\n',
+        rationale="forbidden string literal",
+    )
+    parse_result = ParseResult(action=action, parse_status="ok")
+
+    async def _fake_session(**_kwargs: object):  # noqa: ANN003
+        return (action, "(write_agent)\n", parse_result)
+
+    monkeypatch.setattr(round_mod, "run_optimizer_session", _fake_session)
+
+    report = run_round(
+        round_id=1, repo_root=repo, parent_branch="anvil/exp", max_turns=1, mode="code"
+    )
+
+    assert report.decision is Decision.NOOP
+    assert not (repo / "agents" / "candidate.py").exists()
+    record = json.loads((repo / "eval" / "runs" / "round_001.json").read_text())
+    assert record["parse_status"] == "apply_rejected"
+    assert "forbidden reference" in record["notes"]
