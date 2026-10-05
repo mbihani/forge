@@ -280,3 +280,26 @@ def test_shipped_config_is_the_pitcrew_instance() -> None:
     )
     assert cfg.eval.agent_evals.judges == ["summary_quality", "safety"]
     assert cfg.experiments.eval == "/Shared/forge-v3/pitcrew/eval"
+
+
+@pytest.mark.parametrize(
+    "generic", ["data/golden_set.jsonl", str(REPO_ROOT / "data" / "golden_set.jsonl")]
+)
+def test_generic_golden_set_path_resolves_to_pitcrews_own(generic, tmp_path: Path) -> None:
+    """make_baseline passes the generic path relative, run_round passes it absolute."""
+    seen: list[bytes] = []
+
+    def predict_fn(pdf_bytes: bytes) -> str:
+        seen.append(pdf_bytes)
+        return json.dumps(_GOOD)
+
+    report = evaluate_pitcrew(
+        scaffold_root=REPO_ROOT / "scaffold",
+        runtime_config_path=_config(tmp_path),
+        golden_set_path=generic,
+        mode="quick",
+        predict_fn=predict_fn,
+        agent_judges=_judges(),
+    )
+    assert report.n_rows == 8
+    assert all(b.startswith(b"%PDF") for b in seen)

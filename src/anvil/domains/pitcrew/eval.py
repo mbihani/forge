@@ -212,8 +212,11 @@ def evaluate_pitcrew(
         raise ValueError(f"mode {selected_mode!r} not in eval.modes ({list(cfg.eval.modes)})")
     mode_cfg = cfg.eval.modes[selected_mode]
 
+    # The loop passes the generic golden set (relative from make_baseline,
+    # absolute ``<repo>/data/golden_set.jsonl`` from run_round); either way it
+    # means "this domain's golden set". Any other path is an explicit override.
     gs = Path(golden_set_path)
-    if str(golden_set_path) == _GENERIC_GOLDEN_SET:
+    if gs.name == Path(_GENERIC_GOLDEN_SET).name:
         gs = repo_root / GOLDEN_SET_REL
     examples = load_pitcrew_golden_set(gs)
     selected = (
