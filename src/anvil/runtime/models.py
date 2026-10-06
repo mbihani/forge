@@ -81,6 +81,16 @@ class LoopConfig(BaseModel):
     # ``compound`` action. 1 (the default) keeps the classic
     # one-mutation-per-round loop and rejects compound actions.
     max_mutations_per_round: int = Field(default=1, ge=1, le=5)
+    # Rows evaluated FIRST on a mutated branch before the full eval. When
+    # every canary row fails with an error (a rejected parameter, a crash),
+    # the round is reverted with that error and the full eval is skipped.
+    # Needs an engine that reports row errors (``failures[].error``) and
+    # accepts ``max_rows``. 0 = off.
+    canary_rows: int = Field(default=0, ge=0, le=20)
+    # Stop the run after this many consecutive deliberate optimizer noops
+    # (parsed, not a parse/apply failure): the optimizer is saying there is
+    # nothing left to try. 0 = off.
+    stop_after_consecutive_noops: int = Field(default=3, ge=0)
 
 
 class LeverSpec(BaseModel):
@@ -424,9 +434,7 @@ class ScorerConfig(BaseModel):
 # ``LLM_JUDGE``/``AI_JUDGE`` are re-runnable rubric judges. ``CODE`` is
 # accepted so a config may opt into deterministic code assessments, but
 # it is not in the default include set.
-_KNOWN_ASSESSMENT_SOURCE_TYPES = frozenset(
-    {"HUMAN", "LLM_JUDGE", "AI_JUDGE", "CODE"}
-)
+_KNOWN_ASSESSMENT_SOURCE_TYPES = frozenset({"HUMAN", "LLM_JUDGE", "AI_JUDGE", "CODE"})
 
 
 class TraceEvalConfig(BaseModel):
@@ -545,6 +553,22 @@ class AgentEvalsConfig(BaseModel):
     guideline_overrides: dict[str, GuidelineOverride] = Field(default_factory=dict)
 
 
+class CallPolicyConfig(BaseModel):
+    """Limits on the model calls an agent may make per eval row.
+
+    Enforced by :data:`anvil.runtime.call_ledger.LEDGER` in engines that arm
+    it (see docs/onboarding.md §15). ``max_sends_per_document`` caps how many
+    times one document (the exact bytes sent) may go to a model per row —
+    ``1`` forbids racing and fallback re-runs while still allowing
+    complementary calls on different documents. ``None`` = no limit (calls
+    are still recorded and priced).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_sends_per_document: int | None = Field(default=None, ge=1)
+
+
 class EvalConfig(BaseModel):
     """Eval-side configuration."""
 
@@ -573,6 +597,12 @@ class EvalConfig(BaseModel):
     modes: dict[str, EvalModeConfig] = Field(default_factory=dict)
     n_workers: int = 4
     inter_row_cooldown_s: float = 0.0
+    call_policy: CallPolicyConfig = Field(default_factory=CallPolicyConfig)
+    # Re-runs of a row that failed for transport reasons only (timeout, 5xx,
+    # 429, connection reset — never a rejected parameter or a duplicate
+    # send). Every attempt's calls are priced; a row still failing counts as
+    # failed. In engines that implement it.
+    infra_retries: int = Field(default=1, ge=0, le=2)
     # Config for the ``trace`` eval engine (``engine: trace``). Ignored by
     # the genai and savesage engines. Optional so existing configs that
     # never set it validate unchanged.

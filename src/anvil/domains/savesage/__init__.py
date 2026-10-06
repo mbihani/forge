@@ -18,14 +18,16 @@ the extractor call ``ensure_importable()`` only at run time, so
 registration is safe even where the statement-agent checkout is absent.
 """
 
-from anvil.eval.engines import register_engine
+from anvil.eval.engines import register_engine, register_lever_probe
 
 
 def _register() -> None:
-    """Register the savesage eval engine (lazy import keeps this cheap)."""
+    """Register the savesage eval engine + lever probe (lazy imports keep this cheap)."""
     from anvil.domains.savesage.eval import evaluate_savesage
+    from anvil.domains.savesage.probe import probe_savesage
 
     register_engine("savesage", evaluate_savesage)
+    register_lever_probe("savesage", probe_savesage)
 
 
 _register()

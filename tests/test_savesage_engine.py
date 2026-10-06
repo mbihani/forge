@@ -281,7 +281,7 @@ def test_ledger_refuses_a_second_send_of_the_same_document() -> None:
     from anvil.domains.savesage.extractor import CallLedger, DuplicateCallError
 
     ledger = CallLedger()
-    ledger.begin("s")
+    ledger.begin("s", max_sends_per_document=1)
     with ledger.call("s", b"PDF", {"model": GLM}):
         pass
     with pytest.raises(DuplicateCallError), ledger.call("s", b"PDF", {"model": LUNA}):
@@ -345,6 +345,7 @@ def test_engine_prices_every_call_and_fails_duplicates(
     )
     raw = yaml.safe_load(cfg.read_text())
     raw["agent_module"] = str(racer)
+    raw["eval"]["call_policy"] = {"max_sends_per_document": 1}
     cfg.write_text(yaml.safe_dump(raw))
     report = evaluate_savesage(
         scaffold_root=tmp_path / "scaffold",
@@ -355,6 +356,114 @@ def test_engine_prices_every_call_and_fails_duplicates(
     # The second (duplicate) send was refused, so each row failed — but the
     # first call was still made and is priced.
     assert report.n_rows == 4
-    assert sum("already sent once" in r.getMessage() for r in caplog.records) == 4
+    assert sum("already sent" in r.getMessage() for r in caplog.records) == 4
     # Luna: 1000 in @ ~$0.2/M + 500 out @ ~$1.2/M = ~$0.0008 per row (one call).
     assert report.cost_metrics["cost_usd_per_row"] == pytest.approx(0.0008, rel=1e-2)
+
+
+def test_ledger_without_a_policy_records_but_allows_repeats() -> None:
+    from anvil.runtime.call_ledger import CallLedger
+
+    ledger = CallLedger()
+    ledger.begin("s")
+    for _ in range(2):
+        with ledger.call("s", b"PDF", {"model": LUNA}):
+            pass
+    assert len(ledger.end("s")) == 2
+
+
+def test_ledger_records_a_failed_calls_error() -> None:
+    from anvil.runtime.call_ledger import CallLedger
+
+    ledger = CallLedger()
+    ledger.begin("s")
+    with pytest.raises(TimeoutError), ledger.call("s", b"PDF", {"model": LUNA}):
+        raise TimeoutError("The read operation timed out")
+    (call,) = ledger.end("s")
+    assert call["error"] == "TimeoutError: The read operation timed out"
+
+
+@pytest.mark.parametrize(
+    ("error", "infra"),
+    [
+        ("ExtractionError: ... after 2 attempts: TimeoutError: The read operation timed out", True),
+        ("ExtractionError: ... HTTP 503: upstream unavailable", True),
+        ("ExtractionError: ... HTTP 429: rate limited", True),
+        ("ExtractionError: ... HTTP 400: 'reasoning_effort' does not support 'minimal'", False),
+        ("DuplicateCallError: row s: this document was already sent 1 time(s)", False),
+        (None, False),
+    ],
+)
+def test_is_infra_error(error, infra) -> None:
+    from anvil.runtime.call_ledger import is_infra_error
+
+    assert is_infra_error(error) is infra
+
+
+def _engine_with_agent(tmp_path: Path, agent_src: str, **eval_overrides) -> Path:
+    _golden(tmp_path)
+    cfg = _config(tmp_path)
+    (tmp_path / "agents" / "savesage_agent.py").write_text(agent_src)
+    raw = yaml.safe_load(cfg.read_text())
+    raw["eval"].update(eval_overrides)
+    cfg.write_text(yaml.safe_dump(raw))
+    return cfg
+
+
+_FLAKY_AGENT = """\
+from anvil.domains.savesage.agent_base import SavesageAgent
+
+SEEN = {}
+
+
+class Flaky(SavesageAgent):
+    def predict(self, *, sid, pdf_path):
+        SEEN[sid] = SEEN.get(sid, 0) + 1
+        if SEEN[sid] == 1:
+            raise RuntimeError("extraction failed after 2 attempts: TimeoutError: timed out")
+        return self.extract(sid=sid, pdf_path=pdf_path)
+"""
+
+
+@needs_statement_agent
+def test_engine_reruns_a_row_that_failed_on_transport(tmp_path: Path, fake_extractor) -> None:  # noqa: ARG001
+    from anvil.domains.savesage.eval import evaluate_savesage
+
+    cfg = _engine_with_agent(tmp_path, _FLAKY_AGENT, call_policy={"max_sends_per_document": 1})
+    report = evaluate_savesage(
+        scaffold_root=tmp_path / "scaffold",
+        runtime_config_path=cfg,
+        golden_set_path="data/golden_set.jsonl",
+        mode="quick",
+    )
+    cm = report.cost_metrics
+    assert cm["n_infra_retries"] == 4.0 and cm["n_infra_failed"] == 0.0
+    assert cm["n_row_errors"] == 0.0  # every row succeeded on its re-run
+    assert cm["cost_usd_per_row"] == pytest.approx(0.0008, rel=1e-2)  # one priced call per row
+
+
+_REJECTED_AGENT = """\
+from anvil.domains.savesage.agent_base import SavesageAgent
+
+
+class Rejected(SavesageAgent):
+    def predict(self, *, sid, pdf_path):
+        raise RuntimeError("HTTP 400: 'reasoning_effort' does not support 'minimal'")
+"""
+
+
+@needs_statement_agent
+def test_agent_errors_are_not_retried_and_are_counted(tmp_path: Path) -> None:
+    from anvil.domains.savesage.eval import evaluate_savesage
+
+    cfg = _engine_with_agent(tmp_path, _REJECTED_AGENT)
+    report = evaluate_savesage(
+        scaffold_root=tmp_path / "scaffold",
+        runtime_config_path=cfg,
+        golden_set_path="data/golden_set.jsonl",
+        mode="quick",
+        max_rows=2,
+    )
+    cm = report.cost_metrics
+    assert report.n_rows == 2  # max_rows: the canary subset
+    assert cm["n_row_errors"] == 2.0 and cm["n_infra_retries"] == 0.0

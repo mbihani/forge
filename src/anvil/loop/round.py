@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 
 from anvil.catalog import load_catalog, model_prices
 from anvil.eval import evaluate_branch, load_baseline
+from anvil.eval.label_disputes import append_label_disputes
 from anvil.loop.builder import build_round_prompt
 from anvil.loop.decision import Decision, apply_optimizer_error
 from anvil.loop.frontier import (
@@ -37,10 +38,12 @@ from anvil.loop.frontier import (
 )
 from anvil.loop.git_ops import (
     commit_all,
+    commit_paths,
     create_round_branch,
     current_branch,
     current_sha,
     delete_branch,
+    diff_patch,
     ff_merge,
 )
 from anvil.loop.mutations_log import MutationRecord, append_mutation
@@ -56,8 +59,15 @@ from anvil.optimizer.applier import ApplyError
 from anvil.optimizer.code_validation import CodeValidationError
 from anvil.optimizer.omnigent_backend import OmnigentBackend
 from anvil.optimizer.omnigent_client import resolve_omnigent_server_url
+from anvil.runtime.call_ledger import is_infra_error
 from anvil.runtime.loader import default_runtime_config_path
-from anvil.runtime.models import LeverSpec, LoopConfig, ModelCatalogConfig, resolve_levers
+from anvil.runtime.models import (
+    CallPolicyConfig,
+    LeverSpec,
+    LoopConfig,
+    ModelCatalogConfig,
+    resolve_levers,
+)
 
 
 @dataclass
@@ -148,6 +158,8 @@ def run_round(
         lever_specs=lever_specs,
         lever_values=_effective_levers(scaffold_root),
         model_prices=_model_prices_for_prompt(scaffold_root, lever_specs),
+        engine=_read_eval_engine(scaffold_root),
+        call_policy=_read_call_policy(scaffold_root),
     )
 
     # Optimizer-side MLflow tracing does NOT wrap the async SDK session
@@ -207,6 +219,9 @@ def run_round(
     # as a noop with the reason, instead of crashing the whole multi-round
     # run. Compound actions restore scaffold/ + agents/ on
     # failure, so nothing half-applied is left behind.
+    # Disputed golden labels ride on any action (read before an applier
+    # rejection replaces the action with a noop).
+    label_disputes = list(getattr(action, "label_disputes", None) or [])
     apply_error: str | None = None
     try:
         apply_result = apply_action(action, scaffold_root, mode=mode, repo_root=repo_root)
@@ -218,6 +233,13 @@ def run_round(
     # Lever values THIS round's eval runs with (e.g. which model). Captured
     # now, before a revert can check out the parent, for the round JSON.
     round_levers = _effective_levers(scaffold_root)
+    new_disputes = 0
+    try:
+        new_disputes = append_label_disputes(repo_root, round_id, label_disputes)
+    except Exception as exc:  # noqa: BLE001 - bookkeeping must never fail a round
+        print(f"[round {round_id}] warning: recording label disputes failed: {exc}")
+    if new_disputes:
+        print(f"[round {round_id}] {new_disputes} new disputed label(s) recorded")
 
     # 4. Commit the mutation — but only when the applier actually wrote
     # something. A parse-failure noop (parse_status=no_block) collapses
@@ -249,25 +271,40 @@ def run_round(
     eval_run_id: str | None = None
     eval_failed = False
     eval_report = None
+    canary_note: str | None = None
     if isinstance(action, NoopAction):
         # No need to evaluate for a noop; the score is the parent's.
         if baseline:
             mutated_score = float(baseline.aggregate)
     else:
-        try:
-            eval_report = evaluate_branch(
+        # 6a. Canary: the first rows alone. If every one fails with an error
+        # (a rejected parameter, a crash in the new code), revert now with
+        # that error instead of spending the full eval on it.
+        if loop_cfg.canary_rows:
+            canary_note = _run_canary(
                 scaffold_root=scaffold_root,
+                repo_root=repo_root,
                 profile=profile,
-                golden_set_path=str(Path(repo_root) / "data" / "golden_set.jsonl"),
-                mode=eval_mode,
+                eval_mode=eval_mode,
+                n_rows=loop_cfg.canary_rows,
             )
-            mutated_score = eval_report.aggregate
-            eval_run_id = eval_report.run_id
-        except Exception as exc:  # noqa: BLE001 — surface any eval failure
-            eval_failed = True
-            mutated_score = None
-            notes = f"eval failed: {exc.__class__.__name__}: {exc}"
-            print(f"[round {round_id}] eval failure: {notes}")
+            if canary_note:
+                print(f"[round {round_id}] {canary_note}")
+        if canary_note is None:
+            try:
+                eval_report = evaluate_branch(
+                    scaffold_root=scaffold_root,
+                    profile=profile,
+                    golden_set_path=str(Path(repo_root) / "data" / "golden_set.jsonl"),
+                    mode=eval_mode,
+                )
+                mutated_score = eval_report.aggregate
+                eval_run_id = eval_report.run_id
+            except Exception as exc:  # noqa: BLE001 — surface any eval failure
+                eval_failed = True
+                mutated_score = None
+                notes = f"eval failed: {exc.__class__.__name__}: {exc}"
+                print(f"[round {round_id}] eval failure: {notes}")
 
     # 7. Compute score delta + decision.
     #
@@ -321,18 +358,27 @@ def run_round(
     mutated_scores = (
         scores_from_eval(eval_report, configured_objectives) if eval_report is not None else None
     )
-    decision, frontier = gate_decision(
-        repo_root=repo_root,
-        gate_type=gate_cfg.type,
-        epsilon=gate_cfg.epsilon,
-        pareto=gate_cfg.pareto,
-        baseline_scores=baseline_scores,
-        baseline_aggregate=baseline_aggregate,
-        mutated_scores=mutated_scores,
-        mutated_aggregate=mutated_score,
-        action_kind=action.action,
-        eval_failed=eval_failed,
-        parse_status=parse_result.parse_status,
+    canary_decision = (
+        Decision.INFRA_FAIL
+        if canary_note and "transport errors" in canary_note
+        else Decision.REVERT
+    )
+    decision, frontier = (
+        (canary_decision, None)
+        if canary_note
+        else gate_decision(
+            repo_root=repo_root,
+            gate_type=gate_cfg.type,
+            epsilon=gate_cfg.epsilon,
+            pareto=gate_cfg.pareto,
+            baseline_scores=baseline_scores,
+            baseline_aggregate=baseline_aggregate,
+            mutated_scores=mutated_scores,
+            mutated_aggregate=mutated_score,
+            action_kind=action.action,
+            eval_failed=eval_failed,
+            parse_status=parse_result.parse_status,
+        )
     )
 
     # 7b. A swallowed optimizer-backend failure must NOT be reported as a
@@ -440,7 +486,11 @@ def run_round(
                 notes=(
                     f"optimizer backend failed: {optimizer_error}"
                     if optimizer_error
-                    else (f"applier rejected action: {apply_error}" if apply_error else "")
+                    else (
+                        f"applier rejected action: {apply_error}"
+                        if apply_error
+                        else (canary_note or "")
+                    )
                 ),
                 levers=round_levers,
                 frontier_best=frontier.best if frontier else None,
@@ -492,6 +542,18 @@ def run_round(
     except Exception as exc:  # noqa: BLE001 — defensive, don't break the round
         print(f"[round {round_id}] warning: artifacts commit failed: {exc}")
 
+    # 10c. Save the round's code change as a patch BEFORE a revert deletes
+    # the branch, so reverted proposals stay inspectable (and re-appliable).
+    patch_path = repo_root / "eval" / "runs" / f"round_{round_id:03d}.patch"
+    try:
+        patch = diff_patch(repo_root, parent_sha, commit_sha) if applied_change else ""
+        if patch:
+            patch_path.write_text(patch, encoding="utf-8")
+            if artifact_sink is not None:
+                artifact_sink.log_patch(round_id=round_id, patch=patch)
+    except Exception as exc:  # noqa: BLE001 — best-effort; never fail the round
+        print(f"[round {round_id}] warning: saving the round patch failed: {exc}")
+
     # 11. Apply git verdict.
     if decision == Decision.KEEP:
         ff_merge(repo_root, branch=branch, target=parent_branch)
@@ -500,6 +562,24 @@ def run_round(
     else:
         # NOOP: keep the (empty) branch around? Cheaper to delete.
         delete_branch(repo_root, branch=branch, target=parent_branch)
+
+    # 12. Record the round on the parent branch — kept AND reverted rounds —
+    # so history holds every round's JSON / patch / frontier / mutation log
+    # and the tree is clean for the next round (no --allow-dirty to resume).
+    try:
+        commit_paths(
+            repo_root,
+            [
+                f"eval/runs/round_{round_id:03d}.json",
+                f"eval/runs/round_{round_id:03d}.patch",
+                "eval/runs/frontier.json",
+                "eval/mutations.jsonl",
+                "eval/label_disputes.jsonl",
+            ],
+            message=f"round {round_id:03d}: record ({decision.value})",
+        )
+    except Exception as exc:  # noqa: BLE001 — best-effort; never fail the round
+        print(f"[round {round_id}] warning: recording the round on {parent_branch} failed: {exc}")
 
     # We don't hard-restore the starting branch — caller's session is now on
     # parent_branch, which is correct: that's where the kept mutation
@@ -582,6 +662,64 @@ def _read_loop_config(scaffold_root: Path | str) -> LoopConfig:
         return LoopConfig.model_validate(raw.get("loop") or {})
     except Exception:  # noqa: BLE001 - fall back to the classic defaults
         return LoopConfig()
+
+
+def _read_eval_section(scaffold_root: Path | str) -> dict[str, Any]:
+    try:
+        raw = (
+            yaml.safe_load(default_runtime_config_path(scaffold_root).read_text(encoding="utf-8"))
+            or {}
+        )
+        return raw.get("eval") or {}
+    except Exception:  # noqa: BLE001 - absent/invalid config: defaults
+        return {}
+
+
+def _read_eval_engine(scaffold_root: Path | str) -> str:
+    return str(_read_eval_section(scaffold_root).get("engine") or "genai")
+
+
+def _read_call_policy(scaffold_root: Path | str) -> CallPolicyConfig:
+    try:
+        return CallPolicyConfig.model_validate(
+            _read_eval_section(scaffold_root).get("call_policy") or {}
+        )
+    except Exception:  # noqa: BLE001 - invalid section: no policy
+        return CallPolicyConfig()
+
+
+def _run_canary(
+    *,
+    scaffold_root: Path,
+    repo_root: Path,
+    profile: str,
+    eval_mode: str | None,
+    n_rows: int,
+) -> str | None:
+    """Evaluate the first ``n_rows``; a note when EVERY one failed with an error.
+
+    Returns ``None`` (go on to the full eval) when any row produced a result,
+    when the engine reports no row errors, or when the canary itself raised.
+    """
+    try:
+        report = evaluate_branch(
+            scaffold_root=scaffold_root,
+            profile=profile,
+            golden_set_path=str(Path(repo_root) / "data" / "golden_set.jsonl"),
+            mode=eval_mode,
+            max_rows=n_rows,
+        )
+    except Exception as exc:  # noqa: BLE001 - let the full eval surface it
+        print(f"canary raised {exc.__class__.__name__}: {exc}; running the full eval")
+        return None
+    errors = [f["error"] for f in (report.failures or []) if f.get("error")]
+    n = int(report.n_rows or 0)
+    if n == 0 or len(errors) < n:
+        return None
+    if all(is_infra_error(e) for e in errors):
+        # An outage, not the mutation: the round is an infra failure.
+        return f"canary: all {n} rows failed on transport errors — {errors[0][:400]}"
+    return f"canary: all {n} rows failed — {errors[0][:400]}"
 
 
 def _read_lever_specs_for_prompt(scaffold_root: Path | str) -> dict[str, LeverSpec]:

@@ -47,3 +47,8 @@ eval/scratch/
 mlflow.db
 databricks.yml
 deploy/.databricks/
+
+# Dashboard copies of eval/runs/{round_*,frontier}.json (the record of truth,
+# committed per round on the parent branch).
+data/round_*.json
+data/frontier.json

@@ -765,6 +765,92 @@ eval:
 Custom-code scorers only load under a Databricks tracking URI (an MLflow
 security rule); `review_agent_evals.py` and the eval path set one.
 
+## 17. Trustworthy rounds: call policy, canary, verified settings, disputed labels, run control
+
+Lessons from the savesage runs, built into the loop. Each is config plus a few
+lines in your engine.
+
+```yaml
+# harness/config.yaml
+loop:
+  canary_rows: 3                   # 0 = off
+  stop_after_consecutive_noops: 3  # 0 = off
+eval:
+  call_policy:
+    max_sends_per_document: 1      # null = no limit (calls still priced)
+  infra_retries: 1                 # re-runs for transport failures only
+```
+
+**Call ledger (`anvil.runtime.call_ledger.LEDGER`).** Arm it around each
+row's agent call — `LEDGER.begin(row_id, max_sends_per_document=...)`, then
+`calls = LEDGER.end(row_id)` — and route every model call through
+`with LEDGER.call(row_id, document_bytes, {"model": ...}) as record:
+record.update(input_tokens=..., output_tokens=...)`. Inside a call helper the
+agent cannot bypass, this gives you:
+
+- **The policy:** a second send of the same document raises
+  `DuplicateCallError`, which blocks racing and fallback re-runs. Complementary
+  calls on different documents stay allowed.
+- **Honest cost:** `end()` waits for calls still in flight. Price them with
+  `price_calls(calls, prices)`.
+- **Errors:** each failed call's error is recorded on its entry.
+
+The round prompt states the rules whenever `call_policy` sets a limit.
+
+**Row errors and infra retries.** Put a failed row's error in
+`failures[].error`, and count `n_row_errors` in `cost_metrics`. The optimizer
+reads the error, so a rejected parameter is not mistaken for a worse agent.
+`is_infra_error(error)` separates transport failures (timeouts, 5xx, 429,
+resets) from the agent's own. Re-run only those, up to `infra_retries` times.
+Price every attempt, report `n_infra_retries` / `n_infra_failed`, and keep a
+row that still fails as failed. Excluding it would reward an agent that times
+out.
+
+**Canary.** When `loop.canary_rows` > 0, the round first evaluates the
+mutated branch on that many rows: `evaluate_branch(..., max_rows=N)`, which
+your engine should honour by truncating its subset. If every canary row
+carries `failures[].error`, the round is reverted with that error and the
+full eval is skipped.
+
+**Verified settings (`scripts/probe_levers.py`).** Register a probe with
+`register_lever_probe("<engine>", fn)`. It makes one tiny real call per model
+× setting combination and returns `ProbeResult`s. The script writes
+`eval/lever_probe.json`; commit it with the baseline.
+- The round prompt lists the accepted and rejected combinations, so the
+  optimizer never builds on a value the endpoint rejects.
+- Your agent base can call `setting_rejection(probe, model, **settings)` to
+  refuse a rejected combination before calling the endpoint.
+
+Re-run the probe when the model allowlist changes.
+
+**Engine notes.** `src/anvil/domains/<engine>/round_notes.md` is appended to
+every round prompt. Put your `write_agent` contract there: base class, call
+helper, knobs. Then an instance never has to edit `prompts/anvil-round.md`.
+
+**Disputed labels.** Any action may carry
+`label_disputes: [{example_id, field, reason}]`.
+- **Recorded once:** rounds append them to `eval/label_disputes.jsonl`, one
+  record per example + field.
+- **Shown to later rounds** as already reported, so they are not re-analyzed
+  or gamed.
+- **For the user:** `scripts/label_disputes.py` prints the report. Fix the
+  golden set, then regenerate the baseline. Records hold ids and reasons, never
+  label values.
+
+**Run control and records.**
+- **Clean stop:** `touch eval/STOP` stops a run cleanly after the current
+  round (the file is removed).
+- **Early stop:** `loop.stop_after_consecutive_noops` ends a run once the
+  optimizer keeps choosing noop. Parse failures don't count.
+- **Kept on the parent:** every round, kept or reverted, is committed on the
+  parent branch. That covers `eval/runs/round_NNN.json`, the code change as
+  `round_NNN.patch` (also an MLflow artifact), the frontier, the mutation log
+  and the disputes. Resuming needs no `--allow-dirty`, and reverted proposals
+  stay inspectable.
+- **One table:** `scripts/round_summary.py` prints a table of every round's
+  change, decision, aggregate, median/p90 latency, cost and levers. The MLflow
+  improvement summary carries the same columns.
+
 ## See also
 
 - `CLAUDE.md` — the invariants (plane separation, immutable `harness/config.yaml`).

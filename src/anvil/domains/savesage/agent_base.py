@@ -31,7 +31,7 @@ cache DISABLED — a cache hit returns in ~0 ms and would fabricate the
 latency signal the code-mode gate optimizes, so every code-mode call is a
 live, cold extraction.
 
-Import is light on purpose (only ``abc`` + ``typing``): the extractor —
+Import is light on purpose (stdlib + the stdlib-only lever-probe reader): the extractor —
 and through it the statement-agent tree — is imported lazily inside
 :meth:`extract`. This keeps a subclass module import-safe under the
 optimizer's isolated-import validation (``code_validation``).
@@ -42,6 +42,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
+
+from anvil.eval.lever_probe import setting_rejection
 
 # The production defaults the extraction payload ships with today. A
 # subclass that calls extract() with these reproduces current behavior.
@@ -79,12 +81,16 @@ class SavesageAgent(ABC):
         model: str = DEFAULT_MODEL,
         input_mode: str = DEFAULT_INPUT_MODE,
         allowed_models: list[str] | None = None,
+        lever_probe: dict[str, Any] | None = None,
     ) -> None:
         self._composed_prompt = composed_prompt
         self._luna_profile = luna_profile
         self.model = model
         self.input_mode = input_mode
         self.allowed_models = list(allowed_models or [model])
+        # eval/lever_probe.json (scripts/probe_levers.py), when recorded: a
+        # combination it saw rejected is refused here, before any API call.
+        self._lever_probe = lever_probe
         # Extractors cached by (model, input_mode, reasoning_effort, max_tokens)
         # so an adaptive agent builds one per distinct combo and reuses it.
         self._extractors: dict[tuple[str, str, str | None, int], Any] = {}
@@ -115,7 +121,15 @@ class SavesageAgent(ABC):
         input_mode = input_mode or self.input_mode
         if model not in self.allowed_models:
             raise ValueError(f"model {model!r} not in allowed_models {self.allowed_models}")
-        if input_mode == "pdf" and model not in NATIVE_PDF_MODELS:
+        rejection = setting_rejection(
+            self._lever_probe, model, input_mode=input_mode, reasoning_effort=reasoning_effort
+        ) or setting_rejection(self._lever_probe, model, input_mode=input_mode)
+        if rejection:
+            raise ValueError(
+                f"{model} rejects input_mode={input_mode!r}, reasoning_effort="
+                f"{reasoning_effort!r} (eval/lever_probe.json): {rejection}"
+            )
+        if self._lever_probe is None and input_mode == "pdf" and model not in NATIVE_PDF_MODELS:
             raise ValueError(f"model {model!r} cannot read native PDFs; use input_mode='text'")
         key = (model, input_mode, reasoning_effort, int(max_tokens))
         extractor = self._extractors.get(key)

@@ -24,7 +24,9 @@ import statistics
 from pathlib import Path
 from typing import Any
 
-from anvil.runtime.models import MODEL_LEVER, LeverSpec, ParetoObjective
+from anvil.eval.label_disputes import load_label_disputes, render_disputes_md
+from anvil.eval.lever_probe import load_lever_probe, render_probe_md
+from anvil.runtime.models import MODEL_LEVER, CallPolicyConfig, LeverSpec, ParetoObjective
 
 _PROMPT_TEMPLATE = """\
 # Round {round_id}
@@ -51,7 +53,7 @@ The most-failed examples in the parent run (read the full list in
 ## Runtime levers
 
 {levers_block}
-
+{extra_sections}
 ## What the agent's existing evals say
 
 {agent_evals_block}
@@ -90,6 +92,8 @@ def build_round_prompt(
     lever_specs: dict[str, LeverSpec] | None = None,
     lever_values: dict[str, Any] | None = None,
     model_prices: dict[str, dict[str, float]] | None = None,
+    engine: str | None = None,
+    call_policy: CallPolicyConfig | None = None,
 ) -> str:
     repo_root = Path(repo_root)
 
@@ -123,6 +127,16 @@ def build_round_prompt(
     objectives_block = _format_objectives(repo_root, baseline, objectives)
     levers_block = _format_levers(repo_root, lever_specs or {}, lever_values or {}, model_prices)
     agent_evals_block = _format_agent_evals(repo_root)
+    extra_sections = "".join(
+        f"\n{block.rstrip()}\n"
+        for block in (
+            render_probe_md(load_lever_probe(repo_root)),
+            _format_call_policy(call_policy),
+            _format_domain_notes(engine),
+            render_disputes_md(load_label_disputes(repo_root)),
+        )
+        if block
+    )
 
     if max_mutations <= 1:
         mutation_budget = "ONE structural mutation"
@@ -146,6 +160,7 @@ def build_round_prompt(
         pick_instruction=pick_instruction,
         max_turns=max_turns,
         levers_block=levers_block,
+        extra_sections=extra_sections,
         agent_evals_block=agent_evals_block,
         round_id=round_id,
         baseline_aggregate=baseline_aggregate,
@@ -163,6 +178,38 @@ def build_round_prompt(
 
 
 _AGENT_EVALS_PROMPT_CHARS = 4000
+
+
+def _format_call_policy(policy: CallPolicyConfig | None) -> str:
+    """The enforced call rules (``eval.call_policy``), when any are set."""
+    if policy is None or policy.max_sends_per_document is None:
+        return ""
+    n = policy.max_sends_per_document
+    times = "once" if n == 1 else f"at most {n} times"
+    return (
+        "## Call rules (enforced by the eval)\n\n"
+        f"Each document — the whole input, or a part you split out of it — may be sent "
+        f"to a model {times} per row, whatever the model or input mode. One more send "
+        "raises `DuplicateCallError` and the row fails. So: no racing the same call, no "
+        "fallback re-runs on another model / mode / setting, no retry after a failed "
+        "call. Complementary calls on *different* documents are allowed. Every call "
+        "made is priced — including ones still running when the agent returns. Do not "
+        "call serving endpoints any other way than through the domain's call helper.\n"
+    )
+
+
+def _format_domain_notes(engine: str | None) -> str:
+    """The engine's own round notes (``anvil/domains/<engine>/round_notes.md``)."""
+    if not engine:
+        return ""
+    from anvil.eval.engines import is_valid_engine_name  # noqa: PLC0415
+
+    if not is_valid_engine_name(engine):
+        return ""
+    path = Path(__file__).resolve().parents[1] / "domains" / engine / "round_notes.md"
+    if not path.is_file():
+        return ""
+    return path.read_text(encoding="utf-8").strip() + "\n"
 
 
 def _format_agent_evals(repo_root: Path) -> str:

@@ -172,6 +172,31 @@ def commit_all(repo_root: Path | str, *, message: str) -> str:
     return current_sha(repo_root)
 
 
+def diff_patch(repo_root: Path | str, base: str, head: str) -> str:
+    """``git diff base head`` as a patch ('' when identical)."""
+    if base == head:
+        return ""
+    out = _run(repo_root, ["diff", base, head]).stdout
+    return out + "\n" if out else ""
+
+
+def commit_paths(repo_root: Path | str, paths: list[str], *, message: str) -> str | None:
+    """Stage exactly ``paths`` (those that exist) and commit; ``None`` if nothing changed.
+
+    Used to record a round's eval artifacts on the parent branch after the
+    keep/revert verdict, so every round — reverted ones included — leaves
+    its record in history and the tree stays clean for the next round.
+    """
+    existing = [p for p in paths if (Path(repo_root) / p).exists()]
+    if not existing:
+        return None
+    _run(repo_root, ["add", "--", *existing])
+    if not has_staged_changes(repo_root):
+        return None
+    _run(repo_root, ["commit", "-m", message])
+    return current_sha(repo_root)
+
+
 def ff_merge(repo_root: Path | str, *, branch: str, target: str = "anvil/exp") -> None:
     _run(repo_root, ["checkout", target])
     _run(repo_root, ["merge", "--ff-only", branch])

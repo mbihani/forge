@@ -31,12 +31,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from anvil.catalog import cost_usd, load_catalog, model_prices
+from anvil.catalog import load_catalog, model_prices
 from anvil.data import select_subset
-from anvil.domains.savesage.extractor import LEDGER, SavesageIciciExtractor
+from anvil.domains.savesage.extractor import SavesageIciciExtractor
 from anvil.domains.savesage.scoring import aggregate_corpus, field_slug, score_extraction
+from anvil.eval.lever_probe import load_lever_probe
 from anvil.eval.runner import EvalReport
 from anvil.observability import eval_row_trace
+from anvil.runtime.call_ledger import LEDGER, describe_error, is_infra_error, price_calls
 from anvil.runtime.composer import compose_prompt
 from anvil.runtime.loader import load_harness
 
@@ -156,6 +158,7 @@ def evaluate_savesage(
     mode: str | None = None,
     cache_root: Path | str | None = None,
     trace_rows: bool = False,
+    max_rows: int | None = None,
     **_kwargs: Any,  # absorb genai-only kwargs per the engine contract
 ) -> EvalReport:
     """Evaluate the current scaffold's ICICI prompt over a subset of the corpus.
@@ -193,6 +196,9 @@ def evaluate_savesage(
         gs = repo_root / GOLDEN_SET_REL
     examples = load_savesage_golden_set(gs)
     selected = _select(examples, rows=mode_cfg.rows, buckets=dict(mode_cfg.buckets))
+    if max_rows:
+        # A canary: only the first rows of the mode's subset.
+        selected = selected[:max_rows]
     n_workers = max(1, cfg.n_workers)
 
     # Optimization mode selects the per-row predictor and whether latency is
@@ -217,16 +223,19 @@ def evaluate_savesage(
             model=model,
             input_mode=str(snapshot.config.levers.get(INPUT_MODE_LEVER, "pdf")),
             allowed_models=allowed,
+            lever_probe=load_lever_probe(repo_root),
         )
 
-        def _predict(row: dict) -> tuple[dict, float | None, list[dict], str | None]:
+        max_sends = cfg.call_policy.max_sends_per_document
+
+        def _attempt(row: dict) -> dict[str, Any]:
             # Time the whole predict (every call + any local step it takes),
-            # not the agent's self-reported latency. The ledger refuses a
-            # second send of the same document and records every call made,
-            # so cost counts all of them — including any still running when
-            # predict returns (end() waits for those, outside the timing).
+            # not the agent's self-reported latency. The ledger enforces the
+            # call policy and records every call made, so cost counts all of
+            # them — including any still running when predict returns (end()
+            # waits for those, outside the timing).
             sid = row["example_id"]
-            LEDGER.begin(sid)
+            LEDGER.begin(sid, max_sends_per_document=max_sends)
             extraction: Any = {}
             error: str | None = None
             t0 = time.perf_counter()
@@ -234,19 +243,50 @@ def evaluate_savesage(
                 extraction, _meta = agent.predict(sid=sid, pdf_path=row["pdf_path"])
             except Exception as exc:  # noqa: BLE001 - a failed row still costs its calls
                 logger.warning("prediction failed for %s: %s", sid, exc)
-                error = f"{type(exc).__name__}: {exc}"
+                error = describe_error(exc)
             latency = (time.perf_counter() - t0) * 1000.0
             calls = LEDGER.end(sid)
             actual = extraction if isinstance(extraction, dict) else {}
-            return actual, latency, calls, error
+            if error is None and not actual and calls and calls[-1].get("error"):
+                # The agent swallowed the failure; surface the call's error.
+                error = calls[-1]["error"]
+            return {"actual": actual, "latency_ms": latency, "calls": calls, "error": error}
+
+        def _infra_failed(attempt: dict[str, Any]) -> bool:
+            # A transport failure the agent did not cause: the row raised one,
+            # or produced nothing while every call it made failed on transport.
+            calls = attempt["calls"]
+            if attempt["actual"] and attempt["error"] is None:
+                return False
+            if is_infra_error(attempt["error"]):
+                return True
+            return bool(calls) and all(is_infra_error(c.get("error")) for c in calls)
+
+        def _predict(row: dict) -> dict[str, Any]:
+            # Re-run a row that failed for transport reasons only, up to
+            # eval.infra_retries times. Every attempt's calls are priced; the
+            # latency is the last attempt's. A row still failing stays failed.
+            calls: list[dict] = []
+            for n in range(cfg.infra_retries + 1):
+                attempt = _attempt(row)
+                calls.extend(attempt["calls"])
+                infra = _infra_failed(attempt)
+                if not infra or n == cfg.infra_retries:
+                    break
+                logger.warning(
+                    "infra failure for %s (%s); re-running the row",
+                    row["example_id"],
+                    attempt["error"],
+                )
+            return {**attempt, "calls": calls, "infra_retries": n, "infra_failed": infra}
     else:
         if cache_root is None:
             cache_root = repo_root / "eval" / "luna_cache"
         extractor = SavesageIciciExtractor(composed, cache_root=cache_root)
 
-        def _predict(row: dict) -> tuple[dict, float | None, list[dict], str | None]:
+        def _predict(row: dict) -> dict[str, Any]:
             extraction = extractor.extract(sid=row["example_id"], pdf_path=row["pdf_path"])
-            return extraction, None, [], None
+            return {"actual": extraction, "latency_ms": None, "calls": [], "error": None}
 
     # The accuracy FLOOR excludes the stale-GT fields ONLY on the code/latency
     # path (so "accuracy held" measures real quality); prompt mode keeps the
@@ -283,26 +323,21 @@ def evaluate_savesage(
 
     def _score_row(row: dict) -> dict[str, Any]:
         try:
-            actual, latency_ms, calls, error = _predict(row)
+            pred = _predict(row)
         except Exception as exc:  # noqa: BLE001 - isolate per-row failures
             logger.warning("prediction failed for %s: %s", row.get("example_id"), exc)
             # An empty extraction scores as all-DISAGREE.
-            actual, latency_ms, calls, error = {}, None, [], f"{type(exc).__name__}: {exc}"
-        scored = score_extraction(row["expected_parsed_json"], actual)
-        scored["error"] = error
+            pred = {"actual": {}, "latency_ms": None, "calls": [], "error": describe_error(exc)}
+        scored = score_extraction(row["expected_parsed_json"], pred["actual"])
+        scored["error"] = pred["error"]
+        scored["infra_retries"] = int(pred.get("infra_retries", 0))
+        scored["infra_failed"] = bool(pred.get("infra_failed", False))
         scored["example_id"] = row["example_id"]
         scored["query"] = row["query"]
         scored["category"] = row["category"]
-        scored["latency_ms"] = latency_ms
-        scored["call_costs"] = [
-            cost_usd(
-                prices.get(str(c.get("model"))),
-                int(c.get("input_tokens", 0) or 0),
-                int(c.get("output_tokens", 0) or 0),
-            )
-            for c in calls
-        ]
-        scored["models"] = sorted({str(c.get("model")) for c in calls})
+        scored["latency_ms"] = pred["latency_ms"]
+        scored["call_costs"] = price_calls(pred["calls"], prices)
+        scored["models"] = sorted({str(c.get("model")) for c in pred["calls"]})
         return scored
 
     # Preserve input order so per_bucket / failures line up with ``selected``.
@@ -356,6 +391,7 @@ def evaluate_savesage(
                 # crash) — so the optimizer can tell a failed call from a bad
                 # extraction. Capped: provider errors can be long.
                 **({"error": r["error"][:500]} if r.get("error") else {}),
+                **({"infra": True} if r.get("infra_failed") else {}),
             }
         )
 
@@ -368,6 +404,10 @@ def evaluate_savesage(
         cost_metrics["latency_ms_median"] = _median(latencies)
         cost_metrics["latency_ms_mean"] = sum(latencies) / len(latencies)
         cost_metrics["latency_ms_p90"] = _percentile(latencies, 0.90)
+    # Row-level failure counts: the canary and the optimizer read these.
+    cost_metrics["n_row_errors"] = float(sum(1 for r in scored_rows if r.get("error")))
+    cost_metrics["n_infra_retries"] = float(sum(r.get("infra_retries", 0) for r in scored_rows))
+    cost_metrics["n_infra_failed"] = float(sum(1 for r in scored_rows if r.get("infra_failed")))
     # Cost only when every call was priced, so a gap never understates it.
     call_costs = [c for r in scored_rows for c in r.get("call_costs", [])]
     if call_costs and all(c is not None for c in call_costs):

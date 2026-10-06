@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import importlib
 import json
 import logging
 import os
@@ -508,7 +509,6 @@ def _extend_anvil_path(repo_path: Path) -> None:
     # (or left as a stale registry-only entry), so ``load_engine``
     # re-imports the active session's code rather than silently reusing
     # an earlier session's module/engine.
-    evicted = False
     for name in _clone_shipped_domains(candidate):
         mod = sys.modules.get(f"anvil.domains.{name}")
         mod_file = getattr(mod, "__file__", None) if mod is not None else None
@@ -519,9 +519,7 @@ def _extend_anvil_path(repo_path: Path) -> None:
             continue  # not cached anywhere — nothing to evict
         _ENGINES.pop(name, None)
         for mod_name in list(sys.modules):
-            if mod_name == f"anvil.domains.{name}" or mod_name.startswith(
-                f"anvil.domains.{name}."
-            ):
+            if mod_name == f"anvil.domains.{name}" or mod_name.startswith(f"anvil.domains.{name}."):
                 del sys.modules[mod_name]
         # Keep the parent namespace consistent with the evicted child: drop
         # the stale attribute so ``from anvil.domains import <name>`` (which
@@ -529,7 +527,6 @@ def _extend_anvil_path(repo_path: Path) -> None:
         # re-import the active clone's module instead of the orphaned one.
         if domains_mod is not None and hasattr(domains_mod, name):
             delattr(domains_mod, name)
-        evicted = True
 
     # Rebuild ``anvil.__path__``: forge paths first (core-module safety),
     # then clone paths with this session's clone first. Resolved-path
@@ -546,18 +543,22 @@ def _extend_anvil_path(repo_path: Path) -> None:
     changed = list(anvil.__path__) != new_path
     if changed:
         anvil.__path__[:] = new_path
-    if domains_mod is not None and (changed or evicted):
-        # Re-derive the ALREADY-IMPORTED ``anvil.domains`` namespace's
-        # ``__path__`` in place from the new ordering, rather than popping
-        # the parent out of ``sys.modules`` (which would orphan cached
-        # ``anvil.domains.<other>`` children and break the parent/child
-        # import invariant). Future submodule imports resolve against this
-        # fresh, explicit search path; still-cached children stay attached.
-        domains_mod.__path__ = [
-            os.path.join(p, "domains")
-            for p in anvil.__path__
-            if os.path.isdir(os.path.join(p, "domains"))
-        ]
+    # Re-derive ``anvil.domains.__path__`` in place from the new ordering,
+    # rather than popping the parent out of ``sys.modules`` (which would
+    # orphan cached ``anvil.domains.<other>`` children and break the
+    # parent/child import invariant). Forge ships ``anvil/domains/__init__.py``
+    # (a REGULAR package), so a fresh ``import anvil.domains`` would search
+    # forge's directory only and never find a clone's domain — import it now
+    # if needed and set the search path explicitly, every time.
+    if domains_mod is None:
+        domains_mod = importlib.import_module("anvil.domains")
+    desired = [
+        os.path.join(p, "domains")
+        for p in anvil.__path__
+        if os.path.isdir(os.path.join(p, "domains"))
+    ]
+    if list(domains_mod.__path__) != desired:
+        domains_mod.__path__ = desired
 
 
 def _parse_github_url(url: str) -> tuple[str, str | None, str | None]:
@@ -599,7 +600,7 @@ def _parse_github_url(url: str) -> tuple[str, str | None, str | None]:
     if clone_url.endswith(".git"):
         clone_url = clone_url[:-4]
 
-    after_tree = clean[tree_idx + len(tree_marker):]
+    after_tree = clean[tree_idx + len(tree_marker) :]
     parts = after_tree.split("/")
     if len(parts) <= 1:
         branch = parts[0] if parts and parts[0] else None
@@ -621,7 +622,9 @@ def _clone_repo(
     """
     url = repo_url
     if github_token and url.startswith("https://github.com/"):
-        url = f"https://x-access-token:{github_token}@github.com/" + url[len("https://github.com/"):]
+        url = (
+            f"https://x-access-token:{github_token}@github.com/" + url[len("https://github.com/") :]
+        )
     dest_path.parent.mkdir(parents=True, exist_ok=True)
     cmd = ["git", "clone"]
     if branch is not None:
@@ -850,8 +853,10 @@ def _check_scaffold_harness_yaml(
             "message": "Invalid YAML",
             "remediation": "Fix the YAML syntax in scaffold/harness.yaml.",
         }
-    if not isinstance(raw, dict) or not isinstance(raw.get("skills"), list) or not isinstance(
-        raw.get("sampling"), dict
+    if (
+        not isinstance(raw, dict)
+        or not isinstance(raw.get("skills"), list)
+        or not isinstance(raw.get("sampling"), dict)
     ):
         return {
             "name": "scaffold_harness_yaml",
@@ -895,9 +900,7 @@ def _check_scaffold_skill_files(repo_path: Path, skills: list[Any]) -> dict:
     }
 
 
-def _check_golden_set_jsonl(
-    repo_path: Path, findings: dict[str, list[str]] | None = None
-) -> dict:
+def _check_golden_set_jsonl(repo_path: Path, findings: dict[str, list[str]] | None = None) -> dict:
     path = repo_path / "data" / "golden_set.jsonl"
     if not path.is_file():
         if (repo_path / "scripts" / "build_golden_set.py").is_file():
@@ -1435,9 +1438,7 @@ def _build_baseline_sync(
         # runs in the same mode the optimizer will use for the rounds.
         if mode is not None and raw.get("mode") != mode:
             raw["mode"] = mode
-            config_path.write_text(
-                yaml.safe_dump(raw, sort_keys=False), encoding="utf-8"
-            )
+            config_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
     report = evaluate_branch(
         scaffold_root=scaffold_root,
         runtime_config_path=config_path if config_path.is_file() else None,
@@ -1553,9 +1554,7 @@ def _apply_artifacts(sess: SessionData, artifacts: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _open_optimizer_sink_sync(
-    repo_path: Path, session_id: str
-) -> OptimizerArtifactSink | None:
+def _open_optimizer_sink_sync(repo_path: Path, session_id: str) -> OptimizerArtifactSink | None:
     """Open the per-session optimizer artifact sink (best-effort, in a thread).
 
     Resolves the persistence toggle + experiment from the cloned repo's
@@ -1809,8 +1808,8 @@ def _cleanup_session(session_id: str) -> None:
     try:
         resolved_root = Path(root).resolve()
         sessions_root = _SESSIONS_ROOT.resolve()
-        strict_descendant = (
-            resolved_root != sessions_root and resolved_root.is_relative_to(sessions_root)
+        strict_descendant = resolved_root != sessions_root and resolved_root.is_relative_to(
+            sessions_root
         )
     except (OSError, ValueError):
         strict_descendant = False
@@ -1855,9 +1854,7 @@ async def _cleanup_omnigent_session(session_id: str) -> None:
         finally:
             await client.aclose()
     except Exception:  # noqa: BLE001 — best-effort, swallow all failures
-        logger.debug(
-            "omnigent session cleanup failed for %s", omnigent_sid, exc_info=True
-        )
+        logger.debug("omnigent session cleanup failed for %s", omnigent_sid, exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1903,10 +1900,7 @@ def _write_crash_log_to_databricks(entry: str) -> None:
         import httpx  # lazy import — best-effort, may not be installed
     except ImportError:
         return
-    url = (
-        f"{host}/api/2.0/workspace-files/write"
-        f"?path={ws_path}&overwrite=true"
-    )
+    url = f"{host}/api/2.0/workspace-files/write?path={ws_path}&overwrite=true"
     try:
         resp = httpx.put(
             url,
@@ -1972,9 +1966,7 @@ def _async_exception_handler(loop: asyncio.AbstractEventLoop, context: dict[str,
     loop.default_exception_handler(context)
 
 
-def _excepthook(
-    exc_type: type[BaseException], exc_value: BaseException, exc_tb: Any
-) -> None:
+def _excepthook(exc_type: type[BaseException], exc_value: BaseException, exc_tb: Any) -> None:
     """Global excepthook — writes unhandled exceptions to the crash log."""
     if issubclass(exc_type, KeyboardInterrupt):
         # Let the default handler deal with Ctrl-C.
@@ -2419,9 +2411,7 @@ async def get_finalize(session_id: str) -> dict[str, Any]:
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="finalized report not found") from None
     except json.JSONDecodeError as exc:
-        raise HTTPException(
-            status_code=500, detail=f"finalized JSON is corrupt: {exc}"
-        ) from exc
+        raise HTTPException(status_code=500, detail=f"finalized JSON is corrupt: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------

@@ -77,9 +77,11 @@ def test_load_engine_reraises_missing_dependency_inside_package():
     from unittest.mock import patch
 
     exc = ModuleNotFoundError("No module named 'some_missing_dep'", name="some_missing_dep")
-    with patch("anvil.eval.engines.importlib.import_module", side_effect=exc):
-        with pytest.raises(ModuleNotFoundError, match="some_missing_dep"):
-            load_engine("test_scoping_xyz")
+    with (
+        patch("anvil.eval.engines.importlib.import_module", side_effect=exc),
+        pytest.raises(ModuleNotFoundError, match="some_missing_dep"),
+    ):
+        load_engine("test_scoping_xyz")
 
 
 # ---------------------------------------------------------------------------

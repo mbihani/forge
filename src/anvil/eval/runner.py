@@ -649,9 +649,7 @@ def _resilient_eval_harness():
         # linked. A present-but-malformed trace (e.g. ``trace.info`` None) is
         # NOT dropped — it is passed through so MLflow surfaces it as it
         # normally would, rather than being silently swallowed here.
-        linkable = [
-            er for er in eval_results if getattr(er.eval_item, "trace", None) is not None
-        ]
+        linkable = [er for er in eval_results if getattr(er.eval_item, "trace", None) is not None]
         return _orig_batch_link(run_id, linkable, *args, **kwargs)
 
     _harness._get_new_expectations = _get_new_expectations_none_safe
@@ -745,8 +743,13 @@ def evaluate_branch(
     include_safety: bool = False,
     runtime_client: OpenAI | None = None,
     judge_client: OpenAI | None = None,
+    max_rows: int | None = None,
 ) -> EvalReport:
-    """Run the active scorers against a sub-set of the golden set."""
+    """Run the active scorers against a sub-set of the golden set.
+
+    ``max_rows`` keeps only the first rows of the mode's subset (the round
+    canary); engines that do not support it ignore it.
+    """
     scaffold_path = Path(scaffold_root)
     runtime_path = (
         Path(runtime_config_path)
@@ -786,6 +789,7 @@ def evaluate_branch(
             profile=profile,
             mode=resolved_mode,
             trace_rows=True,
+            max_rows=max_rows,
         )
 
     cfg: EvalConfig = snapshot.config.eval
@@ -810,6 +814,8 @@ def evaluate_branch(
 
     examples = load_golden_set(golden_set_path)
     selected = _select_mode_examples(examples, cfg=cfg, selected_mode=selected_mode)
+    if max_rows:
+        selected = selected[:max_rows]
 
     if snapshot.config.mode == "code":
         # Code mode: import the active MemorySystem subclass and call

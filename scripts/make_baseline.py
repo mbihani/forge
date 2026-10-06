@@ -26,6 +26,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import subprocess
 import sys
@@ -154,6 +155,10 @@ def build_baseline(
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Line-buffer so a run redirected to a log file shows progress live.
+    for stream in (sys.stdout, sys.stderr):
+        with contextlib.suppress(Exception):
+            stream.reconfigure(line_buffering=True)
     args = _arg_parser().parse_args(argv)
 
     # Forge starts from the agent's existing evals: refuse to prime a

@@ -40,6 +40,12 @@ def _restore_anvil_path():
     saved_path = list(anvil.__path__)
     # Remove any stale registration from a previous run.
     saved_engines = set(registered_engines())
+    # Forge ships real domains (``anvil.domains.savesage`` / ``.trace``):
+    # only modules a test CREATES are purged afterwards — purging forge's own
+    # would make later test modules patch a re-imported copy instead of the
+    # one their functions were imported from.
+    saved_modules = {m for m in sys.modules if m.startswith("anvil.domains")}
+    forge_domains = str(Path(anvil.__file__).resolve().parent / "domains")
     yield
     anvil.__path__[:] = saved_path
     # Reset the lazily-captured forge-path snapshot so the next test
@@ -47,16 +53,17 @@ def _restore_anvil_path():
     import anvil.orchestrator.app as _app_mod
 
     _app_mod._FORGE_ANVIL_PATH = None
-    # Purge the fake domain module from the import cache. We must also
-    # evict ``anvil.domains`` itself: it's a namespace package whose
-    # ``__path__`` was built from a previous test's tmp_path, and leaving
-    # it cached lets a later test's ``import anvil.domains.<name>`` find
-    # files in a stale path instead of failing as expected. Forge has no
-    # ``anvil/domains/`` dir, so any ``anvil.domains*`` in sys.modules
-    # was created by these tests.
+    domains = sys.modules.get("anvil.domains")
     for mod_name in list(sys.modules):
-        if mod_name.startswith("anvil.domains"):
+        if mod_name.startswith("anvil.domains.") and mod_name not in saved_modules:
             del sys.modules[mod_name]
+            if domains is not None:
+                child = mod_name.split(".")[2]
+                if f"anvil.domains.{child}" not in saved_modules and hasattr(domains, child):
+                    delattr(domains, child)
+    # Drop the tests' tmp clone dirs from the domains search path.
+    if domains is not None:
+        domains.__path__ = [forge_domains]
     # Restore the engine registry to its pre-test state.
     from anvil.eval.engines import _ENGINES
 
@@ -260,7 +267,9 @@ def test_switch_shared_domain_reimports_via_import_machinery(tmp_path: Path):
     sys.modules.pop(f"anvil.domains.{shared}", None)
 
     child = importlib.import_module(f"anvil.domains.{shared}")
-    assert str(repo2.resolve()) in (child.__file__ or ""), "must resolve the ACTIVE clone via import"
+    assert str(repo2.resolve()) in (child.__file__ or ""), (
+        "must resolve the ACTIVE clone via import"
+    )
     assert child.fake_engine() == "from-session-2"
 
 

@@ -203,6 +203,30 @@ single action when one suffices, since a compound is harder to attribute.
   "rationale": "<why no change is the right call this round>"
 }
 ```
+#### Disputed labels (optional, on ANY action)
+
+If a golden label looks wrong — it contradicts the agent's own rules, or
+identical cases are labelled differently — do **not** tune the agent to it.
+Add it to your action instead; the round records it for the user, and later
+rounds list it as already reported:
+
+```json-action
+{
+  "action": "noop",
+  "rationale": "...",
+  "label_disputes": [
+    {"example_id": "<golden row id>", "field": "<field / judge name>",
+     "reason": "<why the label is wrong, ≤300 chars; no label values>"}
+  ]
+}
+```
+
+#### Failed rows
+
+A row that produced nothing carries `error` in the round's
+`eval/runs/round_NNN.json > failures[]` (`infra: true` when it was a
+transport failure the harness already re-ran). Read it before concluding a
+change made the agent worse — a rejected parameter fails every row.
 
 ---
 
@@ -217,11 +241,13 @@ actions above (`add_skill`, `edit_skill`, `add_rule`, etc.) are
 #### `write_agent`
 
 Write or replace a Python agent module in `agents/`. The file must
-implement the `MemorySystem` ABC (see `src/anvil/agents/memory_system.py`).
-The applier validates the code — AST denylist (no references to test,
-eval, solution, golden, answer-key, or ground-truth data) plus an
-isolated import — **before** writing it to disk. Invalid code is
-rejected and nothing is written.
+implement the base class the active engine loads — `MemorySystem`
+(`src/anvil/agents/memory_system.py`) for the built-in genai engine, or
+the domain's agent base for a domain engine (its contract is in the round
+prompt's engine notes). The applier validates the code — AST denylist (no
+references to test, eval, solution, golden, answer-key, or ground-truth
+data) plus an isolated import — **before** writing it to disk. Invalid
+code is rejected and nothing is written.
 
 ```json-action
 {

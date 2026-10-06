@@ -26,16 +26,20 @@ import logging
 import os
 import shutil
 import subprocess
-import threading
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from anvil.domains.savesage._statement_agent import ensure_importable
+
+# The per-row call ledger lives in forge core; re-exported for this domain's
+# callers (agents, tests). The eval arms it per statement (sid).
+from anvil.runtime.call_ledger import LEDGER, CallLedger, DuplicateCallError
+
+__all__ = ["LEDGER", "CallLedger", "DuplicateCallError", "SavesageIciciExtractor", "pdf_to_text"]
 
 logger = logging.getLogger(__name__)
 
@@ -79,77 +83,6 @@ def _profile_token_provider(profile: str) -> Callable[[], str]:
 
 
 INPUT_MODES = ("pdf", "text")
-
-
-class DuplicateCallError(RuntimeError):
-    """A statement's document was already sent to a model once."""
-
-
-class CallLedger:
-    """Every extraction call made for a statement, while the eval has it armed.
-
-    The eval arms one statement at a time (:meth:`begin` / :meth:`end`); every
-    extraction for that ``sid`` then passes through :meth:`call`, however the
-    agent reached the extractor. Two rules follow:
-
-    * **One send per document.** A document (the exact bytes sent — the whole
-      PDF, or a page split out of it) goes to a model at most once per
-      statement, whatever the model or input mode. Racing the same call and
-      re-running a statement as a fallback are refused with
-      :class:`DuplicateCallError`; complementary calls on different documents
-      (e.g. text pass on the PDF + a card pass on page 1) are allowed.
-    * **Every call is priced.** :meth:`end` waits for calls still in flight
-      (e.g. one the agent stopped waiting for) and returns all of them, so the
-      eval's cost counts what was actually spent.
-
-    A ``sid`` that was never armed passes through unrecorded.
-    """
-
-    def __init__(self) -> None:
-        self._cond = threading.Condition()
-        self._rows: dict[str, dict[str, Any]] = {}
-
-    def begin(self, sid: str) -> None:
-        with self._cond:
-            self._rows[sid] = {"docs": set(), "calls": [], "inflight": 0}
-
-    def end(self, sid: str, *, timeout_s: float = 900.0) -> list[dict[str, Any]]:
-        deadline = time.monotonic() + timeout_s
-        with self._cond:
-            row = self._rows.get(sid)
-            if row is None:
-                return []
-            while row["inflight"] and (left := deadline - time.monotonic()) > 0:
-                self._cond.wait(left)
-            del self._rows[sid]
-            return list(row["calls"])
-
-    @contextmanager
-    def call(self, sid: str, document: bytes, info: dict[str, Any]) -> Iterator[dict[str, Any]]:
-        """Admit one call; yield its record (fill in tokens) — refused if a duplicate."""
-        record = dict(info)
-        with self._cond:
-            row = self._rows.get(sid)
-            if row is not None:
-                key = hashlib.sha256(document).hexdigest()
-                if key in row["docs"]:
-                    raise DuplicateCallError(
-                        f"statement {sid}: this document was already sent once "
-                        "(no racing / fallback re-runs; send a different document instead)"
-                    )
-                row["docs"].add(key)
-                row["inflight"] += 1
-        try:
-            yield record
-        finally:
-            if row is not None:
-                with self._cond:
-                    row["calls"].append(record)
-                    row["inflight"] -= 1
-                    self._cond.notify_all()
-
-
-LEDGER = CallLedger()
 
 
 def pdf_to_text(pdf: bytes) -> str:

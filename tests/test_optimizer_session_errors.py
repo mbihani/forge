@@ -128,3 +128,75 @@ def test_cost_is_a_pareto_objective_source() -> None:
     report = SimpleNamespace(aggregate=0.9, cost_metrics={"cost_usd_per_row": 0.0055})
     obj = ParetoObjective(name="cost", direction="minimize", source="cost", epsilon=0.0003)
     assert scores_from_eval(report, [obj]) == {"cost": 0.0055}
+
+
+def _stub_run_script(monkeypatch: pytest.MonkeyPatch, repo: Path, rounds) -> tuple:
+    """run_round.py's main() against ``repo`` with every side effect stubbed."""
+    import shutil
+
+    module = _load_run_round_script()
+    (repo / "harness").mkdir(parents=True, exist_ok=True)
+    shutil.copy(Path(__file__).parents[1] / "harness" / "config.yaml", repo / "harness")
+    closed: list[str] = []
+    calls: list[int] = []
+    monkeypatch.setattr(module, "REPO_ROOT", repo)
+    monkeypatch.setattr(module.signal, "signal", lambda *a: None)
+    monkeypatch.setattr(module, "check_clean_worktree", lambda: None)
+    monkeypatch.setattr(module.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=0))
+    monkeypatch.setattr(module, "ensure_agent_evals_ready", lambda *a, **k: None)
+    monkeypatch.setattr(module, "configure_tracking_uri", lambda *_a: "databricks")
+    monkeypatch.setattr(
+        module,
+        "open_cli_session_sink",
+        lambda *a, **k: SimpleNamespace(run_id="r", experiment_id="e"),
+    )
+    monkeypatch.setattr(
+        module, "close_cli_session_sink", lambda *a, status, **k: closed.append(status)
+    )
+
+    def _fake_round(*, round_id, **_kw):
+        calls.append(round_id)
+        return rounds(round_id)
+
+    monkeypatch.setattr(module, "run_round", _fake_round)
+    return module, calls, closed
+
+
+def _noop(parse_status: str = "ok"):
+    return SimpleNamespace(
+        decision=Decision.NOOP, action_kind="noop", parse_status=parse_status, score_delta=0.0
+    )
+
+
+def test_run_stops_after_consecutive_deliberate_noops(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module, calls, closed = _stub_run_script(monkeypatch, tmp_path, lambda _rid: _noop())
+    module.main(["--rounds", "10"])
+    assert len(calls) == 3  # loop.stop_after_consecutive_noops default
+    assert closed == ["FINISHED"]
+
+
+def test_parse_failure_noops_do_not_count_toward_convergence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module, calls, _ = _stub_run_script(monkeypatch, tmp_path, lambda _rid: _noop("no_block"))
+    module.main(["--rounds", "5"])
+    assert len(calls) == 5
+
+
+def test_stop_file_stops_between_rounds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    stop = tmp_path / "eval" / "STOP"
+
+    def _round(rid):
+        if rid == 2:
+            stop.parent.mkdir(parents=True, exist_ok=True)
+            stop.touch()  # requested while round 2 runs
+        return SimpleNamespace(
+            decision=Decision.REVERT, action_kind="write_agent", parse_status="ok", score_delta=0.0
+        )
+
+    module, calls, closed = _stub_run_script(monkeypatch, tmp_path, _round)
+    module.main(["--rounds", "10"])
+    assert calls == [1, 2]  # round 2 finished; round 3 never started
+    assert closed == ["FINISHED"] and not stop.exists()

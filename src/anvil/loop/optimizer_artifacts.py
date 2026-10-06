@@ -223,9 +223,7 @@ class OptimizerArtifactSink:
                 session_url=session_url,
             )
         except Exception as exc:  # noqa: BLE001 — best-effort; never fatal
-            logger.warning(
-                "optimizer artifact sink: could not bind to run %s: %s", run_id, exc
-            )
+            logger.warning("optimizer artifact sink: could not bind to run %s: %s", run_id, exc)
             return None
 
     # ------------------------------------------------------------------
@@ -250,6 +248,10 @@ class OptimizerArtifactSink:
         ``round_NNN_transcript.md`` which holds only the final text.
         """
         self._log_text(session_md or "(empty)\n", f"rounds/round_{round_id:03d}_session.md")
+
+    def log_patch(self, *, round_id: int, patch: str) -> None:
+        """The round's code change, kept for reverted rounds whose branch is deleted."""
+        self._log_text(patch, f"rounds/round_{round_id:03d}.patch")
 
     def log_improvement_summary(self, *, summary: dict[str, Any], summary_md: str) -> None:
         """Persist the run-level improvement summary (JSON + markdown)."""
@@ -325,7 +327,9 @@ def build_improvement_summary(
         # A noop is not evaluated; its effective score is the parent's.
         if mutated is None and decision == "noop":
             mutated = r.get("baseline_score")
-        eval_run_id = (r.get("mlflow") or {}).get("run_id") if isinstance(r.get("mlflow"), dict) else None
+        eval_run_id = (
+            (r.get("mlflow") or {}).get("run_id") if isinstance(r.get("mlflow"), dict) else None
+        )
         per_round.append(
             {
                 "round": r.get("round_id"),
@@ -337,6 +341,9 @@ def build_improvement_summary(
                 "rationale": r.get("rationale"),
                 "eval_run_id": eval_run_id,
                 "optimizer_error": r.get("optimizer_error"),
+                "notes": r.get("notes"),
+                "levers": r.get("levers"),
+                **_round_cost_fields(r),
             }
         )
         trajectory.append({"round": r.get("round_id"), "aggregate": mutated})
@@ -390,6 +397,23 @@ def _fmt(x: Any) -> str:
     return "—"
 
 
+def _round_cost_fields(r: dict[str, Any]) -> dict[str, Any]:
+    cm = r.get("cost_metrics") if isinstance(r.get("cost_metrics"), dict) else {}
+    return {
+        k: cm.get(k)
+        for k in ("latency_ms_median", "latency_ms_p90", "cost_usd_per_row", "n_row_errors")
+        if cm.get(k) is not None
+    }
+
+
+def _ms(v: Any) -> str:
+    return f"{v / 1000:.1f}s" if isinstance(v, int | float) else "—"
+
+
+def _usd(v: Any) -> str:
+    return f"${v:.5f}" if isinstance(v, int | float) else "—"
+
+
 def render_improvement_summary_md(summary: dict[str, Any]) -> str:
     """Render the improvement summary dict as human-readable markdown."""
     s = summary.get("session", {})
@@ -426,14 +450,18 @@ def render_improvement_summary_md(summary: dict[str, Any]) -> str:
     lines.append("")
     lines.append("## Per-round")
     lines.append("")
-    lines.append("| Round | Decision | Action | Baseline | Mutated | Δ | Eval run | Rationale |")
-    lines.append("| --- | --- | --- | --- | --- | --- | --- | --- |")
+    lines.append(
+        "| Round | Decision | Action | Baseline | Mutated | Δ | Median | p90 | $/row "
+        "| Eval run | Rationale |"
+    )
+    lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
     for row in summary.get("per_round", []):
         delta = row.get("delta")
         delta_str = f"{delta:+.4f}" if isinstance(delta, int | float) else "—"
-        rationale = (row.get("rationale") or "").replace("\n", " ").replace("|", "\\|")
-        if len(rationale) > 80:
-            rationale = rationale[:77] + "..."
+        text = row.get("notes") or row.get("rationale") or ""
+        rationale = text.replace("\n", " ").replace("|", "\\|")
+        if len(rationale) > 120:
+            rationale = rationale[:117] + "..."
         lines.append(
             f"| {row.get('round', '?')} "
             f"| {row.get('decision', '—')} "
@@ -441,6 +469,9 @@ def render_improvement_summary_md(summary: dict[str, Any]) -> str:
             f"| {_fmt(row.get('baseline_aggregate'))} "
             f"| {_fmt(row.get('mutated_aggregate'))} "
             f"| {delta_str} "
+            f"| {_ms(row.get('latency_ms_median'))} "
+            f"| {_ms(row.get('latency_ms_p90'))} "
+            f"| {_usd(row.get('cost_usd_per_row'))} "
             f"| {row.get('eval_run_id') or '—'} "
             f"| {rationale or '—'} |"
         )

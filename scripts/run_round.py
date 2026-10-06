@@ -29,6 +29,7 @@ The runner expects:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import re
 import signal
 import subprocess
@@ -58,10 +59,35 @@ class _SessionStopped(SystemExit):
 
 
 MAX_CONSECUTIVE_INFRA_FAILS = 2
+# Create this file (``touch eval/STOP``) to stop cleanly after the current
+# round; it is removed when honoured. Re-run to resume from the next round.
+STOP_FILE_REL = Path("eval") / "STOP"
 
 
 def _is_infra_fail(decision) -> bool:
     return str(getattr(decision, "value", decision)).lower() == "infra_fail"
+
+
+def _is_deliberate_noop(report) -> bool:  # noqa: ANN001
+    """A noop the optimizer CHOSE (a parsed noop action), not a parse/apply failure."""
+    decision = str(getattr(report.decision, "value", report.decision)).lower()
+    parse_status = str(getattr(report, "parse_status", "") or "")
+    return (
+        decision == "noop"
+        and getattr(report, "action_kind", None) == "noop"
+        and parse_status.startswith("ok")
+    )
+
+
+def _stop_after_noops() -> int:
+    """``harness/config.yaml > loop.stop_after_consecutive_noops`` (default 3)."""
+    from anvil.runtime.models import LoopConfig  # noqa: PLC0415
+
+    try:
+        raw = yaml.safe_load((REPO_ROOT / "harness" / "config.yaml").read_text()) or {}
+        return LoopConfig.model_validate(raw.get("loop") or {}).stop_after_consecutive_noops
+    except Exception:  # noqa: BLE001 - defaults on an absent/invalid config
+        return LoopConfig().stop_after_consecutive_noops
 
 
 def _arg_parser() -> argparse.ArgumentParser:
@@ -107,6 +133,10 @@ def _next_round_id(repo_root: Path) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Line-buffer so a run redirected to a log file shows progress live.
+    for stream in (sys.stdout, sys.stderr):
+        with contextlib.suppress(Exception):
+            stream.reconfigure(line_buffering=True)
     args = _arg_parser().parse_args(argv)
 
     finalized_path = REPO_ROOT / "eval" / "runs" / "finalized.json"
@@ -169,8 +199,18 @@ def main(argv: list[str] | None = None) -> int:
     for sig in (signal.SIGTERM, signal.SIGHUP):
         signal.signal(sig, _stop)
     infra_streak = 0
+    noop_streak = 0
+    max_noops = _stop_after_noops()
+    stop_file = REPO_ROOT / STOP_FILE_REL
     try:
         for i in range(args.rounds):
+            if stop_file.exists():
+                stop_file.unlink()
+                print(
+                    f"Stopping: {STOP_FILE_REL} found — re-run to resume from round {next_id + i}."
+                )
+                status = "FINISHED"
+                break
             rid = next_id + i
             print(f"\n=== round {rid} ===")
             report = run_round(
@@ -196,6 +236,16 @@ def main(argv: list[str] | None = None) -> int:
                     "optimizer/workspace error above, then re-run to resume."
                 )
                 status = "FAILED"
+                break
+            # The optimizer saying "nothing left to try" several rounds running
+            # means the run has converged; more rounds would only repeat it.
+            noop_streak = noop_streak + 1 if _is_deliberate_noop(report) else 0
+            if max_noops and noop_streak >= max_noops:
+                print(
+                    f"Stopping: {noop_streak} consecutive deliberate noops — the optimizer "
+                    "finds nothing left to try (loop.stop_after_consecutive_noops)."
+                )
+                status = "FINISHED"
                 break
         else:
             status = "FINISHED"

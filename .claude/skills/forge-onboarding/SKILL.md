@@ -128,6 +128,11 @@ below); otherwise ask in plain text and wait. Record every answer.
    Explain the trade-off: small sets are fast but noisy — LLM-judge scores and
    latency medians wobble enough at ~8 rows that real improvements revert. Use
    the largest size the budget allows for latency objectives.
+7b. **Call rules and cost?** May the agent re-send the same input (fallback
+   re-runs, racing duplicate calls)? Each one multiplies cost. If not, set
+   `eval.call_policy.max_sends_per_document: 1`, and consider a `cost` Pareto
+   objective (`source: cost`). Offer `loop.canary_rows` (e.g. 3) so a
+   mutation that fails every row is reverted without the full eval.
 8. **How many rounds, and the gate margins?** Rounds (forge targets 50+;
    rounds are resumable) and each objective's `epsilon` (e.g. latency 2000ms,
    quality 0.03). Show the measured noise if earlier rounds exist; an epsilon
@@ -260,6 +265,11 @@ Run each check and report pass/fail; fix or go back to the user on any fail.
    Drop any model that errors and tell the user why. Known traps: GPT and
    Gemini reject Anthropic-style PDF `document` blocks; some newer models reject
    `temperature` (the gateway client retries without it — confirm it succeeds).
+4b. **Verified settings recorded** — when the engine registers a lever probe,
+   run `uv run python scripts/probe_levers.py --profile <profile>` and commit
+   `eval/lever_probe.json`; tell the user which combinations were rejected and
+   why (e.g. a model that rejects native PDFs, an unsupported
+   `reasoning_effort`). The round prompt then lists only verified ones.
 5. **Lever dependencies present** — e.g. `uv run python -c "import fitz"` before
    allowing `input_mode: text`.
 6. **Prices known** — `scripts/sync_model_catalog.py --check <allowed models>`;
@@ -294,6 +304,14 @@ uv run python scripts/run_round.py --parent-branch anvil/exp \
 
 Wrap long local runs in `caffeinate -dimsu` on macOS (sleep kills them and
 looks like timeouts). Re-invoking continues from the next round id.
+- **Stop cleanly** between rounds with `touch eval/STOP`. Don't signal a round
+  mid-flight.
+- **Converged runs end themselves** after `loop.stop_after_consecutive_noops`
+  deliberate noops.
+- **Report** with `uv run python scripts/round_summary.py`.
+- **Disputed labels:** list any the optimizer flagged
+  (`uv run python scripts/label_disputes.py`) so the user can fix the golden
+  set.
 
 After (or during) the run, report per round: decision (keep / revert / noop /
 infra_fail / apply_rejected), action (for `compound`, each step), the levers it

@@ -103,6 +103,32 @@ def load_engine(name: str) -> Callable[..., Any]:
     return fn
 
 
+# Optional per-engine lever probe: checks which runtime settings (model x
+# input mode x sampling knobs) the serving endpoints actually accept, with a
+# tiny real call each. See anvil.eval.lever_probe.
+_PROBES: dict[str, Callable[..., Any]] = {}
+
+
+def register_lever_probe(name: str, fn: Callable[..., Any]) -> None:
+    """Register ``fn`` as the lever probe for engine ``name``.
+
+    Contract::
+
+        def probe(*, scaffold_root, runtime_config_path, golden_set_path,
+                  profile, **_kwargs) -> list[ProbeResult]
+    """
+    if not is_valid_engine_name(name):
+        raise ValueError(f"invalid engine name {name!r}: must match {_ENGINE_NAME_RE.pattern}")
+    _PROBES[name] = fn
+
+
+def load_lever_probe_fn(name: str) -> Callable[..., Any] | None:
+    """The lever probe engine ``name`` registered, or ``None`` if it has none."""
+    if name != GENAI_ENGINE:
+        load_engine(name)  # imports the domain package, which registers its probe
+    return _PROBES.get(name)
+
+
 def registered_engines() -> list[str]:
     """Names currently in the registry (excludes the built-in genai). Test aid."""
     return sorted(_ENGINES)

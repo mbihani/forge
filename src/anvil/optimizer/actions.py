@@ -59,9 +59,26 @@ def _truncate_text(v: object) -> object:
     return v
 
 
+class LabelDispute(BaseModel):
+    """A golden label the optimizer believes is wrong (ids + reason only, no values)."""
+
+    model_config = ConfigDict(extra="forbid")
+    example_id: str = Field(min_length=1, max_length=200)
+    field: str = Field(min_length=1, max_length=200)
+    reason: str = Field(min_length=1, max_length=300)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _truncate_reason(cls, v: object) -> object:
+        return v[:299] + "…" if isinstance(v, str) and len(v) > 300 else v
+
+
 class _ActionBase(BaseModel):
     model_config = ConfigDict(extra="forbid")
     rationale: str = Field(min_length=1, max_length=MAX_RATIONALE_CHARS)
+    # Optional, on any action (noop included): golden labels to flag for the
+    # user instead of tuning the agent to them. See anvil.eval.label_disputes.
+    label_disputes: list[LabelDispute] = Field(default_factory=list, max_length=50)
 
     @field_validator("rationale", mode="before")
     @classmethod

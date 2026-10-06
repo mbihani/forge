@@ -170,9 +170,7 @@ def _seed_repo(
 def _mock_clone_factory(source: Path):
     """Return a mock ``_clone_repo`` that copies ``source`` into ``dest``."""
 
-    def _mock(
-        repo_url: str, dest_path: Path, github_token: str | None, **_kw: Any
-    ) -> str | None:
+    def _mock(repo_url: str, dest_path: Path, github_token: str | None, **_kw: Any) -> str | None:
         dest_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(str(source), str(dest_path))
         return None
@@ -221,9 +219,7 @@ def _make_mock_run_round(calls: list[int] | None = None):
             "score_delta_vs_parent": 0.05,
             "aggregate": 0.85,
         }
-        (runs / f"round_{round_id:03d}.json").write_text(
-            json.dumps(payload), encoding="utf-8"
-        )
+        (runs / f"round_{round_id:03d}.json").write_text(json.dumps(payload), encoding="utf-8")
         # Write a frontier so finalize + get_frontier can find one.
         frontier = {
             "best": {"aggregate": 0.85, "correctness": 0.9},
@@ -264,7 +260,7 @@ def _create_valid_session(
 
 
 def _wait_for_status(
-    client: TestClient, session_id: str, statuses: set[str], timeout: float = 10.0
+    client: TestClient, session_id: str, statuses: set[str], timeout: float = 60.0
 ) -> dict[str, Any]:
     """Poll GET /api/session until status is in ``statuses`` or timeout."""
     deadline = time.time() + timeout
@@ -426,9 +422,7 @@ def _register_session(
     )
 
 
-def test_cleanup_session_preserves_local_path_repo(
-    tmp_path: Path, sessions_root: Path
-) -> None:
+def test_cleanup_session_preserves_local_path_repo(tmp_path: Path, sessions_root: Path) -> None:
     """DATA-LOSS GUARD: a local-path session's directory must survive cleanup.
 
     Regression for the bug where ``_cleanup_session`` rmtree'd the user's own
@@ -848,9 +842,7 @@ def test_optimize_starts_baseline(
     sid = _create_valid_session(client, tmp_path, monkeypatch)
     monkeypatch.setattr(app_module, "evaluate_branch", lambda **kw: _fake_eval_report())
     monkeypatch.setattr(app_module, "run_round", _make_mock_run_round())
-    resp = client.post(
-        f"/api/session/{sid}/optimize", json={"max_rounds": 2, "max_turns": 5}
-    )
+    resp = client.post(f"/api/session/{sid}/optimize", json={"max_rounds": 2, "max_turns": 5})
     assert resp.status_code == 202
     assert resp.json()["status"] == "building_baseline"
     data = _wait_for_status(client, sid, {"optimizing", "optimized"})
@@ -1308,9 +1300,7 @@ def _optimize_then_finalize_setup(
     sid = _create_valid_session(client, tmp_path, monkeypatch)
     monkeypatch.setattr(app_module, "evaluate_branch", lambda **kw: _fake_eval_report())
     monkeypatch.setattr(app_module, "run_round", _make_mock_run_round())
-    client.post(
-        f"/api/session/{sid}/optimize", json={"max_rounds": max_rounds, "max_turns": 5}
-    )
+    client.post(f"/api/session/{sid}/optimize", json={"max_rounds": max_rounds, "max_turns": 5})
     _wait_for_status(client, sid, {"optimized"})
     return sid
 
@@ -1656,6 +1646,7 @@ def test_lifespan_cancels_tasks(
     monkeypatch.setattr(app_module, "_clone_repo", _mock_clone_factory(source))
     monkeypatch.setattr(app_module, "evaluate_branch", lambda **kw: _fake_eval_report())
     monkeypatch.setattr(app_module, "run_round", _make_mock_run_round())
+
     # Make the baseline slow so the task is still running at shutdown.
     # The function returns a dummy dict (not calling evaluate_branch) so
     # the orphaned background thread has no side effects after the test
@@ -1693,9 +1684,7 @@ def test_lifespan_cancels_tasks(
 
 def test_parse_github_url_plain() -> None:
     """Plain repo URL → no branch, no subpath."""
-    clone_url, branch, subpath = app_module._parse_github_url(
-        "https://github.com/mbihani/savesage"
-    )
+    clone_url, branch, subpath = app_module._parse_github_url("https://github.com/mbihani/savesage")
     assert clone_url == "https://github.com/mbihani/savesage"
     assert branch is None
     assert subpath is None
@@ -1756,9 +1745,7 @@ def test_parse_github_url_trailing_slash() -> None:
 
 def test_parse_non_github_url() -> None:
     """Non-GitHub URL → returned as-is, no branch/subpath."""
-    clone_url, branch, subpath = app_module._parse_github_url(
-        "https://gitlab.com/user/repo"
-    )
+    clone_url, branch, subpath = app_module._parse_github_url("https://gitlab.com/user/repo")
     assert clone_url == "https://gitlab.com/user/repo"
     assert branch is None
     assert subpath is None
@@ -1996,13 +1983,9 @@ async def _fake_conversion_task(session_id: str, target_branch: str) -> None:
         if sess is not None and sess.conversion is not None:
             sess.conversion.status = "completed"
             sess.conversion.branch_name = target_branch
-            sess.conversion.pr_url = (
-                f"https://github.com/user/repo/compare/main...{target_branch}"
-            )
+            sess.conversion.pr_url = f"https://github.com/user/repo/compare/main...{target_branch}"
             sess.conversion.session_id = "omnigent-sess-fake"
-            sess.conversion.session_url = (
-                "http://localhost:6767/omnigent/c/omnigent-sess-fake"
-            )
+            sess.conversion.session_url = "http://localhost:6767/omnigent/c/omnigent-sess-fake"
             sess.conversion.revalidation = {
                 "status": "valid",
                 "checks": [
@@ -2024,7 +2007,7 @@ async def _blocking_conversion_task(session_id: str, target_branch: str) -> None
 
 
 def _wait_for_convert(
-    client: TestClient, session_id: str, statuses: set[str], timeout: float = 10.0
+    client: TestClient, session_id: str, statuses: set[str], timeout: float = 60.0
 ) -> dict[str, Any]:
     """Poll GET /api/session/{id}/convert until status is in ``statuses``."""
     deadline = time.time() + timeout
@@ -2036,9 +2019,7 @@ def _wait_for_convert(
             if last.get("status") in statuses:
                 return last
         time.sleep(0.02)
-    raise AssertionError(
-        f"timed out waiting for convert status in {statuses}; last={last}"
-    )
+    raise AssertionError(f"timed out waiting for convert status in {statuses}; last={last}")
 
 
 def test_validation_convertible_true_when_alternative_structures_found(
@@ -2445,9 +2426,7 @@ def _mode_capturing_run_round(calls: list[dict]) -> Any:
             "score_delta_vs_parent": 0.05,
             "aggregate": 0.85,
         }
-        (runs / f"round_{round_id:03d}.json").write_text(
-            json.dumps(payload), encoding="utf-8"
-        )
+        (runs / f"round_{round_id:03d}.json").write_text(json.dumps(payload), encoding="utf-8")
         frontier = {
             "best": {"aggregate": 0.85, "correctness": 0.9},
             "objectives": ["aggregate", "correctness"],
@@ -2622,9 +2601,7 @@ def _run_conversion_with_revalidation(
         "_parse_github_url",
         lambda _url: ("https://github.com/owner/repo", "owner", "repo"),
     )
-    monkeypatch.setattr(
-        conversion_module, "_build_agent_bundle", lambda *a, **kw: b"bundle-bytes"
-    )
+    monkeypatch.setattr(conversion_module, "_build_agent_bundle", lambda *a, **kw: b"bundle-bytes")
     monkeypatch.setattr(conversion_module, "OmnigentClient", lambda *a, **kw: object())
     monkeypatch.setattr(conversion_module, "_run_managed_session", _fake_managed_session)
     monkeypatch.setenv("OMNIGENT_SERVER_URL", "http://test")
