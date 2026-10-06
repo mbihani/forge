@@ -1,4 +1,15 @@
-"""Savesage ICICI extraction agent (code-mode), round 5.
+"""Savesage ICICI extraction agent (code-mode), round 6.
+
+Round 6 change (on top of round 5 below): after the single extraction call,
+attribute the account-level credit limits to the cards. ICICI prints ONE
+credit limit / available credit limit per statement account; every card on
+the account (primary + add-ons) shares it and no per-card limit is printed.
+So each card's bigPicture.cardCreditLimit / cardAvailableCreditLimit is set
+to statementLevelSummary.totalCreditLimit / availableCreditLimit whenever
+those statement-level values were extracted. Pure local post-processing: no
+extra call, no extra document send, no cost/latency change.
+
+Round 5 notes:
 
 Parent (round 1): GPT-5.6 Luna, native PDF, reasoning_effort="low", 96K
 max_tokens, one call per statement.
@@ -93,6 +104,33 @@ def _write_trimmed(pdf_path: Path, keep: int, workdir: Path) -> Path | None:
     return out
 
 
+def _share_account_limits(parsed: dict) -> dict:
+    """Copy the statement-level (account) limits onto every card's bigPicture."""
+    if not isinstance(parsed, dict):
+        return parsed
+    root = parsed.get("parsed_json") if isinstance(parsed.get("parsed_json"), dict) else parsed
+    summary = root.get("statementLevelSummary")
+    cards = root.get("cards")
+    if not isinstance(summary, dict) or not isinstance(cards, list):
+        return parsed
+    pairs = (
+        ("cardCreditLimit", summary.get("totalCreditLimit")),
+        ("cardAvailableCreditLimit", summary.get("availableCreditLimit")),
+    )
+    for card in cards:
+        if not isinstance(card, dict):
+            continue
+        bp = card.get("bigPicture")
+        if not isinstance(bp, dict):
+            bp = {}
+            card["bigPicture"] = bp
+        for key, value in pairs:
+            if value is None or (isinstance(value, str) and not value.strip()):
+                continue
+            bp[key] = value
+    return parsed
+
+
 class TrimmedPdfSavesageAgent(SavesageAgent):
     """Low-effort Luna on a PDF trimmed of the trailing ICICI boilerplate pages."""
 
@@ -111,9 +149,14 @@ class TrimmedPdfSavesageAgent(SavesageAgent):
                         send_path = trimmed
             except Exception:  # noqa: BLE001 - any trim failure -> send the original once
                 send_path = src
-            return self.extract(
+            parsed, meta = self.extract(
                 sid=sid,
                 pdf_path=send_path,
                 reasoning_effort=self.REASONING_EFFORT,
                 max_tokens=DEFAULT_MAX_TOKENS,
             )
+        try:
+            parsed = _share_account_limits(parsed)
+        except Exception:  # noqa: BLE001 - post-processing must never fail a row
+            pass
+        return parsed, meta
