@@ -1,6 +1,6 @@
 {
-  "scaffold_commit_sha": "c39273228c2bc8984ee3fecdcc8e8254b37dbc55",
-  "evaluated_at": "2026-10-05T12:39:44+00:00",
+  "scaffold_commit_sha": "86a0343ff286f355e9a04ff1ac9c1fab9d90ce07",
+  "evaluated_at": "2026-10-06T05:24:28+00:00",
   "mode": "standard",
   "scorers": [
     "accuracy",
@@ -34,13 +34,13 @@
   ],
   "runtime_endpoint": "databricks-gpt-5-6-luna",
   "judge_endpoint": "databricks-claude-sonnet-4-6",
-  "aggregate": 0.9844756980120222,
+  "aggregate": 0.9836588062384004,
   "per_judge": {
-    "accuracy": 0.9513952133261321,
-    "accuracy_forgiven": 0.953324992484172,
-    "accuracy_gated": 0.9844756980120222,
-    "field_cards_bigPicture_cardAvailableCreditLimit": 0.673469387755102,
-    "field_cards_bigPicture_cardCreditLimit": 0.673469387755102,
+    "accuracy": 0.9506148244845647,
+    "accuracy_forgiven": 0.9536722104608863,
+    "accuracy_gated": 0.9836588062384004,
+    "field_cards_bigPicture_cardAvailableCreditLimit": 0.6938775510204082,
+    "field_cards_bigPicture_cardCreditLimit": 0.6938775510204082,
     "field_cards_cardMeta_cardDisplayName": 0.9183673469387755,
     "field_cards_cardMeta_lastFourDigit": 1.0,
     "field_cards_cardMeta_network": 0.0,
@@ -51,7 +51,7 @@
     "field_rewards_pointsRedeemedThisCycle": 1.0,
     "field_rewards_programType": 0.0,
     "field_statementLevelSummary_availableCreditLimit": 1.0,
-    "field_statementLevelSummary_totalAmountDue": 0.98,
+    "field_statementLevelSummary_totalAmountDue": 1.0,
     "field_statementLevelSummary_totalCreditLimit": 1.0,
     "field_statementLevelSummary_totalMinimumAmountDue": 1.0,
     "field_statementMeta_dueDate": 1.0,
@@ -61,17 +61,17 @@
     "field_statementMeta_statementPeriodStart": 1.0,
     "field_transactions_amount": 1.0,
     "field_transactions_date": 0.9992307692307691,
-    "field_transactions_description": 0.9893103448275862,
+    "field_transactions_description": 0.9825829228243022,
     "field_transactions_direction": 1.0,
     "field_transactions_rewardPointsOnThisTransaction": 1.0
   },
   "per_bucket": {
     "amazon": {
-      "accuracy": 0.9517166877584037,
-      "accuracy_forgiven": 0.9517166877584037,
-      "accuracy_gated": 0.9913661998481538,
-      "field_cards_bigPicture_cardAvailableCreditLimit": 0.8,
-      "field_cards_bigPicture_cardCreditLimit": 0.8,
+      "accuracy": 0.9525433972267707,
+      "accuracy_forgiven": 0.9525433972267707,
+      "accuracy_gated": 0.9922006564863708,
+      "field_cards_bigPicture_cardAvailableCreditLimit": 0.85,
+      "field_cards_bigPicture_cardCreditLimit": 0.85,
       "field_cards_cardMeta_cardDisplayName": 1.0,
       "field_cards_cardMeta_lastFourDigit": 1.0,
       "field_cards_cardMeta_network": 0.0,
@@ -79,7 +79,7 @@
       "field_rewards_pointsEarnedThisCycle": 1.0,
       "field_rewards_programType": 0.0,
       "field_statementLevelSummary_availableCreditLimit": 1.0,
-      "field_statementLevelSummary_totalAmountDue": 0.9523809523809523,
+      "field_statementLevelSummary_totalAmountDue": 1.0,
       "field_statementLevelSummary_totalCreditLimit": 1.0,
       "field_statementLevelSummary_totalMinimumAmountDue": 1.0,
       "field_statementMeta_dueDate": 1.0,
@@ -92,12 +92,12 @@
       "field_transactions_description": 1.0,
       "field_transactions_direction": 1.0,
       "field_transactions_rewardPointsOnThisTransaction": 1.0,
-      "aggregate": 0.9913661998481538
+      "aggregate": 0.9922006564863708
     },
     "coral": {
-      "accuracy": 0.9722415963598511,
+      "accuracy": 0.9720420752106094,
       "accuracy_forgiven": 0.9722415963598511,
-      "accuracy_gated": 0.9890072140158022,
+      "accuracy_gated": 0.9888071339837893,
       "field_cards_bigPicture_cardAvailableCreditLimit": 0.7142857142857143,
       "field_cards_bigPicture_cardCreditLimit": 0.7142857142857143,
       "field_cards_cardMeta_cardDisplayName": 1.0,
@@ -116,10 +116,10 @@
       "field_statementMeta_statementPeriodStart": 1.0,
       "field_transactions_amount": 1.0,
       "field_transactions_date": 1.0,
-      "field_transactions_description": 1.0,
+      "field_transactions_description": 0.9989795918367347,
       "field_transactions_direction": 1.0,
       "field_transactions_rewardPointsOnThisTransaction": 1.0,
-      "aggregate": 0.9890072140158022
+      "aggregate": 0.9888071339837893
     },
     "other": {
       "accuracy": 0.9483143415094744,
@@ -149,9 +149,9 @@
       "aggregate": 0.9875329906931518
     },
     "sapphiro": {
-      "accuracy": 0.9641006796746259,
+      "accuracy": 0.9439143442708993,
       "accuracy_forgiven": 0.9656534747056817,
-      "accuracy_gated": 0.9760913136630938,
+      "accuracy_gated": 0.9556510620907668,
       "field_cards_bigPicture_cardAvailableCreditLimit": 0.5,
       "field_cards_bigPicture_cardCreditLimit": 0.5,
       "field_cards_cardMeta_cardDisplayName": 1.0,
@@ -170,10 +170,10 @@
       "field_statementMeta_statementPeriodStart": 1.0,
       "field_transactions_amount": 1.0,
       "field_transactions_date": 1.0,
-      "field_transactions_description": 0.9913793103448276,
+      "field_transactions_description": 0.8793103448275862,
       "field_transactions_direction": 1.0,
       "field_transactions_rewardPointsOnThisTransaction": 1.0,
-      "aggregate": 0.9760913136630938
+      "aggregate": 0.9556510620907668
     },
     "mmt": {
       "accuracy": 0.8620134377255816,
@@ -286,9 +286,9 @@
       "aggregate": 0.9788826516974072
     },
     "rubyx": {
-      "accuracy": 0.9758064516129032,
+      "accuracy": 0.9112903225806451,
       "accuracy_forgiven": 0.9758064516129032,
-      "accuracy_gated": 0.9834710743801653,
+      "accuracy_gated": 0.9173553719008265,
       "field_cards_bigPicture_cardAvailableCreditLimit": 0.0,
       "field_cards_bigPicture_cardCreditLimit": 0.0,
       "field_cards_cardMeta_cardDisplayName": 1.0,
@@ -307,10 +307,10 @@
       "field_statementMeta_statementPeriodStart": 1.0,
       "field_transactions_amount": 1.0,
       "field_transactions_date": 1.0,
-      "field_transactions_description": 1.0,
+      "field_transactions_description": 0.6190476190476191,
       "field_transactions_direction": 1.0,
       "field_transactions_rewardPointsOnThisTransaction": 1.0,
-      "aggregate": 0.9834710743801653
+      "aggregate": 0.9173553719008265
     },
     "expressions": {
       "accuracy": 0.9856850715746421,
@@ -340,9 +340,9 @@
       "aggregate": 0.9917695473251029
     },
     "manu": {
-      "accuracy": 0.8958333333333334,
+      "accuracy": 0.9861111111111112,
       "accuracy_forgiven": 0.9861111111111112,
-      "accuracy_gated": 0.9020979020979021,
+      "accuracy_gated": 0.993006993006993,
       "field_cards_bigPicture_cardAvailableCreditLimit": 1.0,
       "field_cards_bigPicture_cardCreditLimit": 1.0,
       "field_cards_cardMeta_lastFourDigit": 1.0,
@@ -359,10 +359,10 @@
       "field_statementMeta_statementPeriodStart": 1.0,
       "field_transactions_amount": 1.0,
       "field_transactions_date": 0.9615384615384616,
-      "field_transactions_description": 0.5,
+      "field_transactions_description": 1.0,
       "field_transactions_direction": 1.0,
       "field_transactions_rewardPointsOnThisTransaction": 1.0,
-      "aggregate": 0.9020979020979021
+      "aggregate": 0.993006993006993
     },
     "general": {
       "accuracy": 0.9891304347826086,
@@ -426,10 +426,10 @@
   "scorer_fingerprint": "",
   "cost_metrics": {
     "n_rows": 50.0,
-    "latency_ms_median": 18391.333270963514,
-    "latency_ms_mean": 20965.474856756628,
-    "latency_ms_p90": 32415.564999973867,
-    "cost_usd_total": 0.27739232248,
-    "cost_usd_per_row": 0.0055478464496
+    "latency_ms_median": 18782.29956299765,
+    "latency_ms_mean": 24150.506556719774,
+    "latency_ms_p90": 32997.40620801458,
+    "cost_usd_total": 0.27824552959,
+    "cost_usd_per_row": 0.0055649105918
   }
 }
