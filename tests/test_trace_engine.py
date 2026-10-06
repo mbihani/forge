@@ -451,18 +451,30 @@ def test_build_key_map_asserts_no_duplicates(monkeypatch) -> None:
 
 
 def test_fingerprint_changes_with_snapshot_content() -> None:
-    rows = [{"example_id": "a", "query": "q", "expectations": [{"name": "x"}],
-             "human_labels": [], "judge_rubrics": []}]
+    rows = [
+        {
+            "example_id": "a",
+            "query": "q",
+            "expectations": [{"name": "x"}],
+            "human_labels": [],
+            "judge_rubrics": [],
+        }
+    ]
     keys = objective_keys(rows)
     fp_a = compute_trace_fingerprint(keys, 2.0, snapshot_content_hash(rows))
     # Same content -> identical fingerprint (reproducible).
     assert fp_a == compute_trace_fingerprint(keys, 2.0, snapshot_content_hash(rows))
     # Different snapshot content -> different fingerprint (invalidates baseline).
-    rows2 = rows + [{"example_id": "b", "query": "q2", "expectations": [],
-                     "human_labels": [], "judge_rubrics": []}]
-    fp_b = compute_trace_fingerprint(
-        objective_keys(rows2), 2.0, snapshot_content_hash(rows2)
-    )
+    rows2 = rows + [
+        {
+            "example_id": "b",
+            "query": "q2",
+            "expectations": [],
+            "human_labels": [],
+            "judge_rubrics": [],
+        }
+    ]
+    fp_b = compute_trace_fingerprint(objective_keys(rows2), 2.0, snapshot_content_hash(rows2))
     assert fp_a != fp_b
     # Fingerprint is non-empty (unlike savesage's zeroed one).
     assert fp_a
@@ -693,9 +705,7 @@ def test_build_predictor_isolates_agent_per_thread(monkeypatch) -> None:
             time.sleep(0.005)  # widen the race window
             return "ok", {"latency_ms": 1.0}
 
-    monkeypatch.setattr(
-        runner_mod, "_load_memory_system", lambda *a, **k: _FakeMemorySystem()
-    )
+    monkeypatch.setattr(runner_mod, "_load_memory_system", lambda *a, **k: _FakeMemorySystem())
     snapshot = SimpleNamespace(
         config=SimpleNamespace(
             mode="code", agent_module="x", runtime_endpoint="", effective_runtime_model=""

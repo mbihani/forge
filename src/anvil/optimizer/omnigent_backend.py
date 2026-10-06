@@ -212,9 +212,7 @@ class OmnigentBackend:
             # the entire post-bind path (env resolve, upload, send, stream
             # drain, items fallback, changes/file reads) is 503-resilient.
             env_id = await _retry_on_503(lambda: self._resolve_environment(session_id))
-            await _retry_on_503(
-                lambda: self._upload_scaffold(session_id, env_id, scaffold_files)
-            )
+            await _retry_on_503(lambda: self._upload_scaffold(session_id, env_id, scaffold_files))
             await _send_with_retry(self.client, session_id, prompt)
             stream_text, turns_used, stream_drop = await _retry_on_503(
                 lambda: self._drain_stream(session_id, max_turns=effective_max_turns)
@@ -645,8 +643,7 @@ async def _wait_for_runner(
         with contextlib.suppress(OmnigentError):
             snapshot = await client.get_session(session_id)
             if snapshot.get("runner_online") and (
-                expected_runner_id is None
-                or snapshot.get("runner_id") == expected_runner_id
+                expected_runner_id is None or snapshot.get("runner_id") == expected_runner_id
             ):
                 return
         if attempt < max_attempts:

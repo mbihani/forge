@@ -56,9 +56,7 @@ _USER_ROLES = frozenset({"user", "human"})
 # scope. Today such a trace is skipped and counted under ``skipped_multiturn``;
 # a future revision can define how to fold a conversation into one eval query.
 _NON_USER_ROLES = frozenset({"assistant", "system", "tool", "developer"})
-_TOOL_ITEM_TYPES = frozenset(
-    {"function_call", "function_call_output", "tool_call", "tool_result"}
-)
+_TOOL_ITEM_TYPES = frozenset({"function_call", "function_call_output", "tool_call", "tool_result"})
 # Text part types accepted inside a structured (list) message content.
 _TEXT_PART_TYPES = frozenset({"text", "input_text", "output_text"})
 
@@ -378,9 +376,7 @@ def read_snapshot(path: str | Path) -> list[dict[str, Any]]:
             continue
         row = json.loads(line)
         if "example_id" not in row or "query" not in row:
-            raise ValueError(
-                f"trace snapshot line {line_no}: row missing example_id/query"
-            )
+            raise ValueError(f"trace snapshot line {line_no}: row missing example_id/query")
         # Tolerate snapshots written before a field existed by defaulting the
         # three assessment buckets and the bucket category.
         row.setdefault("category", "trace")

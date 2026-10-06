@@ -131,8 +131,15 @@ def get_diff_stat(round_id: int) -> tuple[str, str]:
             return "", ""
         full = subprocess.run(
             [
-                "git", "-C", str(REPO_ROOT), "diff", f"main..{branch}", "--",
-                "scaffold/skills/", "scaffold/rules/", "scaffold/harness.yaml",
+                "git",
+                "-C",
+                str(REPO_ROOT),
+                "diff",
+                f"main..{branch}",
+                "--",
+                "scaffold/skills/",
+                "scaffold/rules/",
+                "scaffold/harness.yaml",
             ],
             capture_output=True,
             text=True,
@@ -175,18 +182,14 @@ def mlflow_run_url(experiment_id: str | None, run_id: str | None) -> str | None:
     if not (experiment_id and run_id):
         return None
     return (
-        f"{WORKSPACE_HOST}/ml/experiments/{experiment_id}/evaluation-runs"
-        f"?selectedRunUuid={run_id}"
+        f"{WORKSPACE_HOST}/ml/experiments/{experiment_id}/evaluation-runs?selectedRunUuid={run_id}"
     )
 
 
 def mlflow_trace_url(experiment_id: str | None, trace_id: str | None) -> str | None:
     if not (experiment_id and trace_id):
         return None
-    return (
-        f"{WORKSPACE_HOST}/ml/experiments/{experiment_id}/traces"
-        f"?selectedTraceId={trace_id}"
-    )
+    return f"{WORKSPACE_HOST}/ml/experiments/{experiment_id}/traces?selectedTraceId={trace_id}"
 
 
 @dataclass
@@ -308,9 +311,7 @@ with tabs[0]:
     cols = st.columns(4)
     cols[0].metric("aggregate", fmt_score(raw.get("aggregate")))
     cols[1].metric("correctness", fmt_score(per_judge.get("correctness")))
-    cols[2].metric(
-        "retrieval_groundedness", fmt_score(per_judge.get("retrieval_groundedness"))
-    )
+    cols[2].metric("retrieval_groundedness", fmt_score(per_judge.get("retrieval_groundedness")))
     cols[3].metric(
         "refusal_appropriateness",
         fmt_score(per_judge.get("refusal_appropriateness")),
@@ -334,9 +335,7 @@ with tabs[0]:
         st.info("No per-bucket data (likely a noop round).")
 
     st.markdown("### Action applied")
-    mutation_row = next(
-        (m for m in mutations if m.get("round_id") == selected_round), None
-    )
+    mutation_row = next((m for m in mutations if m.get("round_id") == selected_round), None)
     if mutation_row:
         st.write(f"**diff_summary:** {mutation_row.get('diff_summary', '—')}")
         st.write(f"**files_added:** {mutation_row.get('files_added') or '—'}")

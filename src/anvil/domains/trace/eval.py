@@ -315,9 +315,7 @@ def score_row(
 
 def compute_weights(keys: list[str], min_human_weight: float) -> dict[str, float]:
     """Weight per objective: human keys ``min_human_weight``, judges ``1.0``."""
-    return {
-        k: (min_human_weight if k.startswith(_HUMAN_PREFIXES) else 1.0) for k in keys
-    }
+    return {k: (min_human_weight if k.startswith(_HUMAN_PREFIXES) else 1.0) for k in keys}
 
 
 def aggregate_report(
@@ -345,15 +343,11 @@ def aggregate_report(
 
     weights = compute_weights(keys, min_human_weight)
     total_w = sum(weights.values())
-    aggregate = (
-        sum(per_judge[k] * weights[k] for k in keys) / total_w if total_w else 0.0
-    )
+    aggregate = sum(per_judge[k] * weights[k] for k in keys) / total_w if total_w else 0.0
     return aggregate, per_judge
 
 
-def compute_trace_fingerprint(
-    keys: list[str], min_human_weight: float, snapshot_hash: str
-) -> str:
+def compute_trace_fingerprint(keys: list[str], min_human_weight: float, snapshot_hash: str) -> str:
     """Real fingerprint = stable hash of (sorted keys + weights + snapshot hash).
 
     Unlike ``evaluate_savesage`` (which zeroes the fingerprint), this makes
@@ -474,9 +468,7 @@ def _build_predictor(
         def _get_memory_system() -> Any:
             inst = getattr(local, "agent", None)
             if inst is None:
-                inst = _load_memory_system(
-                    agent_module, llm_client=runtime_client, model=model
-                )
+                inst = _load_memory_system(agent_module, llm_client=runtime_client, model=model)
                 local.agent = inst
             return inst
 
@@ -635,9 +627,7 @@ def evaluate_trace(
     )
 
     # Single "trace" bucket mirrors the savesage per_bucket shape.
-    per_bucket: dict[str, dict[str, float]] = {
-        "trace": {**per_judge, "aggregate": aggregate}
-    }
+    per_bucket: dict[str, dict[str, float]] = {"trace": {**per_judge, "aggregate": aggregate}}
 
     failures: list[dict[str, Any]] = []
     for r in scored_rows:
@@ -661,15 +651,11 @@ def evaluate_trace(
         fingerprint += f"+agent_evals:{fingerprint_judges(agent_judges)}"
 
     cost_metrics: dict[str, float] = {"n_rows": float(len(scored_rows))}
-    latencies = sorted(
-        r["latency_ms"] for r in scored_rows if r.get("latency_ms") is not None
-    )
+    latencies = sorted(r["latency_ms"] for r in scored_rows if r.get("latency_ms") is not None)
     if latencies:
         mid = len(latencies) // 2
         cost_metrics["latency_ms_median"] = (
-            latencies[mid]
-            if len(latencies) % 2
-            else (latencies[mid - 1] + latencies[mid]) / 2
+            latencies[mid] if len(latencies) % 2 else (latencies[mid - 1] + latencies[mid]) / 2
         )
         cost_metrics["latency_ms_mean"] = sum(latencies) / len(latencies)
 

@@ -103,13 +103,9 @@ def _api(
     if body is not None:
         cmd += ["--json", json.dumps(body)]
     try:
-        proc = subprocess.run(
-            cmd, capture_output=True, text=True, check=True, timeout=timeout
-        )
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
-        raise RuntimeError(
-            f"Databricks CLI call to {path} timed out after {timeout}s"
-        ) from exc
+        raise RuntimeError(f"Databricks CLI call to {path} timed out after {timeout}s") from exc
     out = proc.stdout
     brace = out.find("{")
     if brace < 0:
@@ -148,10 +144,7 @@ def _collect_run_ids(
                 f"experiment {experiment_id} has too many trace pages to "
                 f"process (safety limit {max_pages} reached)"
             )
-        q = (
-            f"/api/2.0/mlflow/traces?experiment_ids={quote(experiment_id)}"
-            f"&max_results={page_size}"
-        )
+        q = f"/api/2.0/mlflow/traces?experiment_ids={quote(experiment_id)}&max_results={page_size}"
         if token:
             q += f"&page_token={quote(token)}"
         data = _api("get", q, cli=cli, profile=profile)
@@ -272,17 +265,14 @@ def build_mlflow_baseline(
     eid = experiment_id.strip()
     if not eid or not eid.isdigit():
         raise ValueError(
-            f"experiment_id must be a non-empty numeric string (digits only), "
-            f"got {experiment_id!r}"
+            f"experiment_id must be a non-empty numeric string (digits only), got {experiment_id!r}"
         )
 
     cli = _resolve_cli(cli)
     profile = _resolve_profile(profile)
 
     if bank_filter:
-        filtered_run_ids = _collect_run_ids(
-            eid, cli=cli, profile=profile, bank_filter=bank_filter
-        )
+        filtered_run_ids = _collect_run_ids(eid, cli=cli, profile=profile, bank_filter=bank_filter)
         candidate_ids = filtered_run_ids
     else:
         # No bank filter: score every run in the experiment that has
@@ -308,8 +298,7 @@ def build_mlflow_baseline(
     if not scored:
         bank_msg = f" for bank {bank_filter!r}" if bank_filter else ""
         raise RuntimeError(
-            f"no scored judge runs found in experiment {eid}{bank_msg}"
-            " — cannot seed baseline"
+            f"no scored judge runs found in experiment {eid}{bank_msg} — cannot seed baseline"
         )
 
     # Collect only finite metric values (skip NaN/inf). judge.accuracy must
@@ -321,8 +310,7 @@ def build_mlflow_baseline(
     ]
     if not acc_vals:
         raise RuntimeError(
-            f"no finite judge.accuracy values found in experiment {eid}"
-            " — cannot seed baseline"
+            f"no finite judge.accuracy values found in experiment {eid} — cannot seed baseline"
         )
     accuracy = _mean(acc_vals)
 

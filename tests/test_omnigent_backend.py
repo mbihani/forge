@@ -463,9 +463,7 @@ def test_run_binds_discovered_runner_before_first_resource_read(tmp_path: Path) 
     ]
     fake = FakeOmnigentClient(stream_events=stream_events)
     result = asyncio.run(
-        _bind_backend(tmp_path, fake).run(
-            prompt="p", scaffold_files={}, max_turns=5, model="m"
-        )
+        _bind_backend(tmp_path, fake).run(prompt="p", scaffold_files={}, max_turns=5, model="m")
     )
 
     names = [c[0] for c in fake.calls]
@@ -1387,7 +1385,11 @@ def test_wire_post_bind_calls_target_managed_id(tmp_path: Path) -> None:
     assert (
         "DELETE",
         "",
-    ) not in {(r.method, r.path.split(_WIRE_MANAGED_ID, 1)[1]) for r in recorded if _WIRE_MANAGED_ID in r.path}
+    ) not in {
+        (r.method, r.path.split(_WIRE_MANAGED_ID, 1)[1])
+        for r in recorded
+        if _WIRE_MANAGED_ID in r.path
+    }
 
 
 def test_wire_waits_for_runner_then_proceeds(
@@ -1454,9 +1456,7 @@ def test_wire_model_pin_carries_through_model_override(tmp_path: Path) -> None:
     recorded: list[_Recorded] = []
     backend = _managed_backend(tmp_path, recorded)
     asyncio.run(
-        backend.run(
-            prompt="p", scaffold_files={}, max_turns=37, model="databricks-claude-opus-4-8"
-        )
+        backend.run(prompt="p", scaffold_files={}, max_turns=37, model="databricks-claude-opus-4-8")
     )
 
     bind = next(
@@ -1487,9 +1487,7 @@ def test_run_bakes_round_model_and_max_turns_into_submitted_bundle(tmp_path: Pat
         server_url="http://localhost:6767",
     )
     asyncio.run(
-        backend.run(
-            prompt="p", scaffold_files={}, max_turns=37, model="databricks-claude-opus-4-8"
-        )
+        backend.run(prompt="p", scaffold_files={}, max_turns=37, model="databricks-claude-opus-4-8")
     )
 
     assert fake.submitted_bundle is not None  # captured the real submitted bytes

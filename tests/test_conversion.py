@@ -108,9 +108,7 @@ def test_build_conversion_prompt_with_findings() -> None:
 def test_build_conversion_prompt_no_findings() -> None:
     """With no alternative structures the prompt still generates, with a
     generic 'infer the structure' instruction."""
-    prompt = build_conversion_prompt(
-        "https://github.com/user/repo", "main", "forge-compat", {}
-    )
+    prompt = build_conversion_prompt("https://github.com/user/repo", "main", "forge-compat", {})
     assert "forge-compat" in prompt
     assert "no alternative structures detected" in prompt
 
@@ -369,9 +367,7 @@ def test_converter_agent_yaml_has_guardrails_policy() -> None:
 def test_converter_agent_bundle_builds_and_substitutes() -> None:
     """The converter YAML packages into a tar.gz with model/max_turns substituted
     (same contract as the optimizer bundle)."""
-    bundle = _build_agent_bundle(
-        _CONVERTER_YAML, model="databricks-claude-opus-4-8", max_turns=50
-    )
+    bundle = _build_agent_bundle(_CONVERTER_YAML, model="databricks-claude-opus-4-8", max_turns=50)
     with tarfile.open(fileobj=io.BytesIO(bundle), mode="r:gz") as tar:
         assert tar.getnames() == ["config.yaml"]
         config = yaml.safe_load(tar.extractfile("config.yaml").read())  # type: ignore[union-attr]
@@ -541,7 +537,11 @@ class _FakeManagedSessionClient:
         self.create_session_calls.append(
             {"bundle": bundle_bytes, "metadata": metadata, "bundle_filename": bundle_filename}
         )
-        return {"session_id": "reg-sess-id", "agent_id": "agent-xyz", "agent_name": "forge-converter"}
+        return {
+            "session_id": "reg-sess-id",
+            "agent_id": "agent-xyz",
+            "agent_name": "forge-converter",
+        }
 
     async def create_session_from_agent(
         self,
@@ -619,7 +619,11 @@ def test_run_managed_session_two_step_flow() -> None:
 
     async def _run() -> str:
         return await _run_managed_session(
-            client, bundle, "convert the repo", "forge-compat", _noop_progress,
+            client,
+            bundle,
+            "convert the repo",
+            "forge-compat",
+            _noop_progress,
             on_session_created=captured_session_ids.append,
         )
 
@@ -945,9 +949,7 @@ def test_run_conversion_task_revalidation_unpacks_3tuple(
         "_parse_github_url",
         lambda _url: ("https://github.com/owner/repo", "owner", "repo"),
     )
-    monkeypatch.setattr(
-        conversion_module, "_build_agent_bundle", lambda *a, **kw: b"bundle-bytes"
-    )
+    monkeypatch.setattr(conversion_module, "_build_agent_bundle", lambda *a, **kw: b"bundle-bytes")
     monkeypatch.setattr(conversion_module, "OmnigentClient", lambda *a, **kw: object())
     monkeypatch.setenv("OMNIGENT_SERVER_URL", "http://test")
     monkeypatch.setenv("OMNIGENT_AUTH_TOKEN", "tok")

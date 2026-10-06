@@ -426,9 +426,7 @@ class OmnigentClient:
         error on an unbound managed conversation demands. Returns the updated
         ``SessionResponse`` snapshot.
         """
-        resp = await self._client.patch(
-            f"/v1/sessions/{session_id}", json={"runner_id": runner_id}
-        )
+        resp = await self._client.patch(f"/v1/sessions/{session_id}", json={"runner_id": runner_id})
         self._raise_for_status(resp, "bind_runner")
         return resp.json()
 

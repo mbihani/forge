@@ -260,9 +260,7 @@ def _patch_omnigent_session(
     # action. A legitimate noop is the SAME action with ``optimizer_error``
     # None — so this stub proves the two are told apart by the marker alone.
     action = NoopAction(rationale="parser: no `json-action` fenced block in transcript")
-    transcript = (
-        "[omnigent backend error: HTTP 401]" if optimizer_error else "(clean noop)\n"
-    )
+    transcript = "[omnigent backend error: HTTP 401]" if optimizer_error else "(clean noop)\n"
     parse_result = ParseResult(
         action=action,
         parse_status="no_block" if optimizer_error else "ok",
@@ -283,9 +281,7 @@ def test_run_round_backend_failure_persists_infra_fail(
     round decision to ``infra_fail`` and threads the error into the round
     JSON — a regression that leaves it ``noop`` fails here."""
     repo = _init_repo(tmp_path)
-    _patch_omnigent_session(
-        monkeypatch, optimizer_error="OmnigentError: HTTP 401 | login redirect"
-    )
+    _patch_omnigent_session(monkeypatch, optimizer_error="OmnigentError: HTTP 401 | login redirect")
 
     report = run_round(round_id=1, repo_root=repo, parent_branch="anvil/exp", max_turns=1)
 
@@ -295,17 +291,13 @@ def test_run_round_backend_failure_persists_infra_fail(
 
     # The PERSISTED round JSON (what the orchestrator/UI read) carries both
     # the infra_fail decision and the threaded error marker.
-    round_json = json.loads(
-        (repo / "eval" / "runs" / "round_001.json").read_text(encoding="utf-8")
-    )
+    round_json = json.loads((repo / "eval" / "runs" / "round_001.json").read_text(encoding="utf-8"))
     assert round_json["decision"] == "infra_fail"
     assert round_json["optimizer_error"] == "OmnigentError: HTTP 401 | login redirect"
     assert "OmnigentError: HTTP 401" in round_json["notes"]
 
 
-def test_run_round_legit_noop_stays_noop(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_run_round_legit_noop_stays_noop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A legitimate optimizer-chosen noop (no ``optimizer_error``) must
     REMAIN ``noop`` — never mislabeled as ``infra_fail``. This is the
     complement that prevents over-correction."""
@@ -316,9 +308,7 @@ def test_run_round_legit_noop_stays_noop(
 
     assert report.decision is Decision.NOOP
 
-    round_json = json.loads(
-        (repo / "eval" / "runs" / "round_001.json").read_text(encoding="utf-8")
-    )
+    round_json = json.loads((repo / "eval" / "runs" / "round_001.json").read_text(encoding="utf-8"))
     assert round_json["decision"] == "noop"
     assert round_json["optimizer_error"] is None
 

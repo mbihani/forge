@@ -205,7 +205,7 @@ def build_conversion_prompt(
     if gh_token and effective_clone_url.startswith("https://github.com/"):
         tokenized_clone_url = (
             f"https://x-access-token:{gh_token}@github.com/"
-            + effective_clone_url[len("https://github.com/"):]
+            + effective_clone_url[len("https://github.com/") :]
         )
 
     # Summarize the detected alternative structures for the agent.
@@ -225,7 +225,9 @@ def build_conversion_prompt(
             files_str = ", ".join(str(f) for f in files)
             findings_lines.append(f"- {label}: {files_str}")
     findings_block = (
-        "\n".join(findings_lines) if findings_lines else "- (no alternative structures detected; "
+        "\n".join(findings_lines)
+        if findings_lines
+        else "- (no alternative structures detected; "
         "infer the agent structure from the repo contents directly)"
     )
 
@@ -331,9 +333,7 @@ the repo root.
 """
 
 
-def check_pii_in_commit(
-    repo_path: str | Path, branch: str, base_branch: str = "main"
-) -> list[str]:
+def check_pii_in_commit(repo_path: str | Path, branch: str, base_branch: str = "main") -> list[str]:
     """Post-conversion PII check: scan the branch diff for card masks, tokens,
     and a committed ``data/golden_set.jsonl``.
 
@@ -409,7 +409,7 @@ def _build_pr_url(clone_url: str, base_branch: str, target_branch: str) -> str |
     """
     if not clone_url.startswith("https://github.com/"):
         return None
-    rest = clone_url[len("https://github.com/"):]
+    rest = clone_url[len("https://github.com/") :]
     parts = rest.split("/")
     if len(parts) < 2:
         return None
@@ -517,14 +517,16 @@ async def _run_conversion_task(session_id: str, target_branch: str) -> None:
         # moment the session is created (before the potentially long drain),
         # so the UI can show a transcript link while the agent is still working.
         def _on_session_created(sid: str) -> None:
-            url = build_session_url(
-                server_url, sid, resolve_omnigent_workspace_id()
-            )
+            url = build_session_url(server_url, sid, resolve_omnigent_workspace_id())
             _set(session_id=sid, session_url=url)
             _progress("agent_session", f"Session link: {url}")
 
         await _run_managed_session(
-            client, bundle, prompt, target_branch, _progress,
+            client,
+            bundle,
+            prompt,
+            target_branch,
+            _progress,
             on_session_created=_on_session_created,
         )
 
@@ -534,9 +536,7 @@ async def _run_conversion_task(session_id: str, target_branch: str) -> None:
             f"Re-cloning the converted branch '{target_branch}' for re-validation.",
         )
         converted_root = app_module._SESSIONS_ROOT / f"{session_id}-converted"
-        converted_path = (
-            (converted_root / agent_subpath) if agent_subpath else converted_root
-        )
+        converted_path = (converted_root / agent_subpath) if agent_subpath else converted_root
         err = await anyio.to_thread.run_sync(
             partial(
                 app_module._clone_repo,
@@ -552,9 +552,7 @@ async def _run_conversion_task(session_id: str, target_branch: str) -> None:
                 err = err.replace(gh_token, "***")
             raise RuntimeError(f"failed to re-clone converted branch: {err}")
         if agent_subpath and not converted_path.is_dir():
-            raise RuntimeError(
-                f"subdirectory '{agent_subpath}' not found in converted branch"
-            )
+            raise RuntimeError(f"subdirectory '{agent_subpath}' not found in converted branch")
 
         # ---- Post-conversion PII check ----
         _progress("pii_check", "Scanning the converted branch for PII (card masks / tokens).")
@@ -760,8 +758,7 @@ async def _run_managed_session(
         transcript = await _drain_conversion_stream(client, omnigent_session_id, progress)
         progress(
             "agent_done",
-            "Agent finished. "
-            + (transcript[:200] + "…" if len(transcript) > 200 else transcript),
+            "Agent finished. " + (transcript[:200] + "…" if len(transcript) > 200 else transcript),
         )
         return transcript
     finally:
@@ -782,7 +779,9 @@ async def _run_managed_session(
 
 
 async def _drain_conversion_stream(
-    client: OmnigentClient, session_id: str, progress: Any,
+    client: OmnigentClient,
+    session_id: str,
+    progress: Any,
     *,
     max_turns: int = _CONVERSION_MAX_TURNS,
     inactivity_timeout: float = _STREAM_INACTIVITY_TIMEOUT,

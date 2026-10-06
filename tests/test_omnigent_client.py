@@ -481,10 +481,7 @@ def test_resolve_server_url_derived_from_host(monkeypatch: pytest.MonkeyPatch) -
     route and 404s)."""
     monkeypatch.delenv("OMNIGENT_SERVER_URL", raising=False)
     monkeypatch.setenv("DATABRICKS_HOST", "https://foo.cloud.databricks.com")
-    assert (
-        resolve_omnigent_server_url()
-        == "https://foo.cloud.databricks.com/api/2.0/omnigent"
-    )
+    assert resolve_omnigent_server_url() == "https://foo.cloud.databricks.com/api/2.0/omnigent"
 
 
 def test_resolve_server_url_derived_strips_trailing_slash(
@@ -493,10 +490,7 @@ def test_resolve_server_url_derived_strips_trailing_slash(
     """(b) A trailing slash on ``DATABRICKS_HOST`` is handled (no double slash)."""
     monkeypatch.delenv("OMNIGENT_SERVER_URL", raising=False)
     monkeypatch.setenv("DATABRICKS_HOST", "https://foo.cloud.databricks.com/")
-    assert (
-        resolve_omnigent_server_url()
-        == "https://foo.cloud.databricks.com/api/2.0/omnigent"
-    )
+    assert resolve_omnigent_server_url() == "https://foo.cloud.databricks.com/api/2.0/omnigent"
 
 
 def test_resolve_server_url_host_already_has_omnigent_suffix(
@@ -512,10 +506,7 @@ def test_resolve_server_url_host_already_has_omnigent_suffix(
         "https://foo.cloud.databricks.com/omnigent/",
     ):
         monkeypatch.setenv("DATABRICKS_HOST", host)
-        assert (
-            resolve_omnigent_server_url()
-            == "https://foo.cloud.databricks.com/api/2.0/omnigent"
-        )
+        assert resolve_omnigent_server_url() == "https://foo.cloud.databricks.com/api/2.0/omnigent"
 
 
 def test_resolve_server_url_host_has_legacy_api_suffix(
@@ -526,13 +517,8 @@ def test_resolve_server_url_host_has_legacy_api_suffix(
     appended — never doubled into
     ``.../api/2.0/omnigent/api/2.0/omnigent``."""
     monkeypatch.delenv("OMNIGENT_SERVER_URL", raising=False)
-    monkeypatch.setenv(
-        "DATABRICKS_HOST", "https://foo.cloud.databricks.com/api/2.0/omnigent"
-    )
-    assert (
-        resolve_omnigent_server_url()
-        == "https://foo.cloud.databricks.com/api/2.0/omnigent"
-    )
+    monkeypatch.setenv("DATABRICKS_HOST", "https://foo.cloud.databricks.com/api/2.0/omnigent")
+    assert resolve_omnigent_server_url() == "https://foo.cloud.databricks.com/api/2.0/omnigent"
 
 
 def test_resolve_server_url_bare_host_gets_https_scheme(
@@ -549,9 +535,7 @@ def test_resolve_server_url_bare_host_gets_https_scheme(
     assertion fail (the derived value comes back as
     ``https://fevm-...databricks.com/omnigent``, the UI surface)."""
     monkeypatch.delenv("OMNIGENT_SERVER_URL", raising=False)
-    monkeypatch.setenv(
-        "DATABRICKS_HOST", "fevm-stable-classic-7ppxjq.cloud.databricks.com"
-    )
+    monkeypatch.setenv("DATABRICKS_HOST", "fevm-stable-classic-7ppxjq.cloud.databricks.com")
     assert resolve_omnigent_server_url() == (
         "https://fevm-stable-classic-7ppxjq.cloud.databricks.com/api/2.0/omnigent"
     )
@@ -617,9 +601,7 @@ def test_resolve_server_url_explicit_override_scheme_untouched(
     ``http://localhost:6767`` is never forced to ``https://`` and nothing is
     appended."""
     monkeypatch.setenv("OMNIGENT_SERVER_URL", "http://localhost:6767")
-    monkeypatch.setenv(
-        "DATABRICKS_HOST", "fevm-stable-classic-7ppxjq.cloud.databricks.com"
-    )
+    monkeypatch.setenv("DATABRICKS_HOST", "fevm-stable-classic-7ppxjq.cloud.databricks.com")
     assert resolve_omnigent_server_url() == "http://localhost:6767"
 
 
@@ -631,12 +613,8 @@ def test_build_session_url_from_derived_bare_host_is_navigable(
     ``https://.../omnigent/c/<id>`` navigable link (with ``?o=`` when a
     workspace id resolves)."""
     monkeypatch.delenv("OMNIGENT_SERVER_URL", raising=False)
-    monkeypatch.setenv(
-        "DATABRICKS_HOST", "fevm-stable-classic-7ppxjq.cloud.databricks.com"
-    )
-    monkeypatch.setattr(
-        "anvil.optimizer.omnigent_client._sdk_workspace_id", lambda: None
-    )
+    monkeypatch.setenv("DATABRICKS_HOST", "fevm-stable-classic-7ppxjq.cloud.databricks.com")
+    monkeypatch.setattr("anvil.optimizer.omnigent_client._sdk_workspace_id", lambda: None)
     monkeypatch.setenv("DATABRICKS_WORKSPACE_ID", "7474660648944264")
     server_url = resolve_omnigent_server_url()
     wsid = resolve_omnigent_workspace_id()
@@ -666,13 +644,9 @@ def test_derived_api_base_composes_to_ui_link(
     documents the coupling between the two functions.
     """
     monkeypatch.delenv("OMNIGENT_SERVER_URL", raising=False)
-    monkeypatch.setenv(
-        "DATABRICKS_HOST", "fevm-stable-classic-7ppxjq.cloud.databricks.com"
-    )
+    monkeypatch.setenv("DATABRICKS_HOST", "fevm-stable-classic-7ppxjq.cloud.databricks.com")
     derived = resolve_omnigent_server_url()
-    assert derived == (
-        "https://fevm-stable-classic-7ppxjq.cloud.databricks.com/api/2.0/omnigent"
-    )
+    assert derived == ("https://fevm-stable-classic-7ppxjq.cloud.databricks.com/api/2.0/omnigent")
     assert build_session_url(derived, "sid", "42") == (
         "https://fevm-stable-classic-7ppxjq.cloud.databricks.com/omnigent/c/sid?o=42"
     )
@@ -685,10 +659,7 @@ def test_resolve_server_url_empty_env_treated_as_unset(
     derivation — deploy configs set it to ``""`` to enable derivation."""
     monkeypatch.setenv("OMNIGENT_SERVER_URL", "")
     monkeypatch.setenv("DATABRICKS_HOST", "https://bar.cloud.databricks.com")
-    assert (
-        resolve_omnigent_server_url()
-        == "https://bar.cloud.databricks.com/api/2.0/omnigent"
-    )
+    assert resolve_omnigent_server_url() == "https://bar.cloud.databricks.com/api/2.0/omnigent"
 
 
 def test_resolve_server_url_none_when_nothing_set(
@@ -712,9 +683,7 @@ def test_resolve_workspace_id_sdk_preferred(monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_resolve_workspace_id_env_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     """(c) When the SDK yields nothing, fall back to ``DATABRICKS_WORKSPACE_ID``."""
-    monkeypatch.setattr(
-        "anvil.optimizer.omnigent_client._sdk_workspace_id", lambda: None
-    )
+    monkeypatch.setattr("anvil.optimizer.omnigent_client._sdk_workspace_id", lambda: None)
     monkeypatch.setenv("DATABRICKS_WORKSPACE_ID", "7474660648944264")
     assert resolve_omnigent_workspace_id() == "7474660648944264"
 
@@ -723,9 +692,7 @@ def test_resolve_workspace_id_none_when_nothing_available(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """No SDK id and no env → ``None`` (the ``?o=`` param is omitted)."""
-    monkeypatch.setattr(
-        "anvil.optimizer.omnigent_client._sdk_workspace_id", lambda: None
-    )
+    monkeypatch.setattr("anvil.optimizer.omnigent_client._sdk_workspace_id", lambda: None)
     monkeypatch.delenv("DATABRICKS_WORKSPACE_ID", raising=False)
     assert resolve_omnigent_workspace_id() is None
 
@@ -753,9 +720,7 @@ def test_build_session_url_derived_base_with_o_param(
     yield the canonical navigable link (single ``/omnigent``, ``?o=`` set)."""
     monkeypatch.delenv("OMNIGENT_SERVER_URL", raising=False)
     monkeypatch.setenv("DATABRICKS_HOST", "https://fevm-stable-classic-7ppxjq.cloud.databricks.com")
-    monkeypatch.setattr(
-        "anvil.optimizer.omnigent_client._sdk_workspace_id", lambda: None
-    )
+    monkeypatch.setattr("anvil.optimizer.omnigent_client._sdk_workspace_id", lambda: None)
     monkeypatch.setenv("DATABRICKS_WORKSPACE_ID", "7474660648944264")
     server_url = resolve_omnigent_server_url()
     wsid = resolve_omnigent_workspace_id()
@@ -778,9 +743,7 @@ def test_build_session_url_strips_api_suffix() -> None:
     returns), ``build_session_url`` still recovers the workspace host and
     yields the navigable UI link ``<host>/omnigent/c/<id>`` — NOT
     ``…/api/2.0/omnigent/c/<id>``."""
-    url = build_session_url(
-        "https://foo.cloud.databricks.com/api/2.0/omnigent", "sid", "42"
-    )
+    url = build_session_url("https://foo.cloud.databricks.com/api/2.0/omnigent", "sid", "42")
     assert url == "https://foo.cloud.databricks.com/omnigent/c/sid?o=42"
 
 
@@ -990,7 +953,9 @@ def test_no_request_is_sent_without_a_bearer() -> None:
     non-empty ``Bearer <token>``."""
     seen: list[str | None] = []
     http_client = _mock_client("http://localhost:6767", seen)
-    c = OmnigentClient("http://localhost:6767", None, client=http_client, token_fn=lambda: "live-tok")
+    c = OmnigentClient(
+        "http://localhost:6767", None, client=http_client, token_fn=lambda: "live-tok"
+    )
     try:
         asyncio.run(c.get_session("s1"))
         asyncio.run(c.list_environments("s1"))

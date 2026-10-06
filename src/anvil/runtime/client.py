@@ -210,8 +210,7 @@ def _drop_rejected_params(exc: Exception, kwargs: dict[str, Any]) -> dict[str, A
     dropped = {
         p
         for p in _DROPPABLE_PARAMS
-        if p in kwargs
-        and (f"{p} parameter" in message or re.search(rf"['\"]{p}\\?['\"]", message))
+        if p in kwargs and (f"{p} parameter" in message or re.search(rf"['\"]{p}\\?['\"]", message))
     }
     if not dropped:
         return None

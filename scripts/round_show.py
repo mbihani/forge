@@ -111,8 +111,10 @@ def show_baseline(repo_root: Path) -> dict | None:
         return None
     raw = json.loads(bp.read_text(encoding="utf-8"))
     print(_h1(f"Baseline cache · {raw['mode']} · sha {raw['scaffold_commit_sha'][:8]}"))
-    print(f"  {BOLD}aggregate: {raw['aggregate']:.3f}{RESET}  "
-          f"(n={raw['n_examples']}, scorers={','.join(raw['scorers'])})")
+    print(
+        f"  {BOLD}aggregate: {raw['aggregate']:.3f}{RESET}  "
+        f"(n={raw['n_examples']}, scorers={','.join(raw['scorers'])})"
+    )
     print(_h2("per-judge"))
     for name, value in raw["per_judge"].items():
         print(f"  {value:5.3f}  {name}")
@@ -181,18 +183,17 @@ def show_eval_report(eval_path: Path, baseline: dict | None) -> None:
     print(_h2(f"failures ({len(failures)})"))
     for f in failures:
         judges = ",".join(f.get("judge_failures", []))
-        print(f"  {RED}{f['example_id']:11}{RESET}  {f['category']:12}  "
-              f"{DIM}fails:{RESET} {judges}")
-        print(f"               {DIM}{f.get('query','')[:80]}{RESET}")
+        print(
+            f"  {RED}{f['example_id']:11}{RESET}  {f['category']:12}  {DIM}fails:{RESET} {judges}"
+        )
+        print(f"               {DIM}{f.get('query', '')[:80]}{RESET}")
         print(f"               {DIM}trace_id: {f.get('trace_id')}{RESET}")
 
     print(_h2("mlflow"))
     # Round JSONs nest mlflow under "mlflow"; eval-only JSONs put run_id flat.
     mlflow_block = raw.get("mlflow") or {}
     run_id = mlflow_block.get("run_id") if mlflow_block else raw.get("run_id")
-    experiment_id = (
-        mlflow_block.get("experiment_id") if mlflow_block else raw.get("experiment_id")
-    )
+    experiment_id = mlflow_block.get("experiment_id") if mlflow_block else raw.get("experiment_id")
     print(f"  run_id: {run_id}")
     print(f"  experiment_id: {experiment_id}")
     print()
@@ -222,7 +223,10 @@ def show_round(round_id: int, repo_root: Path, baseline: dict | None) -> None:
     try:
         diff = subprocess.run(
             ["git", "-C", str(repo_root), "diff", "--stat", f"main..{branch}", "--", "scaffold/"],
-            capture_output=True, text=True, check=False, timeout=10,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
         )
         if diff.stdout.strip():
             for line in diff.stdout.splitlines():
@@ -312,11 +316,17 @@ def main(argv: list[str] | None = None) -> int:
     print(_h1(f"ANVIL — repo {REPO_ROOT.name}"))
     sha_proc = subprocess.run(
         ["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"],
-        capture_output=True, text=True, check=False, timeout=5,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=5,
     )
     branch_proc = subprocess.run(
         ["git", "-C", str(REPO_ROOT), "rev-parse", "--abbrev-ref", "HEAD"],
-        capture_output=True, text=True, check=False, timeout=5,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=5,
     )
     print(f"  branch: {branch_proc.stdout.strip() or '?'}")
     print(f"  HEAD:   {sha_proc.stdout.strip()[:12] or '?'}")

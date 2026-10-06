@@ -230,10 +230,22 @@ def test_final_aggregate_fallback_uses_last_kept_not_last_round() -> None:
     0.70 / +0.20 — the bite this test guards.
     """
     rounds = [
-        {"round_id": 1, "decision": "keep", "action_kind": "edit_skill",
-         "baseline_score": 0.50, "aggregate": 0.60, "score_delta_vs_parent": 0.10},
-        {"round_id": 2, "decision": "revert", "action_kind": "edit_rule",
-         "baseline_score": 0.60, "aggregate": 0.70, "score_delta_vs_parent": 0.10},
+        {
+            "round_id": 1,
+            "decision": "keep",
+            "action_kind": "edit_skill",
+            "baseline_score": 0.50,
+            "aggregate": 0.60,
+            "score_delta_vs_parent": 0.10,
+        },
+        {
+            "round_id": 2,
+            "decision": "revert",
+            "action_kind": "edit_rule",
+            "baseline_score": 0.60,
+            "aggregate": 0.70,
+            "score_delta_vs_parent": 0.10,
+        },
     ]
     summary = build_improvement_summary(
         session_meta={},
@@ -251,10 +263,22 @@ def test_final_aggregate_fallback_all_reverted_is_baseline() -> None:
     finalized/frontier data, the agent is still the baseline: final ==
     baseline and net_improvement == 0 — never a discarded candidate's score."""
     rounds = [
-        {"round_id": 1, "decision": "revert", "action_kind": "edit_skill",
-         "baseline_score": 0.50, "aggregate": 0.70, "score_delta_vs_parent": 0.20},
-        {"round_id": 2, "decision": "infra_fail", "action_kind": "noop",
-         "baseline_score": 0.50, "aggregate": None, "score_delta_vs_parent": None},
+        {
+            "round_id": 1,
+            "decision": "revert",
+            "action_kind": "edit_skill",
+            "baseline_score": 0.50,
+            "aggregate": 0.70,
+            "score_delta_vs_parent": 0.20,
+        },
+        {
+            "round_id": 2,
+            "decision": "infra_fail",
+            "action_kind": "noop",
+            "baseline_score": 0.50,
+            "aggregate": None,
+            "score_delta_vs_parent": None,
+        },
     ]
     summary = build_improvement_summary(
         session_meta={},
@@ -388,9 +412,7 @@ def test_run_round_with_raising_sink_still_succeeds(
     )
 
     assert report.decision is Decision.NOOP  # round completed despite dead sink
-    round_json = json.loads(
-        (repo / "eval" / "runs" / "round_001.json").read_text(encoding="utf-8")
-    )
+    round_json = json.loads((repo / "eval" / "runs" / "round_001.json").read_text(encoding="utf-8"))
     assert round_json["optimizer_run"] == {"run_id": "run-xyz", "experiment_id": "exp-9"}
     assert "rationale" in round_json
 
@@ -417,7 +439,10 @@ def test_runtime_yaml_defaults_persistence_enabled() -> None:
 
 
 def test_runtime_yaml_accepts_persistence_block() -> None:
-    cfg = RuntimeYAML(**_MINIMAL_RUNTIME, persistence={"enabled": False, "experiment": "/Shared/forge/genai/custom"})
+    cfg = RuntimeYAML(
+        **_MINIMAL_RUNTIME,
+        persistence={"enabled": False, "experiment": "/Shared/forge/genai/custom"},
+    )
     assert cfg.persistence.enabled is False
     assert cfg.persistence.experiment == "/Shared/forge/genai/custom"
 
@@ -526,8 +551,14 @@ def test_finalize_relog_preserves_started_at(
         config={},
         baseline={"aggregate": 0.50},
         rounds=[
-            {"round_id": 1, "decision": "keep", "action_kind": "edit_skill",
-             "baseline_score": 0.50, "aggregate": 0.60, "score_delta_vs_parent": 0.10},
+            {
+                "round_id": 1,
+                "decision": "keep",
+                "action_kind": "edit_skill",
+                "baseline_score": 0.50,
+                "aggregate": 0.60,
+                "score_delta_vs_parent": 0.10,
+            },
         ],
         frontier=None,
         finalized={"aggregate": 0.58},
@@ -609,9 +640,7 @@ def test_task_finally_close_failure_does_not_mask_real_error(
     )
     try:
         # Must NOT raise — the close error is swallowed in the finally.
-        asyncio.run(
-            app_mod._run_optimization_task(session_id, None, max_rounds=1, max_turns=1)
-        )
+        asyncio.run(app_mod._run_optimization_task(session_id, None, max_rounds=1, max_turns=1))
         sess = app_mod._sessions[session_id]
         # The REAL failure (the round error) is what the session records.
         assert sess.status == "error"

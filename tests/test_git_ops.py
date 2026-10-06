@@ -24,7 +24,9 @@ from anvil.loop.git_ops import (
 )
 
 
-def _raw_git(repo: Path, *args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+def _raw_git(
+    repo: Path, *args: str, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
     """Run ``git`` directly (NOT through the wrapper) and return the result."""
     return subprocess.run(
         ["git", "-C", str(repo), *args],

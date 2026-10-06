@@ -75,7 +75,7 @@ def _format_critique(round_data: dict, mutation: dict | None) -> str:
     summary = (mutation or {}).get("diff_summary") or "(no diff_summary in mutations log)"
 
     return f"""---
-round: {round_data.get('round_id')}
+round: {round_data.get("round_id")}
 branch: {branch}
 decision: {decision}
 action_kind: {action_kind}
@@ -87,7 +87,7 @@ reconstructed: true
 reconstructed_from: [eval/runs/round_NNN.json, eval/mutations.jsonl]
 ---
 
-# Round {round_data.get('round_id')} critique (reconstructed)
+# Round {round_data.get("round_id")} critique (reconstructed)
 
 This file was reconstructed from the round JSON + mutations log
 because the original critique md was orphaned by the ``run_round``
@@ -104,7 +104,7 @@ round's ``git checkout`` clobbered it).
 Decision: **{decision.upper()}**. Score delta vs cached baseline: {sd}.
 
 For the full optimizer reasoning, open the transcript at
-``scaffold/memory/round_{round_data.get('round_id'):03d}_transcript.md``
+``scaffold/memory/round_{round_data.get("round_id"):03d}_transcript.md``
 (if present) — that file contains the verbatim Claude session.
 """
 
@@ -128,7 +128,9 @@ def main(argv: list[str] | None = None) -> int:
 
     json_files = sorted(
         (p for p in RUNS_DIR.glob("round_*.json")),
-        key=lambda p: int(_ROUND_JSON_RE.match(p.name).group(1)) if _ROUND_JSON_RE.match(p.name) else 0,
+        key=lambda p: (
+            int(_ROUND_JSON_RE.match(p.name).group(1)) if _ROUND_JSON_RE.match(p.name) else 0
+        ),
     )
 
     n_written = 0
