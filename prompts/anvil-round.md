@@ -235,11 +235,15 @@ reasoning_effort=..., max_tokens=...)` for each extraction and return its
 (any of `self.allowed_models`; `self.model` is the round's model),
 `input_mode` (`"pdf"` = native PDF, only models in `NATIVE_PDF_MODELS`;
 `"text"` = `pdftotext -layout` text, any model), `reasoning_effort`
-(`"minimal"`/`"low"`/`"medium"`/`"high"`; DeepSeek needs one set) and
+(GPT-5.6 Luna accepts `"none"`/`"low"`/`"medium"`/`"high"`/`"xhigh"` —
+**not** `"minimal"`, which it rejects with HTTP 400; DeepSeek needs one
+set) and
 `max_tokens` (a truncated completion fails the whole statement). You may
 route per statement on cheap signals: PDF byte size, page count, the
 co-brand token in the filename. The eval times the whole `predict` call,
-so extra calls and local steps cost latency.
+so extra calls and local steps cost latency. A failed row's error (an API
+rejection, a duplicate send) is in `failures[].error` of the round's eval
+JSON — read it before concluding a change made extractions worse.
 
 **Call rules (enforced by the eval, not advisory):** each document — the
 whole statement PDF, or a page you split out of it — may be sent to a
