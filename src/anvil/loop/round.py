@@ -160,7 +160,7 @@ def run_round(
     optimizer_cfg = _read_optimizer_config(scaffold_root)
     # ``optimizer_error`` is set only when the optimizer BACKEND itself
     # failed (auth/401, SSO redirect, connection error, ...). The local
-    # backend raises rather than swallowing, so it is always None there.
+    # backend reports a session that ended in an API error the same way.
     optimizer_error: str | None = None
     # Selected backend + (omnigent only) resolved server URL, recorded into
     # the round JSON so a 'local noop' is distinguishable from an
@@ -197,6 +197,7 @@ def run_round(
                 session_record=session_record,
             )
         )
+        optimizer_error = session_record.get("optimizer_error")
 
     # 3. Apply the action (writes scaffold files, edits harness.yaml).
     #

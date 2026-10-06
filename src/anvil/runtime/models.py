@@ -141,9 +141,12 @@ class ParetoObjective(BaseModel):
     name: str
     direction: Literal["maximize", "minimize"] = "maximize"
     # ``latency`` reads ``cost_metrics["latency_ms_median"]`` — the savesage
-    # code-mode/latency objective; the others read the aggregate or a token/
-    # context/row cost proxy.
-    source: Literal["aggregate", "tokens", "context_chars", "n_rows", "latency"] = "aggregate"
+    # code-mode/latency objective; ``cost`` reads ``cost_metrics
+    # ["cost_usd_per_row"]`` (priced from the model catalog); the others read
+    # the aggregate or a token/context/row cost proxy.
+    source: Literal["aggregate", "tokens", "context_chars", "n_rows", "latency", "cost"] = (
+        "aggregate"
+    )
     # Optional per-objective epsilon. A single scalar ``gate.epsilon`` cannot
     # serve objectives on different scales (accuracy ∈ [0,1], epsilon ~0.005 vs
     # latency in ms, epsilon ~hundreds). When set, this objective uses its own

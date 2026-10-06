@@ -37,12 +37,13 @@ from __future__ import annotations
 
 import contextlib
 import os
+import shutil
 import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 import mlflow
-from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, PermissionResultAllow
 
 from anvil.optimizer.actions import OptimizerAction
 from anvil.optimizer.parser import ParseResult, parse_action
@@ -55,6 +56,46 @@ from anvil.optimizer.parser import ParseResult, parse_action
 # HTTP 400. The AI Gateway path implements the same Anthropic Messages
 # API but speaks the Databricks-native auth header set.
 ANTHROPIC_BASE_URL = os.environ.get("ANVIL_AI_GATEWAY_URL", "")
+
+
+def resolve_claude_cli_path() -> str | None:
+    """The Claude Code CLI the local optimizer runs.
+
+    ``ANVIL_CLAUDE_CLI_PATH`` when set, else ``claude`` on ``PATH``, else
+    ``None`` (the CLI bundled with ``claude-agent-sdk``). The bundled copy is
+    pinned to the SDK release and goes stale: the gateway rejects models an old
+    CLI does not know ("Claude Code 2.1.116 does not support this model"),
+    which ends every session on its first turn.
+    """
+    return os.environ.get("ANVIL_CLAUDE_CLI_PATH") or shutil.which("claude")
+
+
+def session_error(events: list[dict[str, Any]]) -> str | None:
+    """The error that ended a session, or ``None`` when it ran normally.
+
+    A session whose final result is an error (an API error on the first turn,
+    a rejected model) parses to a ``NoopAction`` exactly like a deliberate
+    noop; this tells them apart so the round records ``INFRA_FAIL``. Running
+    out of turns (``error_max_turns``) is a normal end — the parser decides
+    from whatever transcript there is.
+    """
+    for ev in reversed(events):
+        if ev.get("kind") != "result":
+            continue
+        if not ev.get("is_error") or str(ev.get("subtype") or "").startswith("error_max_turns"):
+            return None
+        detail = ev.get("text")
+        if not detail:
+            detail = next(
+                (
+                    e.get("text")
+                    for e in reversed(events)
+                    if e.get("kind") == "text" and e.get("text")
+                ),
+                None,
+            )
+        return f"optimizer session ended in error: {detail or ev.get('subtype') or 'unknown'}"
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -223,6 +264,7 @@ class LocalBackend:
             setting_sources=[],
             max_turns=max_turns,
             can_use_tool=_allow_all_tool_calls,
+            cli_path=resolve_claude_cli_path(),
         )
 
         events: list[dict[str, Any]] = []
@@ -267,6 +309,7 @@ class LocalBackend:
             mlflow_trace_url=None,
             turns_used=None,
             duration_s=duration_s,
+            optimizer_error=session_error(events),
             events=events,
             started_ns=started_ns,
             ended_ns=time.time_ns(),
@@ -339,7 +382,10 @@ async def run_optimizer_session(
     )
     if session_record is not None:
         session_record.update(
-            events=result.events, started_ns=result.started_ns, ended_ns=result.ended_ns
+            events=result.events,
+            started_ns=result.started_ns,
+            ended_ns=result.ended_ns,
+            optimizer_error=result.optimizer_error,
         )
     return result.action, result.transcript, result.parse_result
 
@@ -477,13 +523,15 @@ def message_events(message: Any) -> list[dict[str, Any]]:
     return out
 
 
-async def _allow_all_tool_calls(_tool_name: str, _tool_input: dict, _ctx) -> dict:
+async def _allow_all_tool_calls(_tool_name: str, _tool_input: dict, _ctx) -> PermissionResultAllow:
     """Permission callback: blanket-allow every tool call.
 
     The CLI's filesystem sandbox blocks Write/Edit/Bash redirections
     under ``cwd`` even with ``permission_mode="bypassPermissions"`` or
     the ``--dangerously-skip-permissions`` extra arg. The Python
-    callback IS honored, however; this returns ``{"behavior": "allow",
-    "updatedInput": ...}`` for every call. Documented empirically.
+    callback IS honored, however. It must return the SDK's
+    ``PermissionResultAllow`` — a plain ``{"behavior": "allow"}`` dict is
+    rejected ("Tool permission callback must return PermissionResult"),
+    which silently failed every Write and most Bash calls in a session.
     """
-    return {"behavior": "allow", "updatedInput": _tool_input}
+    return PermissionResultAllow(updated_input=_tool_input)

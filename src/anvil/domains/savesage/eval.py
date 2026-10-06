@@ -24,21 +24,32 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import nullcontext, suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from anvil.catalog import cost_usd, load_catalog, model_prices
 from anvil.data import select_subset
-from anvil.domains.savesage.extractor import SavesageIciciExtractor
+from anvil.domains.savesage.extractor import LEDGER, SavesageIciciExtractor
 from anvil.domains.savesage.scoring import aggregate_corpus, field_slug, score_extraction
 from anvil.eval.runner import EvalReport
+from anvil.observability import eval_row_trace
 from anvil.runtime.composer import compose_prompt
 from anvil.runtime.loader import load_harness
 
 logger = logging.getLogger(__name__)
 
 _REQUIRED_ROW_FIELDS = ("example_id", "query", "category", "pdf_path", "expected_parsed_json")
+
+# The genai engine's golden set is the stock demo's; this domain keeps its own
+# (gitignored: cardholder PII). The loop passes the generic path (relative from
+# make_baseline, absolute from run_round); either way it means this domain's.
+GOLDEN_SET_REL = Path("data") / "savesage_golden_set.jsonl"
+_GENERIC_GOLDEN_SET = "data/golden_set.jsonl"
+INPUT_MODE_LEVER = "input_mode"
 
 
 def load_savesage_golden_set(path: str | Path) -> list[dict]:
@@ -91,7 +102,12 @@ def _percentile(sorted_vals: list[float], q: float) -> float:
 
 
 def _load_savesage_agent(
-    agent_module: str, *, composed_prompt: str, repo_root: Path, luna_profile: str | None = None
+    agent_module: str,
+    *,
+    composed_prompt: str,
+    repo_root: Path,
+    luna_profile: str | None = None,
+    **agent_kwargs: Any,
 ):
     """Import the code-mode ``SavesageAgent`` module and instantiate its subclass.
 
@@ -128,17 +144,18 @@ def _load_savesage_agent(
             f"expected exactly one SavesageAgent subclass in {agent_module!r}, "
             f"found {[c.__name__ for c in candidates]}"
         )
-    return candidates[0](composed_prompt, luna_profile=luna_profile)
+    return candidates[0](composed_prompt, luna_profile=luna_profile, **agent_kwargs)
 
 
 def evaluate_savesage(
     *,
     scaffold_root: Path | str,
     runtime_config_path: Path | str | None = None,
-    golden_set_path: Path | str = "data/golden_set.jsonl",
+    golden_set_path: Path | str = _GENERIC_GOLDEN_SET,
     profile: str | None = None,  # noqa: ARG001 - Luna auth uses env/profile chain
     mode: str | None = None,
     cache_root: Path | str | None = None,
+    trace_rows: bool = False,
     **_kwargs: Any,  # absorb genai-only kwargs per the engine contract
 ) -> EvalReport:
     """Evaluate the current scaffold's ICICI prompt over a subset of the corpus.
@@ -170,7 +187,11 @@ def evaluate_savesage(
     mode_cfg = cfg.modes[selected_mode]
 
     composed = compose_prompt(scaffold_path, audience="runtime").text
-    examples = load_savesage_golden_set(golden_set_path)
+    repo_root = scaffold_path.parent
+    gs = Path(golden_set_path)
+    if gs.name == Path(_GENERIC_GOLDEN_SET).name:
+        gs = repo_root / GOLDEN_SET_REL
+    examples = load_savesage_golden_set(gs)
     selected = _select(examples, rows=mode_cfg.rows, buckets=dict(mode_cfg.buckets))
     n_workers = max(1, cfg.n_workers)
 
@@ -180,25 +201,52 @@ def evaluate_savesage(
     # predict() — capturing the real cold-call latency (cache disabled) that
     # the latency Pareto objective reads.
     optimization_mode = snapshot.config.mode
+    model = snapshot.config.effective_runtime_model
+    spec = snapshot.config.lever_specs.get("model")
+    allowed = [str(m) for m in spec.allowed] if spec else [model]
+    prices = model_prices(
+        sorted({*allowed, model}),
+        load_catalog(repo_root / snapshot.config.model_catalog.path),
+        tier=snapshot.config.model_catalog.context_tier,
+    )
     if optimization_mode == "code":
         agent = _load_savesage_agent(
             snapshot.config.agent_module,
             composed_prompt=composed,
-            repo_root=scaffold_path.parent,
+            repo_root=repo_root,
+            model=model,
+            input_mode=str(snapshot.config.levers.get(INPUT_MODE_LEVER, "pdf")),
+            allowed_models=allowed,
         )
 
-        def _predict(row: dict) -> tuple[dict, float | None]:
-            extraction, meta = agent.predict(sid=row["example_id"], pdf_path=row["pdf_path"])
-            latency = meta.get("latency_ms") if isinstance(meta, dict) else None
+        def _predict(row: dict) -> tuple[dict, float | None, list[dict], str | None]:
+            # Time the whole predict (every call + any local step it takes),
+            # not the agent's self-reported latency. The ledger refuses a
+            # second send of the same document and records every call made,
+            # so cost counts all of them — including any still running when
+            # predict returns (end() waits for those, outside the timing).
+            sid = row["example_id"]
+            LEDGER.begin(sid)
+            extraction: Any = {}
+            error: str | None = None
+            t0 = time.perf_counter()
+            try:
+                extraction, _meta = agent.predict(sid=sid, pdf_path=row["pdf_path"])
+            except Exception as exc:  # noqa: BLE001 - a failed row still costs its calls
+                logger.warning("prediction failed for %s: %s", sid, exc)
+                error = f"{type(exc).__name__}: {exc}"
+            latency = (time.perf_counter() - t0) * 1000.0
+            calls = LEDGER.end(sid)
             actual = extraction if isinstance(extraction, dict) else {}
-            return actual, (float(latency) if latency is not None else None)
+            return actual, latency, calls, error
     else:
         if cache_root is None:
-            cache_root = scaffold_path.parent / "eval" / "luna_cache"
+            cache_root = repo_root / "eval" / "luna_cache"
         extractor = SavesageIciciExtractor(composed, cache_root=cache_root)
 
-        def _predict(row: dict) -> tuple[dict, float | None]:
-            return extractor.extract(sid=row["example_id"], pdf_path=row["pdf_path"]), None
+        def _predict(row: dict) -> tuple[dict, float | None, list[dict], str | None]:
+            extraction = extractor.extract(sid=row["example_id"], pdf_path=row["pdf_path"])
+            return extraction, None, [], None
 
     # The accuracy FLOOR excludes the stale-GT fields ONLY on the code/latency
     # path (so "accuracy held" measures real quality); prompt mode keeps the
@@ -208,16 +256,53 @@ def evaluate_savesage(
     )
 
     def _predict_and_score(row: dict) -> dict[str, Any]:
+        row_cm = (
+            eval_row_trace(
+                example_id=row["example_id"],
+                query=row["query"],
+                scaffold_root=scaffold_path,
+                runtime_endpoint=model,
+            )
+            if trace_rows
+            else nullcontext()
+        )
+        with row_cm as span:
+            scored = _score_row(row)
+            if span is not None:
+                # Scores and timings only — the extraction itself is cardholder PII.
+                with suppress(Exception):
+                    span.set_outputs(
+                        {
+                            "strict_accuracy": scored.get("accuracy"),
+                            "latency_ms": scored["latency_ms"],
+                            "models": scored["models"],
+                            "call_costs": scored["call_costs"],
+                        }
+                    )
+        return scored
+
+    def _score_row(row: dict) -> dict[str, Any]:
         try:
-            actual, latency_ms = _predict(row)
+            actual, latency_ms, calls, error = _predict(row)
         except Exception as exc:  # noqa: BLE001 - isolate per-row failures
             logger.warning("prediction failed for %s: %s", row.get("example_id"), exc)
-            actual, latency_ms = {}, None  # empty extraction scores as all-DISAGREE
+            # An empty extraction scores as all-DISAGREE.
+            actual, latency_ms, calls, error = {}, None, [], f"{type(exc).__name__}: {exc}"
         scored = score_extraction(row["expected_parsed_json"], actual)
+        scored["error"] = error
         scored["example_id"] = row["example_id"]
         scored["query"] = row["query"]
         scored["category"] = row["category"]
         scored["latency_ms"] = latency_ms
+        scored["call_costs"] = [
+            cost_usd(
+                prices.get(str(c.get("model"))),
+                int(c.get("input_tokens", 0) or 0),
+                int(c.get("output_tokens", 0) or 0),
+            )
+            for c in calls
+        ]
+        scored["models"] = sorted({str(c.get("model")) for c in calls})
         return scored
 
     # Preserve input order so per_bucket / failures line up with ``selected``.
@@ -267,6 +352,10 @@ def evaluate_savesage(
                 "strict_accuracy": strict,
                 "judge_failures": sorted(field_misses),
                 "per_field": field_misses,
+                # Why the row produced nothing (API rejection, duplicate send,
+                # crash) — so the optimizer can tell a failed call from a bad
+                # extraction. Capped: provider errors can be long.
+                **({"error": r["error"][:500]} if r.get("error") else {}),
             }
         )
 
@@ -279,6 +368,22 @@ def evaluate_savesage(
         cost_metrics["latency_ms_median"] = _median(latencies)
         cost_metrics["latency_ms_mean"] = sum(latencies) / len(latencies)
         cost_metrics["latency_ms_p90"] = _percentile(latencies, 0.90)
+    # Cost only when every call was priced, so a gap never understates it.
+    call_costs = [c for r in scored_rows for c in r.get("call_costs", [])]
+    if call_costs and all(c is not None for c in call_costs):
+        total = float(sum(call_costs))
+        cost_metrics["cost_usd_total"] = total
+        cost_metrics["cost_usd_per_row"] = total / len(scored_rows) if scored_rows else 0.0
+
+    experiment_id = ""
+    if trace_rows:
+        try:
+            import mlflow  # noqa: PLC0415
+
+            exp = mlflow.get_experiment_by_name(snapshot.config.experiments.eval)
+            experiment_id = exp.experiment_id if exp is not None else ""
+        except Exception as exc:  # noqa: BLE001 - best-effort observability
+            logger.warning("could not resolve eval experiment id: %s", exc)
 
     return EvalReport(
         aggregate=corpus["aggregate"],
@@ -286,7 +391,7 @@ def evaluate_savesage(
         per_bucket=per_bucket,
         failures=failures,
         run_id="",
-        experiment_id="",
+        experiment_id=experiment_id,
         n_rows=len(scored_rows),
         mode=selected_mode,
         scorers=sorted(corpus["per_judge"].keys()),

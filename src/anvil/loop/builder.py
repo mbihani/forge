@@ -321,6 +321,7 @@ _COST_METRIC = {
     "context_chars": "total_context_chars",
     "n_rows": "n_rows",
     "latency": "latency_ms_median",
+    "cost": "cost_usd_per_row",
 }
 
 
