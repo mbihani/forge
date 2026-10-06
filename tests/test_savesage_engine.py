@@ -125,15 +125,17 @@ def test_active_agent_passes_code_validation() -> None:
     validate_code_candidate(REPO_ROOT / "agents" / "savesage_agent.py")
 
 
-def test_active_agent_is_production_defaults(fake_extractor) -> None:
-    from anvil.eval.runner import _import_agent_module
+def test_active_agent_extracts_through_the_base(fake_extractor) -> None:
+    """Whatever the optimizer last kept, the active agent loads and extracts via the base."""
+    from anvil.domains.savesage.eval import _load_savesage_agent
 
-    module = _import_agent_module(str(REPO_ROOT / "agents" / "savesage_agent.py"))
-    module.BaselineSavesageAgent("p").predict(sid="s", pdf_path="x.pdf")
-    built = fake_extractor.built[0]
-    assert (built["model"], built["input_mode"]) == (LUNA, "pdf")
-    assert built["reasoning_effort"] == agent_base.DEFAULT_REASONING_EFFORT == "medium"
-    assert built["max_tokens"] == agent_base.DEFAULT_MAX_TOKENS == 96_000
+    agent = _load_savesage_agent(
+        "agents/savesage_agent.py", composed_prompt="p", repo_root=REPO_ROOT
+    )
+    agent.predict(sid="s", pdf_path="x.pdf")
+    assert fake_extractor.built, "predict() made no extraction"
+    assert agent_base.DEFAULT_REASONING_EFFORT == "medium"
+    assert agent_base.DEFAULT_MAX_TOKENS == 96_000
 
 
 # ------------------------------------------------------------------ text mode

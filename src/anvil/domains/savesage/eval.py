@@ -219,7 +219,7 @@ def evaluate_savesage(
             allowed_models=allowed,
         )
 
-        def _predict(row: dict) -> tuple[dict, float | None, list[dict]]:
+        def _predict(row: dict) -> tuple[dict, float | None, list[dict], str | None]:
             # Time the whole predict (every call + any local step it takes),
             # not the agent's self-reported latency. The ledger refuses a
             # second send of the same document and records every call made,
@@ -228,22 +228,25 @@ def evaluate_savesage(
             sid = row["example_id"]
             LEDGER.begin(sid)
             extraction: Any = {}
+            error: str | None = None
             t0 = time.perf_counter()
             try:
                 extraction, _meta = agent.predict(sid=sid, pdf_path=row["pdf_path"])
             except Exception as exc:  # noqa: BLE001 - a failed row still costs its calls
                 logger.warning("prediction failed for %s: %s", sid, exc)
+                error = f"{type(exc).__name__}: {exc}"
             latency = (time.perf_counter() - t0) * 1000.0
             calls = LEDGER.end(sid)
             actual = extraction if isinstance(extraction, dict) else {}
-            return actual, latency, calls
+            return actual, latency, calls, error
     else:
         if cache_root is None:
             cache_root = repo_root / "eval" / "luna_cache"
         extractor = SavesageIciciExtractor(composed, cache_root=cache_root)
 
-        def _predict(row: dict) -> tuple[dict, float | None, list[dict]]:
-            return extractor.extract(sid=row["example_id"], pdf_path=row["pdf_path"]), None, []
+        def _predict(row: dict) -> tuple[dict, float | None, list[dict], str | None]:
+            extraction = extractor.extract(sid=row["example_id"], pdf_path=row["pdf_path"])
+            return extraction, None, [], None
 
     # The accuracy FLOOR excludes the stale-GT fields ONLY on the code/latency
     # path (so "accuracy held" measures real quality); prompt mode keeps the
@@ -280,11 +283,13 @@ def evaluate_savesage(
 
     def _score_row(row: dict) -> dict[str, Any]:
         try:
-            actual, latency_ms, calls = _predict(row)
+            actual, latency_ms, calls, error = _predict(row)
         except Exception as exc:  # noqa: BLE001 - isolate per-row failures
             logger.warning("prediction failed for %s: %s", row.get("example_id"), exc)
-            actual, latency_ms, calls = {}, None, []  # empty extraction scores as all-DISAGREE
+            # An empty extraction scores as all-DISAGREE.
+            actual, latency_ms, calls, error = {}, None, [], f"{type(exc).__name__}: {exc}"
         scored = score_extraction(row["expected_parsed_json"], actual)
+        scored["error"] = error
         scored["example_id"] = row["example_id"]
         scored["query"] = row["query"]
         scored["category"] = row["category"]
@@ -347,6 +352,10 @@ def evaluate_savesage(
                 "strict_accuracy": strict,
                 "judge_failures": sorted(field_misses),
                 "per_field": field_misses,
+                # Why the row produced nothing (API rejection, duplicate send,
+                # crash) — so the optimizer can tell a failed call from a bad
+                # extraction. Capped: provider errors can be long.
+                **({"error": r["error"][:500]} if r.get("error") else {}),
             }
         )
 
