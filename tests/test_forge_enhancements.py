@@ -375,3 +375,51 @@ def test_canary_outage_is_an_infra_failure_not_a_revert(
 
     result = run_round(round_id=1, repo_root=repo, parent_branch="anvil/exp", max_turns=1)
     assert result.decision is Decision.INFRA_FAIL
+
+
+@pytest.mark.parametrize(
+    ("raw", "short"),
+    [
+        (
+            'ExtractionError: extraction failed for x after 2 attempts: HTTP 400: {"error_code":'
+            '"BAD_REQUEST","message":"{\\"error\\":\\"Bad request: unsupported content item type: '
+            '\\\\\\"file\\\\\\"\\"}"}',
+            'HTTP 400: Bad request: unsupported content item type: "file"',
+        ),
+        (
+            # Truncated mid-JSON (as stored at a length cap): still the inner message.
+            'ExtractionError: ... HTTP 400: {"error_code":"BAD_REQUEST","message":"{\\n  \\"error\\"'
+            ': {\\n    \\"message\\": \\"Unsupported value: \'reasoning_effort\' does not support '
+            "'minimal' with this model.\\\",\\n    \\\"type\\",
+            "HTTP 400: Unsupported value: 'reasoning_effort' does not support 'minimal' with this model.",
+        ),
+        ("ExtractionError: TimeoutError: timed out", "ExtractionError: TimeoutError: timed out"),
+    ],
+)
+def test_short_error_unwraps_endpoint_messages(raw: str, short: str) -> None:
+    from anvil.eval.lever_probe import short_error
+
+    assert short_error(raw) == short
+
+
+def test_probe_render_collapses_a_varying_setting(tmp_path: Path) -> None:
+    write_lever_probe(
+        tmp_path,
+        [
+            ProbeResult(
+                GLM,
+                {"input_mode": "pdf", "reasoning_effort": e},
+                ok=False,
+                error="HTTP 400: no file",
+            )
+            for e in ("low", "high")
+        ]
+        + [
+            ProbeResult(GLM, {"input_mode": "text", "reasoning_effort": e}, ok=True)
+            for e in ("low", "high")
+        ],
+        engine="savesage",
+    )
+    md = render_probe_md(load_lever_probe(tmp_path))
+    assert "accepted: input_mode=text, reasoning_effort ∈ {low, high}" in md
+    assert "rejected: input_mode=pdf, reasoning_effort ∈ {low, high} — HTTP 400: no file" in md

@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from anvil.domains.savesage.extractor import INPUT_MODES, SavesageIciciExtractor
-from anvil.eval.lever_probe import ProbeResult
+from anvil.eval.lever_probe import ProbeResult, short_error
 from anvil.runtime.call_ledger import describe_error, is_infra_error
 from anvil.runtime.composer import compose_prompt
 from anvil.runtime.loader import load_harness
@@ -115,7 +115,9 @@ def probe_savesage(
                     model=model,
                     settings=settings,
                     ok=bool(ok),
-                    error=None if ok else (error if ok is False else f"unknown: {error}")[:400],
+                    error=None
+                    if ok
+                    else (short_error(error) if ok is False else f"unknown: {error}")[:400],
                 )
             return ProbeResult(model=model, settings=settings, ok=True)
 
