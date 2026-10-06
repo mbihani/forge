@@ -239,7 +239,20 @@ reasoning_effort=..., max_tokens=...)` for each extraction and return its
 `max_tokens` (a truncated completion fails the whole statement). You may
 route per statement on cheap signals: PDF byte size, page count, the
 co-brand token in the filename. The eval times the whole `predict` call,
-so extra calls and local steps cost latency. `predict` runs on several
+so extra calls and local steps cost latency.
+
+**Call rules (enforced by the eval, not advisory):** each document — the
+whole statement PDF, or a page you split out of it — may be sent to a
+model **at most once per statement**, whatever the model or input mode. A
+second send of the same document raises `DuplicateCallError` (the row then
+fails). So: **no racing** the same call, **no fallback re-runs** of a
+statement on another model / mode / effort, no retry after a failed call.
+Complementary calls on *different* documents (e.g. a text pass of the full
+PDF plus a card-details pass on page 1) are allowed. Every call made is
+priced — including ones still running when `predict` returns — and
+**cost per statement is a gate objective**: a round that raises it beyond
+its epsilon is reverted even if faster. Do not call serving endpoints any
+other way than through the extractor. `predict` runs on several
 threads at once: keep per-statement state local. Scoring is SaveSage's
 production field judge vs Opus GT (accuracy over 26 fields; the stale-GT
 `programType` / `productFamily` are excluded) — do not tune for them.

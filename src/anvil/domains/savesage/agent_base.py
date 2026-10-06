@@ -17,6 +17,12 @@ A subclass may pick these statically or adaptively from a cheap
 per-statement signal (PDF byte size, page count, the co-brand token in
 the filename).
 
+During an eval every extraction passes through
+:data:`anvil.domains.savesage.extractor.LEDGER`: a document goes to a
+model at most once per statement (no racing, no fallback re-runs —
+:class:`~anvil.domains.savesage.extractor.DuplicateCallError`), and every
+call is priced into the row's cost.
+
 The base ships :meth:`extract`, the single call a subclass makes to
 extract one statement and get back ``(parsed_json, meta)``. It reuses the
 production transport via

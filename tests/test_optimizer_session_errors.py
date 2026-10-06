@@ -95,3 +95,36 @@ def test_run_stops_after_consecutive_infra_fails(monkeypatch: pytest.MonkeyPatch
     module.main(["--rounds", "10"])
     assert len(calls) == module.MAX_CONSECUTIVE_INFRA_FAILS == 2
     assert closed == ["FAILED"]
+
+
+def test_permission_callback_returns_the_sdk_result_type() -> None:
+    import asyncio
+
+    from claude_agent_sdk import PermissionResultAllow
+
+    from anvil.optimizer.session import _allow_all_tool_calls
+
+    result = asyncio.run(_allow_all_tool_calls("Write", {"file_path": "x"}, None))
+    assert isinstance(result, PermissionResultAllow)
+    assert result.updated_input == {"file_path": "x"}
+
+
+def test_long_rationale_is_truncated_not_rejected() -> None:
+    from anvil.optimizer.actions import MAX_RATIONALE_CHARS
+    from anvil.optimizer.parser import parse_action
+
+    body = '{"action": "noop", "rationale": "' + "x" * 3000 + '"}'
+    result = parse_action(f"```json-action\n{body}\n```")
+    assert result.parse_status.startswith("ok")
+    assert len(result.action.rationale) == MAX_RATIONALE_CHARS
+
+
+def test_cost_is_a_pareto_objective_source() -> None:
+    from types import SimpleNamespace
+
+    from anvil.loop.frontier import scores_from_eval
+    from anvil.runtime.models import ParetoObjective
+
+    report = SimpleNamespace(aggregate=0.9, cost_metrics={"cost_usd_per_row": 0.0055})
+    obj = ParetoObjective(name="cost", direction="minimize", source="cost", epsilon=0.0003)
+    assert scores_from_eval(report, [obj]) == {"cost": 0.0055}

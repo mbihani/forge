@@ -47,10 +47,26 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+# Rationale / synergy text is kept for the critique and the mutation log. A
+# longer one is truncated rather than rejected — rejecting it threw away an
+# otherwise valid action (and the whole round) over prose length.
+MAX_RATIONALE_CHARS = 2000
+
+
+def _truncate_text(v: object) -> object:
+    if isinstance(v, str) and len(v) > MAX_RATIONALE_CHARS:
+        return v[: MAX_RATIONALE_CHARS - 1] + "…"
+    return v
+
 
 class _ActionBase(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    rationale: str = Field(min_length=1, max_length=2000)
+    rationale: str = Field(min_length=1, max_length=MAX_RATIONALE_CHARS)
+
+    @field_validator("rationale", mode="before")
+    @classmethod
+    def _truncate_rationale(cls, v: object) -> object:
+        return _truncate_text(v)
 
 
 class AddSkillAction(_ActionBase):
@@ -216,8 +232,13 @@ class CompoundAction(_ActionBase):
     """
 
     action: Literal["compound"] = "compound"
-    synergy: str = Field(min_length=1, max_length=2000)
+    synergy: str = Field(min_length=1, max_length=MAX_RATIONALE_CHARS)
     steps: list[StepAction] = Field(min_length=2, max_length=MAX_COMPOUND_STEPS)
+
+    @field_validator("synergy", mode="before")
+    @classmethod
+    def _truncate_synergy(cls, v: object) -> object:
+        return _truncate_text(v)
 
 
 # Discriminated union over the literal ``action`` field.

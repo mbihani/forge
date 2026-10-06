@@ -33,7 +33,7 @@ from typing import Any
 
 from anvil.catalog import cost_usd, load_catalog, model_prices
 from anvil.data import select_subset
-from anvil.domains.savesage.extractor import SavesageIciciExtractor
+from anvil.domains.savesage.extractor import LEDGER, SavesageIciciExtractor
 from anvil.domains.savesage.scoring import aggregate_corpus, field_slug, score_extraction
 from anvil.eval.runner import EvalReport
 from anvil.observability import eval_row_trace
@@ -221,11 +221,20 @@ def evaluate_savesage(
 
         def _predict(row: dict) -> tuple[dict, float | None, list[dict]]:
             # Time the whole predict (every call + any local step it takes),
-            # not the agent's self-reported latency.
+            # not the agent's self-reported latency. The ledger refuses a
+            # second send of the same document and records every call made,
+            # so cost counts all of them — including any still running when
+            # predict returns (end() waits for those, outside the timing).
+            sid = row["example_id"]
+            LEDGER.begin(sid)
+            extraction: Any = {}
             t0 = time.perf_counter()
-            extraction, meta = agent.predict(sid=row["example_id"], pdf_path=row["pdf_path"])
+            try:
+                extraction, _meta = agent.predict(sid=sid, pdf_path=row["pdf_path"])
+            except Exception as exc:  # noqa: BLE001 - a failed row still costs its calls
+                logger.warning("prediction failed for %s: %s", sid, exc)
             latency = (time.perf_counter() - t0) * 1000.0
-            calls = list(meta.get("calls", [])) if isinstance(meta, dict) else []
+            calls = LEDGER.end(sid)
             actual = extraction if isinstance(extraction, dict) else {}
             return actual, latency, calls
     else:

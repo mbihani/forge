@@ -43,7 +43,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 import mlflow
-from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, PermissionResultAllow
 
 from anvil.optimizer.actions import OptimizerAction
 from anvil.optimizer.parser import ParseResult, parse_action
@@ -523,13 +523,15 @@ def message_events(message: Any) -> list[dict[str, Any]]:
     return out
 
 
-async def _allow_all_tool_calls(_tool_name: str, _tool_input: dict, _ctx) -> dict:
+async def _allow_all_tool_calls(_tool_name: str, _tool_input: dict, _ctx) -> PermissionResultAllow:
     """Permission callback: blanket-allow every tool call.
 
     The CLI's filesystem sandbox blocks Write/Edit/Bash redirections
     under ``cwd`` even with ``permission_mode="bypassPermissions"`` or
     the ``--dangerously-skip-permissions`` extra arg. The Python
-    callback IS honored, however; this returns ``{"behavior": "allow",
-    "updatedInput": ...}`` for every call. Documented empirically.
+    callback IS honored, however. It must return the SDK's
+    ``PermissionResultAllow`` — a plain ``{"behavior": "allow"}`` dict is
+    rejected ("Tool permission callback must return PermissionResult"),
+    which silently failed every Write and most Bash calls in a session.
     """
-    return {"behavior": "allow", "updatedInput": _tool_input}
+    return PermissionResultAllow(updated_input=_tool_input)

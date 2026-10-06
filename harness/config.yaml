@@ -128,7 +128,7 @@ loop:
   max_optimizer_turns: 60
   # Max mutations one round may apply together via a `compound` action
   # (gated as one unit). 1 = classic single-mutation rounds. Max 5.
-  max_mutations_per_round: 2
+  max_mutations_per_round: 1
 
 # Runtime levers the optimizer may set with `set_lever` (the choice lives in
 # scaffold/harness.yaml > levers). Only values listed here are accepted.
@@ -319,6 +319,12 @@ gate:
         direction: minimize
         source: latency
         epsilon: 1000
+      # Cost per statement must not rise (~5% noise allowance on the $0.0055
+      # baseline): a round that adds model calls is reverted even if faster.
+      - name: cost
+        direction: minimize
+        source: cost
+        epsilon: 0.0003
     # Example:
     # objectives:
     #   - name: quality

@@ -46,8 +46,14 @@ class _FakeExtractor:
         type(self).built.append(kwargs)
         self.kwargs = kwargs
 
-    def extract_with_usage(self, *, sid, pdf_path):  # noqa: ARG002
-        return {"sid": sid}, 12.5, {"input_tokens": 1000, "output_tokens": 500}
+    def extract_with_usage(self, *, sid, pdf_path):
+        from anvil.domains.savesage.extractor import LEDGER
+
+        usage = {"input_tokens": 1000, "output_tokens": 500}
+        info = {k: self.kwargs.get(k) for k in ("model", "input_mode")}
+        with LEDGER.call(sid, str(pdf_path).encode(), info) as record:
+            record.update(usage)
+        return {"sid": sid}, 12.5, usage
 
 
 @pytest.fixture
@@ -248,3 +254,89 @@ def test_shipped_config_is_the_savesage_instance() -> None:
     assert [m.name for m in cfg.eval.agent_evals.user_metrics] == ["accuracy"]
     assert cfg.eval.modes["standard"].rows == sum(cfg.eval.modes["standard"].buckets.values())
     assert cfg.experiments.eval == "/Shared/forge-v3/savesage/eval"
+
+
+# ------------------------------------------------------------------ call ledger
+
+
+def test_ledger_refuses_a_second_send_of_the_same_document() -> None:
+    from anvil.domains.savesage.extractor import CallLedger, DuplicateCallError
+
+    ledger = CallLedger()
+    ledger.begin("s")
+    with ledger.call("s", b"PDF", {"model": GLM}):
+        pass
+    with pytest.raises(DuplicateCallError), ledger.call("s", b"PDF", {"model": LUNA}):
+        pass  # fallback / race on another model: refused
+    with ledger.call("s", b"PAGE-1", {"model": LUNA}):
+        pass  # a different document (page split): allowed
+    assert [c["model"] for c in ledger.end("s")] == [GLM, LUNA]
+
+
+def test_ledger_waits_for_calls_still_in_flight() -> None:
+    import threading
+    import time
+
+    from anvil.domains.savesage.extractor import CallLedger
+
+    ledger = CallLedger()
+    ledger.begin("s")
+    started = threading.Event()
+
+    def _slow():
+        with ledger.call("s", b"PAGE-1", {"model": LUNA}) as rec:
+            started.set()
+            time.sleep(0.2)
+            rec["input_tokens"] = 7
+
+    t = threading.Thread(target=_slow)
+    t.start()
+    started.wait()
+    calls = ledger.end("s")  # the agent returned; the call is still running
+    t.join()
+    assert calls == [{"model": LUNA, "input_tokens": 7}]
+
+
+def test_unarmed_statements_pass_through() -> None:
+    from anvil.domains.savesage.extractor import CallLedger
+
+    ledger = CallLedger()
+    for _ in range(2):
+        with ledger.call("never-armed", b"PDF", {}):
+            pass
+    assert ledger.end("never-armed") == []
+
+
+@needs_statement_agent
+def test_engine_prices_every_call_and_fails_duplicates(
+    tmp_path: Path,
+    fake_extractor,  # noqa: ARG001
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from anvil.domains.savesage.eval import evaluate_savesage
+
+    racer = tmp_path / "agents" / "racer.py"
+    _golden(tmp_path)
+    cfg = _config(tmp_path)
+    racer.write_text(
+        "from anvil.domains.savesage.agent_base import SavesageAgent\n"
+        "class Racer(SavesageAgent):\n"
+        "    def predict(self, *, sid, pdf_path):\n"
+        "        self.extract(sid=sid, pdf_path=pdf_path)\n"
+        "        return self.extract(sid=sid, pdf_path=pdf_path, reasoning_effort='low')\n"
+    )
+    raw = yaml.safe_load(cfg.read_text())
+    raw["agent_module"] = str(racer)
+    cfg.write_text(yaml.safe_dump(raw))
+    report = evaluate_savesage(
+        scaffold_root=tmp_path / "scaffold",
+        runtime_config_path=cfg,
+        golden_set_path="data/golden_set.jsonl",
+        mode="quick",
+    )
+    # The second (duplicate) send was refused, so each row failed — but the
+    # first call was still made and is priced.
+    assert report.n_rows == 4
+    assert sum("already sent once" in r.getMessage() for r in caplog.records) == 4
+    # Luna: 1000 in @ ~$0.2/M + 500 out @ ~$1.2/M = ~$0.0008 per row (one call).
+    assert report.cost_metrics["cost_usd_per_row"] == pytest.approx(0.0008, rel=1e-2)

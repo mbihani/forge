@@ -338,6 +338,7 @@ def _scores_for_objectives(report: Any, objectives: list[ParetoObjective]) -> di
                 "context_chars": "total_context_chars",
                 "n_rows": "n_rows",
                 "latency": "latency_ms_median",
+                "cost": "cost_usd_per_row",
             }[objective.source]
             if metric == "n_rows" and metric not in cost_metrics:
                 value = getattr(report, "n_rows", getattr(report, "n_examples", None))

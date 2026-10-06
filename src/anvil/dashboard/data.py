@@ -58,7 +58,12 @@ def _value(report: dict[str, Any], objective: str | dict[str, Any]) -> Any:
         return report[name]
     if name in report.get("per_judge", {}):
         return report["per_judge"][name]
-    metric = {"tokens": "total_tokens", "context_chars": "total_context_chars"}.get(source, source)
+    metric = {
+        "tokens": "total_tokens",
+        "context_chars": "total_context_chars",
+        "latency": "latency_ms_median",
+        "cost": "cost_usd_per_row",
+    }.get(source, source)
     return report.get("cost_metrics", {}).get(metric)
 
 
