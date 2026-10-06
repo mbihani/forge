@@ -1,27 +1,26 @@
-"""Baseline Savesage ICICI extraction agent (code-mode).
+"""Savesage ICICI extraction agent (code-mode), round 1.
 
-The ANVIL optimizer mutates this file to cut extraction latency while
-holding field accuracy: the model (``self.allowed_models``), the input mode
-(native PDF or pdftotext text), ``reasoning_effort`` and ``max_tokens`` —
-statically or per statement. The baseline is production: the round's
-model / input mode levers (GPT-5.6 Luna, native PDF) at medium reasoning
-effort and 96K max tokens.
+Single-variable change from the production baseline: GPT-5.6 Luna on the
+native PDF, same prompt, same 96K max_tokens, but reasoning_effort="low"
+instead of "medium". One call per statement (no extra sends, so the
+per-document ledger and the cost gate are respected).
 """
 
 from anvil.domains.savesage.agent_base import (
     DEFAULT_MAX_TOKENS,
-    DEFAULT_REASONING_EFFORT,
     SavesageAgent,
 )
 
 
-class BaselineSavesageAgent(SavesageAgent):
-    """Baseline: production defaults for every statement."""
+class LowEffortSavesageAgent(SavesageAgent):
+    """Production extraction with reduced reasoning effort for latency/cost."""
+
+    REASONING_EFFORT = "low"
 
     def predict(self, *, sid: str, pdf_path: str) -> tuple[dict, dict]:
         return self.extract(
             sid=sid,
             pdf_path=pdf_path,
-            reasoning_effort=DEFAULT_REASONING_EFFORT,
+            reasoning_effort=self.REASONING_EFFORT,
             max_tokens=DEFAULT_MAX_TOKENS,
         )
