@@ -20,8 +20,8 @@
 #            composing a prompt from scaffold/. When code, set
 #            agent_module below (or accept the default
 #            anvil.agents.baseline).
-mode: prompt
-# agent_module: anvil.agents.baseline
+mode: code
+agent_module: agents/savesage_agent.py
 
 # LLM model names (FMAPI) routed through the Databricks AI Gateway.
 # All three paths (runtime, optimizer, judge) use the same gateway
@@ -29,7 +29,7 @@ mode: prompt
 # Set DATABRICKS_HOST and DATABRICKS_TOKEN in the environment (or a
 # ~/.databrickscfg profile); the gateway client refreshes the SP token
 # on each request.
-runtime_endpoint: databricks-claude-sonnet-4-6
+runtime_endpoint: databricks-gpt-5-6-luna
 
 # FMAPI model the ANVIL optimizer loop uses for trace analysis +
 # mutation planning. Reached via the gateway's Anthropic route (the
@@ -40,6 +40,8 @@ optimizer_endpoint: databricks-claude-opus-4-7
 # FMAPI model the MLflow LLM judges call — through the same gateway
 # client as the runtime agent. Kept separate so a future round can pin
 # a different judge model.
+# Unused by the savesage engine (it scores with the production field judge,
+# no LLM call); kept for the loop's genai paths.
 judge_endpoint: databricks-claude-sonnet-4-6
 
 # Optimizer backend selection — where the optimizer agent runs.
@@ -106,7 +108,7 @@ persistence:
 # (/Users/<email>/forge) if you cannot write to /Shared. See
 # docs/onboarding.md §14.
 experiments:
-  root: /Shared/forge
+  root: /Shared/forge-v3
 
 # Loop configuration — how the ANVIL optimizer schedules itself.
 loop:
@@ -123,10 +125,15 @@ loop:
   revert_lookback: 20
   # Hard cap on optimizer turns per round. Round aborts as `noop` if
   # exceeded.
-  max_optimizer_turns: 30
+  max_optimizer_turns: 60
   # Max mutations one round may apply together via a `compound` action
   # (gated as one unit). 1 = classic single-mutation rounds. Max 5.
-  max_mutations_per_round: 1
+  max_mutations_per_round: 2
+  # Rows run first on a mutated branch; if every one errors (a rejected
+  # parameter, a crash) the round reverts without the full eval. 0 = off.
+  canary_rows: 3
+  # Stop after this many consecutive deliberate optimizer noops.
+  stop_after_consecutive_noops: 3
 
 # Runtime levers the optimizer may set with `set_lever` (the choice lives in
 # scaffold/harness.yaml > levers). Only values listed here are accepted.
@@ -136,14 +143,25 @@ loop:
 #   <name> — any other name is opaque to core and read by your engine via
 #            snapshot.config.levers (e.g. an input-format switch).
 # See docs/onboarding.md §13.
-# levers:
-#   model:
-#     allowed: [databricks-claude-sonnet-4-6, databricks-claude-haiku-4-5]
-#     description: runtime model for the agent call
-#   input_mode:
-#     allowed: [direct, text]
-#     default: direct
-#     description: how inputs reach the model
+levers:
+  model:
+    allowed:
+      - databricks-gpt-5-6-luna
+      - databricks-glm-5-3-flash
+      - databricks-deepseek-v4-1-flash
+      - databricks-gpt-6-luna
+    description: >-
+      extraction model (a code-mode agent may also pick any of these per statement via
+      self.extract(model=...)). Only GPT-5.6 Luna and GPT-6 Luna read native PDFs; GLM 5.3
+      Flash and DeepSeek V4.1 Flash need input_mode text. DeepSeek needs reasoning_effort set (without
+      it, it ran away to the token cap on the probe).
+  input_mode:
+    allowed: [pdf, text]
+    default: pdf
+    description: >-
+      pdf = production native-PDF file block (Luna only); text = pdftotext -layout text of
+      the statement (~0.5s locally, counted in latency) sent ahead of the same prompt/schema.
+      Text loses card art and layout, and ICICI encodes the rupee sign as a backtick.
 
 # Model prices: scripts/sync_model_catalog.py exports this Google Sheet into
 # `path`; the loop reads only that committed CSV (never the sheet). Re-sync
@@ -157,6 +175,8 @@ model_catalog:
 
 # Eval configuration.
 eval:
+  # SaveSage ICICI statement extraction (src/anvil/domains/savesage).
+  engine: savesage
   # The agent's EXISTING evals — reviewed first, then re-used to score every
   # round (see docs/onboarding.md §16). Point experiment_id at the MLflow
   # experiment holding the agent's own traces, judges and human feedback and
@@ -164,20 +184,29 @@ eval:
   # judges. Only when the agent has NO judges, list the metrics agreed with
   # the user under user_metrics. The stock demo agent has no prior evals, so
   # its metrics (the scorers below) are recorded here.
+  #
+  # SaveSage: its experiment (/Shared/savesage/statement-agent) has no
+  # registered MLflow scorers — its judge_* assessments come from the app's
+  # in-code field judge vs Opus GT, which this engine re-uses (scoring.py).
+  # The user chose that judge minus the two stale-GT fields.
   agent_evals:
-    # experiment_id: "<the agent's own eval experiment>"
-    # judges: []   # subset of the reviewed judges to re-use (empty = all)
+    experiment_id: "967014443183055"
+    max_traces: 300
     user_metrics:
-      - name: correctness
-        description: answer matches the golden reference answer
-      - name: retrieval_groundedness
-        description: answer is grounded in the retrieved knowledge-base documents
-      - name: refusal_appropriateness
-        description: out-of-scope questions are refused, in-scope ones answered
+      - name: accuracy
+        description: >-
+          SaveSage's production field judge (judge.matching/comparison/aggregation, ICICI
+          threshold 0.60) vs cached Opus GT — strict accuracy macro-averaged over statements,
+          over the 28 judged fields EXCLUDING rewards_programType and
+          cards_cardMeta_productFamily (stale local GT; see accuracy_exclude_fields)
+  # Fields dropped from the accuracy floor in code mode (stale local GT).
+  accuracy_exclude_fields:
+    - rewards_programType
+    - cards_cardMeta_productFamily
   # Permit the one-time held-out evaluation performed by scripts/finalize.py.
-  held_out_test: true
+  held_out_test: false
   # Default mode for `evaluate_branch`. One of: quick, standard, full.
-  default_mode: quick
+  default_mode: standard
   # Anti-overfit data split. When enabled, the golden set is partitioned
   # into train (reserved for optimizer-visible use; currently not scored),
   # dev (round-by-round eval), and test (held-out finalization only). Split is
@@ -189,10 +218,18 @@ eval:
   #   seed: 42
   # Row count per mode (deterministic sub-set of the golden set).
   modes:
-    quick:    {rows: 8,  buckets: {direct: 2, multi_hop: 2, distractor: 2, out_of_scope: 2}}
-    standard: {rows: 12, buckets: {direct: 4, multi_hop: 4, distractor: 2, out_of_scope: 2}}
-    full:     {rows: 20, buckets: {direct: 6, multi_hop: 6, distractor: 4, out_of_scope: 4}}
-    test:     {rows: 20, buckets: {direct: 6, multi_hop: 6, distractor: 4, out_of_scope: 4}}
+  # SaveSage ICICI corpus: 304 statements in 13 co-brand buckets.
+  # standard = 50 rows stratified by co-brand (~proportional, every bucket >= 1).
+    quick:    {rows: 12}
+    standard:
+      rows: 50
+      buckets: {amazon: 21, coral: 7, other: 4, sapphiro: 4, mmt: 3, platinum: 2,
+                adanione: 2, hpcl: 2, rubyx: 1, expressions: 1, manu: 1, general: 1, mine: 1}
+    full:     {rows: 304}
+  # Each document goes to a model at most once per statement: no racing,
+  # no fallback re-runs (each multiplies cost).
+  call_policy:
+    max_sends_per_document: 1
   # Parallelism for predict_fn rows. Tune down if TPM saturates.
   n_workers: 4
   # Cooldown seconds between row tasks inside the thread pool when
@@ -282,7 +319,22 @@ gate:
   # Multi-objective optimization (only used when type: frontier). Disabled
   # preserves the single aggregate objective used by older configurations.
   pareto:
-    enabled: false
+    enabled: true
+    objectives:
+      - name: accuracy
+        direction: maximize
+        source: aggregate
+        epsilon: 0.005
+      - name: latency
+        direction: minimize
+        source: latency
+        epsilon: 1000
+      # Cost per statement must not rise (~5% noise allowance on the $0.0055
+      # baseline): a round that adds model calls is reverted even if faster.
+      - name: cost
+        direction: minimize
+        source: cost
+        epsilon: 0.0003
     # Example:
     # objectives:
     #   - name: quality

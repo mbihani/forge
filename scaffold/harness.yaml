@@ -1,34 +1,16 @@
-sampling:
-  temperature: 0.3
-  top_p: null
-  max_tokens: 2048
-  tool_choice: auto
-  max_tool_calls: 3
+# Scaffold config (optimizer-mutable in prompt mode)
+# In code mode, the scaffold is read-only — the optimizer rewrites agents/ instead.
+# Skills are composed into the runtime prompt in the order listed below.
 skills:
-- file: identity.md
-- file: greeting.md
-- file: classification.md
-- file: escalation.md
-- file: refund.md
-rules:
-- file: no_repeat_failed_mutations.md
-- file: answer_scope_discipline.md
-tools:
-- name: search_knowledge_base
-  description: 'Search the knowledge base by natural-language query.
+  - file: identity.md
+  - file: transaction_rules.md
+  - file: rewards_rules.md
+  - file: missing_data.md
+  - file: edge_cases.md
+  - file: icici_bank_rules.md
+  - file: icici_card_identity.md
+  - file: icici_rewards_layouts.md
 
-    Returns the top-k matching documents, each with doc_id, title,
-
-    and a snippet of the body. Use whenever the user asks about the
-
-    platform — features, pricing, API, integrations, rate limits,
-
-    service tiers, data regions, account setup, SLAs, or support
-
-    plans. If the result is "No matching policy documents." the
-
-    question is out of scope for this knowledge base and you should
-
-    say so.
-
-    '
+sampling:
+  temperature: 0.0
+  max_tokens: 4096

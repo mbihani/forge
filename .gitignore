@@ -52,3 +52,6 @@ deploy/.databricks/
 # committed per round on the parent branch).
 data/round_*.json
 data/frontier.json
+
+# SaveSage golden set: cardholder PII, never committed.
+data/savesage_golden_set.jsonl
