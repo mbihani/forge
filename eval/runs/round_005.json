@@ -1,0 +1,27 @@
+{
+  "round_id": 5,
+  "branch": "anvil/exp-round-5",
+  "scaffold_commit_sha": "d2d958b9b12f404a6e3dc87d559b2733b9643965",
+  "parent_commit_sha": "d2d958b9b12f404a6e3dc87d559b2733b9643965",
+  "decision": "noop",
+  "action_kind": "noop",
+  "parse_status": "ok_last_of_many",
+  "levers": {
+    "model": "databricks-gpt-6-luna",
+    "input_mode": "pdf"
+  },
+  "baseline_score": 0.983001909475161,
+  "score_delta_vs_parent": 0.0,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "Parent (Round 3 kept state) sits at the Pareto frontier: accuracy 0.9807 (0.003 slack above 0.978 floor), latency 12112ms (equals best-so-far), cost $0.002324/row (equals best-so-far). To clear the gate on any objective I'd need: accuracy>0.988 (parent 0.9807; GPT-6-Luna@medium peaked at 0.983, so unreachable without a model+reasoning combo that blows both latency and cost ceilings), OR latency<11112ms (reasoning_effort already 'none' \u2014 no further reasoning-tokens to cut; input tokens tied to fixed production schema; output tokens scale with transaction count), OR cost<$0.002024 (same output-token floor; swapping to cheaper models requires input_mode='text' which Round 4 already proved drops aggregate to 0.954, \u22120.029 below the floor). Compound alternatives (text+PDF split by page, GPT-5.6 fallback) either violate the once-per-document rule, add parallelism code with high row-breakage risk, or regress accuracy (card-art fields need native-PDF). The three preceding kept rounds (reasoning medium\u2192low\u2192none) already captured the full reasoning-tokens savings monotone; there is no remaining knob with predicted \u0394>epsilon on any axis without an epsilon-breaking regression on another. A thoughtful noop preserves the frontier rather than ship a mutation whose own rationale cannot clear the gate math.",
+  "optimizer_run": {
+    "run_id": "4283637e580f4421a45f5b9c2806c38f",
+    "experiment_id": "419865818262083"
+  },
+  "optimizer_session_url": null,
+  "optimizer_trace_id": "tr-90423902331f5de76c2e0a3067ffefae",
+  "frontier_best": null
+}
