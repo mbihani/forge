@@ -1,16 +1,14 @@
-# Scaffold config (optimizer-mutable in prompt mode)
-# In code mode, the scaffold is read-only — the optimizer rewrites agents/ instead.
-# Skills are composed into the runtime prompt in the order listed below.
 skills:
-  - file: identity.md
-  - file: transaction_rules.md
-  - file: rewards_rules.md
-  - file: missing_data.md
-  - file: edge_cases.md
-  - file: icici_bank_rules.md
-  - file: icici_card_identity.md
-  - file: icici_rewards_layouts.md
-
+- file: identity.md
+- file: transaction_rules.md
+- file: rewards_rules.md
+- file: missing_data.md
+- file: edge_cases.md
+- file: icici_bank_rules.md
+- file: icici_card_identity.md
+- file: icici_rewards_layouts.md
 sampling:
   temperature: 0.0
   max_tokens: 4096
+levers:
+  model: databricks-gpt-6-luna
