@@ -1,0 +1,438 @@
+{
+  "engine": "savesage",
+  "probed_at": "2026-10-07T06:04:19+00:00",
+  "results": [
+    {
+      "model": "databricks-gpt-5-6-luna",
+      "settings": {
+        "input_mode": "pdf",
+        "reasoning_effort": "none"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gpt-5-6-luna",
+      "settings": {
+        "input_mode": "pdf",
+        "reasoning_effort": "minimal"
+      },
+      "ok": false,
+      "error": "HTTP 400: Unsupported value: 'reasoning_effort' does not support 'minimal' with this model. Supported values are: 'none', 'low', 'medium', 'high', and 'xhigh'."
+    },
+    {
+      "model": "databricks-gpt-5-6-luna",
+      "settings": {
+        "input_mode": "pdf",
+        "reasoning_effort": "low"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gpt-5-6-luna",
+      "settings": {
+        "input_mode": "pdf",
+        "reasoning_effort": "medium"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gpt-5-6-luna",
+      "settings": {
+        "input_mode": "pdf",
+        "reasoning_effort": "high"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gpt-5-6-luna",
+      "settings": {
+        "input_mode": "pdf",
+        "reasoning_effort": "xhigh"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gpt-5-6-luna",
+      "settings": {
+        "input_mode": "text",
+        "reasoning_effort": "none"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gpt-5-6-luna",
+      "settings": {
+        "input_mode": "text",
+        "reasoning_effort": "minimal"
+      },
+      "ok": false,
+      "error": "HTTP 400: Unsupported value: 'reasoning_effort' does not support 'minimal' with this model. Supported values are: 'none', 'low', 'medium', 'high', and 'xhigh'."
+    },
+    {
+      "model": "databricks-gpt-5-6-luna",
+      "settings": {
+        "input_mode": "text",
+        "reasoning_effort": "low"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gpt-5-6-luna",
+      "settings": {
+        "input_mode": "text",
+        "reasoning_effort": "medium"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gpt-5-6-luna",
+      "settings": {
+        "input_mode": "text",
+        "reasoning_effort": "high"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gpt-5-6-luna",
+      "settings": {
+        "input_mode": "text",
+        "reasoning_effort": "xhigh"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-glm-5-3-flash",
+      "settings": {
+        "input_mode": "pdf",
+        "reasoning_effort": "none"
+      },
+      "ok": false,
+      "error": "HTTP 400: Bad request: unsupported content item type: \"file\""
+    },
+    {
+      "model": "databricks-glm-5-3-flash",
+      "settings": {
+        "input_mode": "pdf",
+        "reasoning_effort": "minimal"
+      },
+      "ok": false,
+      "error": "HTTP 400: Bad request: unsupported content item type: \"file\""
+    },
+    {
+      "model": "databricks-glm-5-3-flash",
+      "settings": {
+        "input_mode": "pdf",
+        "reasoning_effort": "low"
+      },
+      "ok": false,
+      "error": "HTTP 400: Bad request: unsupported content item type: \"file\""
+    },
+    {
+      "model": "databricks-glm-5-3-flash",
+      "settings": {
+        "input_mode": "pdf",
+        "reasoning_effort": "medium"
+      },
+      "ok": false,
+      "error": "HTTP 400: Bad request: unsupported content item type: \"file\""
+    },
+    {
+      "model": "databricks-glm-5-3-flash",
+      "settings": {
+        "input_mode": "pdf",
+        "reasoning_effort": "high"
+      },
+      "ok": false,
+      "error": "HTTP 400: Bad request: unsupported content item type: \"file\""
+    },
+    {
+      "model": "databricks-glm-5-3-flash",
+      "settings": {
+        "input_mode": "pdf",
+        "reasoning_effort": "xhigh"
+      },
+      "ok": false,
+      "error": "HTTP 400: Bad request: unsupported content item type: \"file\""
+    },
+    {
+      "model": "databricks-glm-5-3-flash",
+      "settings": {
+        "input_mode": "text",
+        "reasoning_effort": "none"
+      },
+      "ok": false,
+      "error": "HTTP 400: Upstream error: INVALID_ARGUMENT: reasoning_effort=\"none\" is not supported by glm-5-3-flash: it is a thinking-only model."
+    },
+    {
+      "model": "databricks-glm-5-3-flash",
+      "settings": {
+        "input_mode": "text",
+        "reasoning_effort": "minimal"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-glm-5-3-flash",
+      "settings": {
+        "input_mode": "text",
+        "reasoning_effort": "low"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-glm-5-3-flash",
+      "settings": {
+        "input_mode": "text",
+        "reasoning_effort": "medium"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-glm-5-3-flash",
+      "settings": {
+        "input_mode": "text",
+        "reasoning_effort": "high"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-glm-5-3-flash",
+      "settings": {
+        "input_mode": "text",
+        "reasoning_effort": "xhigh"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-deepseek-v4-1-flash",
+      "settings": {
+        "input_mode": "pdf",
+        "reasoning_effort": "none"
+      },
+      "ok": false,
+      "error": "HTTP 400: Bad request: unsupported content item type: \"file\""
+    },
+    {
+      "model": "databricks-deepseek-v4-1-flash",
+      "settings": {
+        "input_mode": "pdf",
+        "reasoning_effort": "minimal"
+      },
+      "ok": false,
+      "error": "HTTP 400: Bad request: unsupported content item type: \"file\""
+    },
+    {
+      "model": "databricks-deepseek-v4-1-flash",
+      "settings": {
+        "input_mode": "pdf",
+        "reasoning_effort": "low"
+      },
+      "ok": false,
+      "error": "HTTP 400: Bad request: unsupported content item type: \"file\""
+    },
+    {
+      "model": "databricks-deepseek-v4-1-flash",
+      "settings": {
+        "input_mode": "pdf",
+        "reasoning_effort": "medium"
+      },
+      "ok": false,
+      "error": "HTTP 400: Bad request: unsupported content item type: \"file\""
+    },
+    {
+      "model": "databricks-deepseek-v4-1-flash",
+      "settings": {
+        "input_mode": "pdf",
+        "reasoning_effort": "high"
+      },
+      "ok": false,
+      "error": "HTTP 400: Bad request: unsupported content item type: \"file\""
+    },
+    {
+      "model": "databricks-deepseek-v4-1-flash",
+      "settings": {
+        "input_mode": "pdf",
+        "reasoning_effort": "xhigh"
+      },
+      "ok": false,
+      "error": "HTTP 400: Bad request: unsupported content item type: \"file\""
+    },
+    {
+      "model": "databricks-deepseek-v4-1-flash",
+      "settings": {
+        "input_mode": "text",
+        "reasoning_effort": "none"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-deepseek-v4-1-flash",
+      "settings": {
+        "input_mode": "text",
+        "reasoning_effort": "minimal"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-deepseek-v4-1-flash",
+      "settings": {
+        "input_mode": "text",
+        "reasoning_effort": "low"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-deepseek-v4-1-flash",
+      "settings": {
+        "input_mode": "text",
+        "reasoning_effort": "medium"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-deepseek-v4-1-flash",
+      "settings": {
+        "input_mode": "text",
+        "reasoning_effort": "high"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-deepseek-v4-1-flash",
+      "settings": {
+        "input_mode": "text",
+        "reasoning_effort": "xhigh"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gpt-6-luna",
+      "settings": {
+        "input_mode": "pdf",
+        "reasoning_effort": "none"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gpt-6-luna",
+      "settings": {
+        "input_mode": "pdf",
+        "reasoning_effort": "minimal"
+      },
+      "ok": false,
+      "error": "HTTP 400: Unsupported value: 'reasoning_effort' does not support 'minimal' with this model. Supported values are: 'none', 'low', 'medium', 'high', and 'xhigh'."
+    },
+    {
+      "model": "databricks-gpt-6-luna",
+      "settings": {
+        "input_mode": "pdf",
+        "reasoning_effort": "low"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gpt-6-luna",
+      "settings": {
+        "input_mode": "pdf",
+        "reasoning_effort": "medium"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gpt-6-luna",
+      "settings": {
+        "input_mode": "pdf",
+        "reasoning_effort": "high"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gpt-6-luna",
+      "settings": {
+        "input_mode": "pdf",
+        "reasoning_effort": "xhigh"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gpt-6-luna",
+      "settings": {
+        "input_mode": "text",
+        "reasoning_effort": "none"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gpt-6-luna",
+      "settings": {
+        "input_mode": "text",
+        "reasoning_effort": "minimal"
+      },
+      "ok": false,
+      "error": "HTTP 400: Unsupported value: 'reasoning_effort' does not support 'minimal' with this model. Supported values are: 'none', 'low', 'medium', 'high', and 'xhigh'."
+    },
+    {
+      "model": "databricks-gpt-6-luna",
+      "settings": {
+        "input_mode": "text",
+        "reasoning_effort": "low"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gpt-6-luna",
+      "settings": {
+        "input_mode": "text",
+        "reasoning_effort": "medium"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gpt-6-luna",
+      "settings": {
+        "input_mode": "text",
+        "reasoning_effort": "high"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gpt-6-luna",
+      "settings": {
+        "input_mode": "text",
+        "reasoning_effort": "xhigh"
+      },
+      "ok": true,
+      "error": null
+    }
+  ]
+}
