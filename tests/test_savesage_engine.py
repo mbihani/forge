@@ -467,3 +467,34 @@ def test_agent_errors_are_not_retried_and_are_counted(tmp_path: Path) -> None:
     cm = report.cost_metrics
     assert report.n_rows == 2  # max_rows: the canary subset
     assert cm["n_row_errors"] == 2.0 and cm["n_infra_retries"] == 0.0
+
+
+_SID_AGENT = """\
+from anvil.domains.savesage.agent_base import SavesageAgent
+
+
+class SidEcho(SavesageAgent):
+    def predict(self, *, sid, pdf_path):
+        raise RuntimeError(f"ran {sid}")
+"""
+
+
+@needs_statement_agent
+def test_excluded_rows_are_dropped_before_selection(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    from anvil.domains.savesage.eval import evaluate_savesage
+
+    cfg = _engine_with_agent(tmp_path, _SID_AGENT, exclude_example_ids=["s1"])
+    _golden(tmp_path, n=5)
+    evaluate_savesage(
+        scaffold_root=tmp_path / "scaffold",
+        runtime_config_path=cfg,
+        golden_set_path="data/golden_set.jsonl",
+        mode="quick",
+    )
+    ran = sorted(
+        r.getMessage().split("ran ")[-1] for r in caplog.records if "ran s" in r.getMessage()
+    )
+    # quick = 4 rows: s1 is skipped and the next row (s4) fills its place.
+    assert ran == ["s0", "s2", "s3", "s4"]

@@ -203,6 +203,12 @@ eval:
   accuracy_exclude_fields:
     - rewards_programType
     - cards_cardMeta_productFamily
+  # Statements dropped from every mode (the coral bucket takes the next row).
+  # 1010092654 (coral, 907 KB): GPT-5.6 Luna medium exceeded the production
+  # 60s request timeout on all 4 attempts across both 2026-10-07 baselines;
+  # it scored as a zero row and skewed the accuracy floor by ~0.02.
+  exclude_example_ids:
+    - "1010092654"
   # Permit the one-time held-out evaluation performed by scripts/finalize.py.
   held_out_test: false
   # Default mode for `evaluate_branch`. One of: quick, standard, full.

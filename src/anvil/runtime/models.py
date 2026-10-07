@@ -592,6 +592,11 @@ class EvalConfig(BaseModel):
     # stale-GT artifacts. Ignored by the prompt-mode path (full 28-field
     # aggregate) and by the genai engine.
     accuracy_exclude_fields: list[str] = Field(default_factory=list)
+    # Golden-set rows (``example_id``) dropped before any mode's subset is
+    # selected — e.g. a statement that fails on infra (endpoint timeout) every
+    # run, which would skew the gate. A bucketed mode then takes the next row
+    # of that bucket in file order. Read by the savesage engine.
+    exclude_example_ids: list[str] = Field(default_factory=list)
     held_out_test: bool = False
     split: SplitConfig = Field(default_factory=SplitConfig)
     modes: dict[str, EvalModeConfig] = Field(default_factory=dict)

@@ -195,6 +195,9 @@ def evaluate_savesage(
     if gs.name == Path(_GENERIC_GOLDEN_SET).name:
         gs = repo_root / GOLDEN_SET_REL
     examples = load_savesage_golden_set(gs)
+    if cfg.exclude_example_ids:
+        excluded = set(cfg.exclude_example_ids)
+        examples = [ex for ex in examples if str(ex["example_id"]) not in excluded]
     selected = _select(examples, rows=mode_cfg.rows, buckets=dict(mode_cfg.buckets))
     if max_rows:
         # A canary: only the first rows of the mode's subset.
