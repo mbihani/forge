@@ -1,0 +1,27 @@
+{
+  "round_id": 11,
+  "branch": "anvil/exp-round-11",
+  "scaffold_commit_sha": "94796dc7f14696128cd19257a83eba89cd152b96",
+  "parent_commit_sha": "94796dc7f14696128cd19257a83eba89cd152b96",
+  "decision": "noop",
+  "action_kind": "noop",
+  "parse_status": "ok_last_of_many",
+  "levers": {
+    "model": "databricks-gpt-6-luna",
+    "input_mode": "pdf"
+  },
+  "baseline_score": 0.983001909475161,
+  "score_delta_vs_parent": 0.0,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "Parent is round-3 kept state (GPT-6 Luna + PDF + reasoning_effort='none'), co-located with the Pareto frontier on all three gated axes: accuracy=0.9807 (floor 0.978, slack 0.0027), latency=12112ms (equals best-so-far), cost=$0.002324/row (equals best-so-far). Gate from this parent requires improving \u22651 axis past epsilon (acc>0.988 OR latency<11112ms OR cost<$0.002024) with no axis regressing past epsilon (acc\u22650.978, latency\u226413112, cost\u2264$0.002624). Every reachable mutation fails this math by measurement: (a) reasoning_effort ladder is exhausted \u2014 medium\u2192low\u2192none across rounds 1\u20133 captured the full output-token monotone (none is the floor; nothing lower exists); (b) GPT-5.6 Luna is ~2x per-token so any config lands cost near $0.0045\u2013$0.0054 (round 0 measured $0.00537), >> cost ceiling even with reasoning='none'; (c) text input mode on GPT-6 Luna (round 4 measured) saves latency 3657ms and cost $0.00061 but regresses accuracy to 0.954 (-0.0266, blows accuracy epsilon by 5x) because cardAvailableCreditLimit (0.776\u21920.245), cardCreditLimit (0.776\u21920.245), cardDisplayName (0.918\u21920.490) are card-art fields invisible to pdftotext; (d) hybrid cobrand routing fails for the same reason round 10 noted \u2014 text wins or ties PDF in only 5 buckets (expressions, rubyx, general, mine, hpcl) = 6/50 rows, far short of the >25 needed to flip median latency; routing text for those buckets saves ~$0.00006/row and ~+0.002 accuracy, misses all three epsilons simultaneously; (e) text-only cheaper models (GLM-5-3-flash $0.159/M in / $0.529/M out, DeepSeek-v4-1-flash $0.317/M in / $1.269/M out) inherit text's -0.027 card-art-blind accuracy regression \u2014 different model distribution cannot reconstruct card-image pixels from text that doesn't contain them, and both have HIGHER output-token prices than GPT-6 Luna anyway (0.529 and 1.269 vs 0.500 per 1M), so no cost headroom either; (f) parallelising split-PDF-page calls across threads could in principle cut wall-clock via max(t1,t2) but doubles inpu\u2026",
+  "optimizer_run": {
+    "run_id": "53abe3a7c48e41109d02fc13ed07fde5",
+    "experiment_id": "419865818262083"
+  },
+  "optimizer_session_url": null,
+  "optimizer_trace_id": "tr-5f7a7dc71813db44133780c79f04eff4",
+  "frontier_best": null
+}
