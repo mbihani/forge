@@ -1,0 +1,27 @@
+{
+  "round_id": 10,
+  "branch": "anvil/exp-round-10",
+  "scaffold_commit_sha": "e35ea4b51744e111a13ef27bf5a92e5a0fee99f6",
+  "parent_commit_sha": "e35ea4b51744e111a13ef27bf5a92e5a0fee99f6",
+  "decision": "noop",
+  "action_kind": "noop",
+  "parse_status": "ok_last_of_many",
+  "levers": {
+    "model": "databricks-gpt-6-luna",
+    "input_mode": "pdf"
+  },
+  "baseline_score": 0.983001909475161,
+  "score_delta_vs_parent": 0.0,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "Parent (round-3 kept state: GPT-6 Luna + PDF + reasoning_effort='none') is co-located with the Pareto frontier on all three gated axes: accuracy=0.9807 (floor 0.978, slack 0.0027), latency=12112ms (equals best-so-far), cost=$0.002324/row (equals best-so-far). Gate requires improving one axis past its epsilon (acc>0.988 OR latency<11112ms OR cost<$0.002024) WITHOUT any axis regressing past its epsilon (acc>=0.978, latency<=13112ms, cost<=$0.002624). Every reachable mutation fails this math by measurement, not conjecture: (a) GPT-6+PDF+reasoning='low' [measured round 2: 0.9807/14931/$0.00244] regresses latency by 2819ms (>>1000 eps) \u2014 the reasoning ladder medium->low->none across rounds 1-3 already captured the full reasoning-token monotone; (b) GPT-6+PDF+reasoning='medium' [measured round 1: 0.9830/17802/$0.00269] regresses latency by 5690ms and cost by $0.00037 (both >> eps); (c) GPT-5.6+PDF+reasoning='medium' [measured round 0: 0.9830/18635/$0.00537] regresses latency by 6523ms and cost by $0.00305 \u2014 the 2x-per-token GPT-5.6 pricing dominates any output-token savings; (d) GPT-6+text+reasoning='none' [measured round 4: 0.9540/8455/$0.00171] regresses accuracy by 0.0266 (>>0.005 eps) via card-art-blind fields (cardAvailableCreditLimit 0.776->0.245, cardDisplayName 0.918->0.490) \u2014 text is the only knob left that could move latency/cost but drops accuracy below floor; (e) hybrid cobrand routing (text only for expressions/rubyx where round-4 text won) moves median latency negligibly (median stays in the PDF distribution), saves ~$0.00006/row (<<$0.0003 cost eps), nudges accuracy ~+0.002 (<0.005 acc eps) \u2014 fails all three epsilons simultaneously, same conclusion as round 7's noop; (f) GLM-5-3-flash and DeepSeek-v4-1-flash are text-only models that inherit the -0.027 accuracy regression \u2014 no amount of model swap compensates when the input channel is text-blind for card art; (g) GPT-5.6+PDF+reasoning='none' at ~2x per-token pricing would land near $0.0045/row (regresses c\u2026",
+  "optimizer_run": {
+    "run_id": "53abe3a7c48e41109d02fc13ed07fde5",
+    "experiment_id": "419865818262083"
+  },
+  "optimizer_session_url": null,
+  "optimizer_trace_id": "tr-e34764cc69a64a1043f0c8f1c7d6e5e1",
+  "frontier_best": null
+}
