@@ -1,0 +1,27 @@
+{
+  "round_id": 12,
+  "branch": "anvil/exp-round-12",
+  "scaffold_commit_sha": "a6462243839101244ccc0395a2ec9d3a8a97800d",
+  "parent_commit_sha": "a6462243839101244ccc0395a2ec9d3a8a97800d",
+  "decision": "noop",
+  "action_kind": "noop",
+  "parse_status": "ok_last_of_many",
+  "levers": {
+    "model": "databricks-gpt-6-luna",
+    "input_mode": "pdf"
+  },
+  "baseline_score": 0.983001909475161,
+  "score_delta_vs_parent": 0.0,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "Parent (round-3 kept state: GPT-6 Luna + PDF + reasoning_effort='none') is co-located with the Pareto frontier on all three gated axes: accuracy=0.9807 (floor 0.978, slack 0.0027), latency=12112ms (= best-so-far), cost=$0.002324/row (= best-so-far). Gate requires improving \u22651 axis past epsilon (acc>0.988 OR latency<11112ms OR cost<$0.002024) with NO axis regressing past epsilon (acc\u22650.978, latency\u226413112, cost\u2264$0.002624). Every reachable mutation fails this math by measurement, not conjecture: (a) reasoning ladder exhausted \u2014 medium\u2192low\u2192none across rounds 1-3 captured the full output-token monotone; 'none' is the floor. (b) GPT-5.6 Luna at ~2x per-token lands cost near $0.0045-0.0054 (round 0: $0.00537), >> cost ceiling even at reasoning='none'. (c) Text input mode on GPT-6 Luna (round 4 measured) saves 3657ms latency and $0.00061 cost but regresses accuracy to 0.954 (-0.027, 5x the 0.005 eps) because card-art fields (cardAvailableCreditLimit 0.776\u21920.245, cardCreditLimit 0.776\u21920.245, cardDisplayName 0.918\u21920.490) are invisible to pdftotext \u2014 pixels missing from text are not reconstructable. (d) GLM-5-3-flash ($0.529/M out) and DeepSeek-v4-1-flash ($1.269/M out) are text-only, inherit the -0.027 card-art-blind regression AND have higher output-token prices than GPT-6 Luna ($0.500/M out), so no accuracy OR cost headroom. (e) Hybrid cobrand routing (text only for the 6/50 rows \u2014 expressions/rubyx/general/mine/hpcl \u2014 where text wins or ties PDF) is far short of the >25 rows needed to flip median latency; saves ~$0.00006/row (<<$0.0003 eps) and nudges accuracy ~+0.002 (<0.005 eps) \u2014 fails all three epsilons simultaneously (same conclusion as rounds 7, 10, 11). (f) Compound multi-call strategies (parallel page splits via pdfseparate, supplementary targeted enum-field calls): any sequential second call adds \u22655s + \u2265$0.0005 (blows latency+cost eps); parallel page splits double input AND output tokens because the full prompt+schema ships per page \u2014 net cost regression even if \u2026",
+  "optimizer_run": {
+    "run_id": "53abe3a7c48e41109d02fc13ed07fde5",
+    "experiment_id": "419865818262083"
+  },
+  "optimizer_session_url": null,
+  "optimizer_trace_id": "tr-ad86797c5ca263f5a99eacd727f0f3b9",
+  "frontier_best": null
+}
