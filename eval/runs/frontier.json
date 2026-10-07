@@ -1,0 +1,29 @@
+{
+  "best": {
+    "accuracy": 0.9830079689927049,
+    "latency": 17801.90662498353,
+    "cost": 0.0026911645712
+  },
+  "objectives": [
+    "accuracy",
+    "latency",
+    "cost"
+  ],
+  "pareto": true,
+  "directions": {
+    "accuracy": "maximize",
+    "latency": "minimize",
+    "cost": "minimize"
+  },
+  "sources": {
+    "accuracy": "aggregate",
+    "latency": "latency",
+    "cost": "cost"
+  },
+  "epsilon": 0.0,
+  "epsilons": {
+    "accuracy": 0.005,
+    "latency": 1000.0,
+    "cost": 0.0003
+  }
+}
