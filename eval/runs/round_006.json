@@ -1,0 +1,27 @@
+{
+  "round_id": 6,
+  "branch": "anvil/exp-round-6",
+  "scaffold_commit_sha": "22c8fca499a17e1d35c2c906279192a9846ce58f",
+  "parent_commit_sha": "22c8fca499a17e1d35c2c906279192a9846ce58f",
+  "decision": "noop",
+  "action_kind": "noop",
+  "parse_status": "no_block",
+  "levers": {
+    "model": "databricks-gpt-6-luna",
+    "input_mode": "pdf"
+  },
+  "baseline_score": 0.983001909475161,
+  "score_delta_vs_parent": 0.0,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "parser: no `json-action` fenced block in transcript",
+  "optimizer_run": {
+    "run_id": "4283637e580f4421a45f5b9c2806c38f",
+    "experiment_id": "419865818262083"
+  },
+  "optimizer_session_url": null,
+  "optimizer_trace_id": "tr-29c710fda1a4603e1ef67eea9dc991a8",
+  "frontier_best": null
+}
