@@ -1,0 +1,9 @@
+diff --git a/scaffold/harness.yaml b/scaffold/harness.yaml
+index 8e8a8bb..dbfc511 100644
+--- a/scaffold/harness.yaml
++++ b/scaffold/harness.yaml
+@@ -12,3 +12,4 @@ sampling:
+   max_tokens: 4096
+ levers:
+   model: databricks-gpt-6-luna
++  input_mode: text

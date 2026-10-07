@@ -1,0 +1,1377 @@
+{
+  "round_id": 4,
+  "branch": "anvil/exp-round-4",
+  "scaffold_commit_sha": "9ca8271b7ef2214486c24a4aa38f723b6c1fee54",
+  "parent_commit_sha": "d1f4ec66c8b311909aab93df7e77f7db8e995d3e",
+  "decision": "revert",
+  "action_kind": "set_lever",
+  "parse_status": "ok_last_of_many",
+  "levers": {
+    "model": "databricks-gpt-6-luna",
+    "input_mode": "text"
+  },
+  "baseline_score": 0.983001909475161,
+  "score_delta_vs_parent": -0.028954986056890286,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "Round 4: parent is GPT-6 Luna + PDF + reasoning_effort='none' (aggregate 0.9807, latency median 12112ms, cost $0.002324/row); frontier best-so-far {accuracy=0.983, latency=12112, cost=$0.002324}. Need to improve latency by >1000ms (<11112ms) OR cost by >$0.0003 (<$0.002024) without accuracy regressing below 0.978. Flipping input_mode pdf\u2192text (lever-probe: accepted on GPT-6 Luna with reasoning_effort='none') replaces the ~10-50KB PDF file-block (image-rendered to tokens on the backend) with a ~3-10KB pdftotext -layout string. Input tokens are the dominant cost line item on Luna at reasoning='none' (output <$0.0004/row of $0.00232); predicted cost drop $0.0005-0.0008/row (clears $0.0003 epsilon) and median latency drop 2-4s even after ~0.5s local pdftotext (clears 1000ms epsilon). Accuracy risk is bounded: the two fields that lose card-art visibility (field_cards_cardMeta_network at 0.000, field_cards_cardMeta_productFamily \u2014 excluded) can't go lower, cardAvailableCreditLimit/cardCreditLimit at 0.674 are numeric body-text fields text should actually improve, and the free-text fields (transactions_description 0.99, periodEnd/Start 1.0, dates) are text-native. Likely dip on cardDisplayName (0.888) and lastFourDigit (0.93), but their weight across 28 fields keeps the aggregate within the 0.005 floor. The current ZeroReasoningSavesageAgent reads self.input_mode as the default so the lever change propagates with no code edit \u2014 cleanest attribution, both latency AND cost predicted to clear independently.",
+  "optimizer_run": {
+    "run_id": "4283637e580f4421a45f5b9c2806c38f",
+    "experiment_id": "419865818262083"
+  },
+  "optimizer_session_url": null,
+  "optimizer_trace_id": "tr-b33b8bdc0582f6a078bc1646f5e57357",
+  "frontier_best": {
+    "accuracy": 0.9830079689927049,
+    "latency": 12111.625083489344,
+    "cost": 0.0023243872358
+  },
+  "evaluated_at": "2026-10-07T07:41:52+00:00",
+  "n_examples": 50,
+  "mode": "standard",
+  "scorers": [
+    "accuracy",
+    "accuracy_forgiven",
+    "accuracy_gated",
+    "field_cards_bigPicture_cardAvailableCreditLimit",
+    "field_cards_bigPicture_cardCreditLimit",
+    "field_cards_cardMeta_cardDisplayName",
+    "field_cards_cardMeta_lastFourDigit",
+    "field_cards_cardMeta_network",
+    "field_cards_cardMeta_productFamily",
+    "field_rewards_closingPoints",
+    "field_rewards_openingPoints",
+    "field_rewards_pointsEarnedThisCycle",
+    "field_rewards_pointsRedeemedThisCycle",
+    "field_rewards_programType",
+    "field_statementLevelSummary_availableCreditLimit",
+    "field_statementLevelSummary_totalAmountDue",
+    "field_statementLevelSummary_totalCreditLimit",
+    "field_statementLevelSummary_totalMinimumAmountDue",
+    "field_statementMeta_dueDate",
+    "field_statementMeta_issuerName",
+    "field_statementMeta_statementDate",
+    "field_statementMeta_statementPeriodEnd",
+    "field_statementMeta_statementPeriodStart",
+    "field_transactions_amount",
+    "field_transactions_date",
+    "field_transactions_description",
+    "field_transactions_direction",
+    "field_transactions_rewardPointsOnThisTransaction"
+  ],
+  "aggregate": 0.9540469234182707,
+  "per_judge": {
+    "accuracy": 0.9126163516339164,
+    "accuracy_forgiven": 0.9127552405228053,
+    "accuracy_gated": 0.9540469234182707,
+    "field_cards_bigPicture_cardAvailableCreditLimit": 0.24489795918367346,
+    "field_cards_bigPicture_cardCreditLimit": 0.24489795918367346,
+    "field_cards_cardMeta_cardDisplayName": 0.4897959183673469,
+    "field_cards_cardMeta_lastFourDigit": 0.98,
+    "field_cards_cardMeta_network": 0.0,
+    "field_cards_cardMeta_productFamily": 0.0,
+    "field_rewards_closingPoints": 1.0,
+    "field_rewards_openingPoints": 1.0,
+    "field_rewards_pointsEarnedThisCycle": 1.0,
+    "field_rewards_pointsRedeemedThisCycle": 1.0,
+    "field_rewards_programType": 0.0,
+    "field_statementLevelSummary_availableCreditLimit": 0.98,
+    "field_statementLevelSummary_totalAmountDue": 1.0,
+    "field_statementLevelSummary_totalCreditLimit": 1.0,
+    "field_statementLevelSummary_totalMinimumAmountDue": 1.0,
+    "field_statementMeta_dueDate": 1.0,
+    "field_statementMeta_issuerName": 1.0,
+    "field_statementMeta_statementDate": 1.0,
+    "field_statementMeta_statementPeriodEnd": 1.0,
+    "field_statementMeta_statementPeriodStart": 1.0,
+    "field_transactions_amount": 1.0,
+    "field_transactions_date": 1.0,
+    "field_transactions_description": 0.9992307692307691,
+    "field_transactions_direction": 1.0,
+    "field_transactions_rewardPointsOnThisTransaction": 1.0
+  },
+  "per_bucket": {
+    "amazon": {
+      "accuracy": 0.9278431938713914,
+      "accuracy_forgiven": 0.9278431938713914,
+      "accuracy_gated": 0.96629687416995,
+      "field_cards_bigPicture_cardAvailableCreditLimit": 0.1,
+      "field_cards_bigPicture_cardCreditLimit": 0.1,
+      "field_cards_cardMeta_cardDisplayName": 1.0,
+      "field_cards_cardMeta_lastFourDigit": 0.9523809523809523,
+      "field_cards_cardMeta_network": 0.0,
+      "field_cards_cardMeta_productFamily": 0.0,
+      "field_rewards_pointsEarnedThisCycle": 1.0,
+      "field_rewards_programType": 0.0,
+      "field_statementLevelSummary_availableCreditLimit": 1.0,
+      "field_statementLevelSummary_totalAmountDue": 1.0,
+      "field_statementLevelSummary_totalCreditLimit": 1.0,
+      "field_statementLevelSummary_totalMinimumAmountDue": 1.0,
+      "field_statementMeta_dueDate": 1.0,
+      "field_statementMeta_issuerName": 1.0,
+      "field_statementMeta_statementDate": 1.0,
+      "field_statementMeta_statementPeriodEnd": 1.0,
+      "field_statementMeta_statementPeriodStart": 1.0,
+      "field_transactions_amount": 1.0,
+      "field_transactions_date": 1.0,
+      "field_transactions_description": 1.0,
+      "field_transactions_direction": 1.0,
+      "field_transactions_rewardPointsOnThisTransaction": 1.0,
+      "aggregate": 0.96629687416995
+    },
+    "coral": {
+      "accuracy": 0.8892158550263985,
+      "accuracy_forgiven": 0.8892158550263985,
+      "accuracy_gated": 0.9322775692076908,
+      "field_cards_bigPicture_cardAvailableCreditLimit": 0.2857142857142857,
+      "field_cards_bigPicture_cardCreditLimit": 0.2857142857142857,
+      "field_cards_cardMeta_cardDisplayName": 0.0,
+      "field_cards_cardMeta_lastFourDigit": 1.0,
+      "field_cards_cardMeta_productFamily": 0.0,
+      "field_rewards_pointsEarnedThisCycle": 1.0,
+      "field_rewards_programType": 0.0,
+      "field_statementLevelSummary_availableCreditLimit": 0.8571428571428571,
+      "field_statementLevelSummary_totalAmountDue": 1.0,
+      "field_statementLevelSummary_totalCreditLimit": 1.0,
+      "field_statementLevelSummary_totalMinimumAmountDue": 1.0,
+      "field_statementMeta_dueDate": 1.0,
+      "field_statementMeta_issuerName": 1.0,
+      "field_statementMeta_statementDate": 1.0,
+      "field_statementMeta_statementPeriodEnd": 1.0,
+      "field_statementMeta_statementPeriodStart": 1.0,
+      "field_transactions_amount": 1.0,
+      "field_transactions_date": 1.0,
+      "field_transactions_description": 1.0,
+      "field_transactions_direction": 1.0,
+      "field_transactions_rewardPointsOnThisTransaction": 1.0,
+      "aggregate": 0.9322775692076908
+    },
+    "other": {
+      "accuracy": 0.8959634326916887,
+      "accuracy_forgiven": 0.8959634326916887,
+      "accuracy_gated": 0.9588210350852823,
+      "field_cards_bigPicture_cardAvailableCreditLimit": 0.5,
+      "field_cards_bigPicture_cardCreditLimit": 0.5,
+      "field_cards_cardMeta_cardDisplayName": 0.25,
+      "field_cards_cardMeta_lastFourDigit": 1.0,
+      "field_cards_cardMeta_productFamily": 0.0,
+      "field_rewards_pointsEarnedThisCycle": 1.0,
+      "field_rewards_programType": 0.0,
+      "field_statementLevelSummary_availableCreditLimit": 1.0,
+      "field_statementLevelSummary_totalAmountDue": 1.0,
+      "field_statementLevelSummary_totalCreditLimit": 1.0,
+      "field_statementLevelSummary_totalMinimumAmountDue": 1.0,
+      "field_statementMeta_dueDate": 1.0,
+      "field_statementMeta_issuerName": 1.0,
+      "field_statementMeta_statementDate": 1.0,
+      "field_statementMeta_statementPeriodEnd": 1.0,
+      "field_statementMeta_statementPeriodStart": 1.0,
+      "field_transactions_amount": 1.0,
+      "field_transactions_date": 1.0,
+      "field_transactions_description": 1.0,
+      "field_transactions_direction": 1.0,
+      "field_transactions_rewardPointsOnThisTransaction": 1.0,
+      "aggregate": 0.9588210350852823
+    },
+    "sapphiro": {
+      "accuracy": 0.9172505839151951,
+      "accuracy_forgiven": 0.9172505839151951,
+      "accuracy_gated": 0.9513511082163666,
+      "field_cards_bigPicture_cardAvailableCreditLimit": 0.5,
+      "field_cards_bigPicture_cardCreditLimit": 0.5,
+      "field_cards_cardMeta_cardDisplayName": 0.0,
+      "field_cards_cardMeta_lastFourDigit": 1.0,
+      "field_cards_cardMeta_productFamily": 0.0,
+      "field_rewards_pointsEarnedThisCycle": 1.0,
+      "field_rewards_programType": 0.0,
+      "field_statementLevelSummary_availableCreditLimit": 1.0,
+      "field_statementLevelSummary_totalAmountDue": 1.0,
+      "field_statementLevelSummary_totalCreditLimit": 1.0,
+      "field_statementLevelSummary_totalMinimumAmountDue": 1.0,
+      "field_statementMeta_dueDate": 1.0,
+      "field_statementMeta_issuerName": 1.0,
+      "field_statementMeta_statementDate": 1.0,
+      "field_statementMeta_statementPeriodEnd": 1.0,
+      "field_statementMeta_statementPeriodStart": 1.0,
+      "field_transactions_amount": 1.0,
+      "field_transactions_date": 1.0,
+      "field_transactions_description": 1.0,
+      "field_transactions_direction": 1.0,
+      "field_transactions_rewardPointsOnThisTransaction": 1.0,
+      "aggregate": 0.9513511082163666
+    },
+    "mmt": {
+      "accuracy": 0.81821311566439,
+      "accuracy_forgiven": 0.81821311566439,
+      "accuracy_gated": 0.894993894993895,
+      "field_cards_bigPicture_cardAvailableCreditLimit": 0.0,
+      "field_cards_bigPicture_cardCreditLimit": 0.0,
+      "field_cards_cardMeta_cardDisplayName": 0.6666666666666666,
+      "field_cards_cardMeta_lastFourDigit": 1.0,
+      "field_cards_cardMeta_network": 0.0,
+      "field_cards_cardMeta_productFamily": 0.0,
+      "field_rewards_pointsEarnedThisCycle": 1.0,
+      "field_rewards_pointsRedeemedThisCycle": 1.0,
+      "field_rewards_programType": 0.0,
+      "field_statementLevelSummary_availableCreditLimit": 1.0,
+      "field_statementLevelSummary_totalAmountDue": 1.0,
+      "field_statementLevelSummary_totalCreditLimit": 1.0,
+      "field_statementLevelSummary_totalMinimumAmountDue": 1.0,
+      "field_statementMeta_dueDate": 1.0,
+      "field_statementMeta_issuerName": 1.0,
+      "field_statementMeta_statementDate": 1.0,
+      "field_statementMeta_statementPeriodEnd": 1.0,
+      "field_statementMeta_statementPeriodStart": 1.0,
+      "field_transactions_amount": 1.0,
+      "field_transactions_date": 1.0,
+      "field_transactions_description": 1.0,
+      "field_transactions_direction": 1.0,
+      "field_transactions_rewardPointsOnThisTransaction": 1.0,
+      "aggregate": 0.894993894993895
+    },
+    "platinum": {
+      "accuracy": 0.8813320825515947,
+      "accuracy_forgiven": 0.8813320825515947,
+      "accuracy_gated": 0.9407051282051282,
+      "field_cards_bigPicture_cardAvailableCreditLimit": 0.5,
+      "field_cards_bigPicture_cardCreditLimit": 0.5,
+      "field_cards_cardMeta_cardDisplayName": 0.0,
+      "field_cards_cardMeta_lastFourDigit": 1.0,
+      "field_cards_cardMeta_productFamily": 0.0,
+      "field_rewards_pointsEarnedThisCycle": 1.0,
+      "field_rewards_programType": 0.0,
+      "field_statementLevelSummary_availableCreditLimit": 1.0,
+      "field_statementLevelSummary_totalAmountDue": 1.0,
+      "field_statementLevelSummary_totalCreditLimit": 1.0,
+      "field_statementLevelSummary_totalMinimumAmountDue": 1.0,
+      "field_statementMeta_dueDate": 1.0,
+      "field_statementMeta_issuerName": 1.0,
+      "field_statementMeta_statementDate": 1.0,
+      "field_statementMeta_statementPeriodEnd": 1.0,
+      "field_statementMeta_statementPeriodStart": 1.0,
+      "field_transactions_amount": 1.0,
+      "field_transactions_date": 1.0,
+      "field_transactions_description": 1.0,
+      "field_transactions_direction": 1.0,
+      "field_transactions_rewardPointsOnThisTransaction": 1.0,
+      "aggregate": 0.9407051282051282
+    },
+    "adanione": {
+      "accuracy": 0.8668014375561546,
+      "accuracy_forgiven": 0.8668014375561546,
+      "accuracy_gated": 0.916244939271255,
+      "field_cards_bigPicture_cardAvailableCreditLimit": 0.5,
+      "field_cards_bigPicture_cardCreditLimit": 0.5,
+      "field_cards_cardMeta_cardDisplayName": 0.0,
+      "field_cards_cardMeta_lastFourDigit": 1.0,
+      "field_cards_cardMeta_productFamily": 0.0,
+      "field_rewards_pointsEarnedThisCycle": 1.0,
+      "field_rewards_programType": 0.0,
+      "field_statementLevelSummary_availableCreditLimit": 1.0,
+      "field_statementLevelSummary_totalAmountDue": 1.0,
+      "field_statementLevelSummary_totalCreditLimit": 1.0,
+      "field_statementLevelSummary_totalMinimumAmountDue": 1.0,
+      "field_statementMeta_dueDate": 1.0,
+      "field_statementMeta_issuerName": 1.0,
+      "field_statementMeta_statementDate": 1.0,
+      "field_statementMeta_statementPeriodEnd": 1.0,
+      "field_statementMeta_statementPeriodStart": 1.0,
+      "field_transactions_amount": 1.0,
+      "field_transactions_date": 1.0,
+      "field_transactions_description": 1.0,
+      "field_transactions_direction": 1.0,
+      "field_transactions_rewardPointsOnThisTransaction": 1.0,
+      "aggregate": 0.916244939271255
+    },
+    "hpcl": {
+      "accuracy": 0.9515042658284688,
+      "accuracy_forgiven": 0.9515042658284688,
+      "accuracy_gated": 0.971130713712911,
+      "field_cards_bigPicture_cardAvailableCreditLimit": 0.0,
+      "field_cards_bigPicture_cardCreditLimit": 0.0,
+      "field_cards_cardMeta_cardDisplayName": 0.0,
+      "field_cards_cardMeta_lastFourDigit": 1.0,
+      "field_cards_cardMeta_productFamily": 0.0,
+      "field_rewards_pointsEarnedThisCycle": 1.0,
+      "field_rewards_programType": 0.0,
+      "field_statementLevelSummary_availableCreditLimit": 1.0,
+      "field_statementLevelSummary_totalAmountDue": 1.0,
+      "field_statementLevelSummary_totalCreditLimit": 1.0,
+      "field_statementLevelSummary_totalMinimumAmountDue": 1.0,
+      "field_statementMeta_dueDate": 1.0,
+      "field_statementMeta_issuerName": 1.0,
+      "field_statementMeta_statementDate": 1.0,
+      "field_statementMeta_statementPeriodEnd": 1.0,
+      "field_statementMeta_statementPeriodStart": 1.0,
+      "field_transactions_amount": 1.0,
+      "field_transactions_date": 1.0,
+      "field_transactions_description": 1.0,
+      "field_transactions_direction": 1.0,
+      "field_transactions_rewardPointsOnThisTransaction": 1.0,
+      "aggregate": 0.971130713712911
+    },
+    "rubyx": {
+      "accuracy": 0.9435483870967742,
+      "accuracy_forgiven": 0.9435483870967742,
+      "accuracy_gated": 0.9669421487603306,
+      "field_cards_bigPicture_cardAvailableCreditLimit": 0.0,
+      "field_cards_bigPicture_cardCreditLimit": 0.0,
+      "field_cards_cardMeta_cardDisplayName": 0.0,
+      "field_cards_cardMeta_lastFourDigit": 1.0,
+      "field_cards_cardMeta_productFamily": 0.0,
+      "field_rewards_pointsEarnedThisCycle": 1.0,
+      "field_rewards_programType": 0.0,
+      "field_statementLevelSummary_availableCreditLimit": 1.0,
+      "field_statementLevelSummary_totalAmountDue": 1.0,
+      "field_statementLevelSummary_totalCreditLimit": 1.0,
+      "field_statementLevelSummary_totalMinimumAmountDue": 1.0,
+      "field_statementMeta_dueDate": 1.0,
+      "field_statementMeta_issuerName": 1.0,
+      "field_statementMeta_statementDate": 1.0,
+      "field_statementMeta_statementPeriodEnd": 1.0,
+      "field_statementMeta_statementPeriodStart": 1.0,
+      "field_transactions_amount": 1.0,
+      "field_transactions_date": 1.0,
+      "field_transactions_description": 1.0,
+      "field_transactions_direction": 1.0,
+      "field_transactions_rewardPointsOnThisTransaction": 1.0,
+      "aggregate": 0.9669421487603306
+    },
+    "expressions": {
+      "accuracy": 0.9856850715746421,
+      "accuracy_forgiven": 0.9856850715746421,
+      "accuracy_gated": 0.9917695473251029,
+      "field_cards_bigPicture_cardAvailableCreditLimit": 0.0,
+      "field_cards_bigPicture_cardCreditLimit": 0.0,
+      "field_cards_cardMeta_cardDisplayName": 0.0,
+      "field_cards_cardMeta_lastFourDigit": 1.0,
+      "field_cards_cardMeta_productFamily": 0.0,
+      "field_rewards_pointsEarnedThisCycle": 1.0,
+      "field_rewards_programType": 0.0,
+      "field_statementLevelSummary_availableCreditLimit": 1.0,
+      "field_statementLevelSummary_totalAmountDue": 1.0,
+      "field_statementLevelSummary_totalCreditLimit": 1.0,
+      "field_statementLevelSummary_totalMinimumAmountDue": 1.0,
+      "field_statementMeta_dueDate": 1.0,
+      "field_statementMeta_issuerName": 1.0,
+      "field_statementMeta_statementDate": 1.0,
+      "field_statementMeta_statementPeriodEnd": 1.0,
+      "field_statementMeta_statementPeriodStart": 1.0,
+      "field_transactions_amount": 1.0,
+      "field_transactions_date": 1.0,
+      "field_transactions_description": 1.0,
+      "field_transactions_direction": 1.0,
+      "field_transactions_rewardPointsOnThisTransaction": 1.0,
+      "aggregate": 0.9917695473251029
+    },
+    "manu": {
+      "accuracy": 0.9722222222222222,
+      "accuracy_forgiven": 0.9791666666666666,
+      "accuracy_gated": 0.9790209790209791,
+      "field_cards_bigPicture_cardAvailableCreditLimit": 0.0,
+      "field_cards_bigPicture_cardCreditLimit": 0.0,
+      "field_cards_cardMeta_lastFourDigit": 1.0,
+      "field_rewards_pointsEarnedThisCycle": 1.0,
+      "field_rewards_programType": 0.0,
+      "field_statementLevelSummary_availableCreditLimit": 1.0,
+      "field_statementLevelSummary_totalAmountDue": 1.0,
+      "field_statementLevelSummary_totalCreditLimit": 1.0,
+      "field_statementLevelSummary_totalMinimumAmountDue": 1.0,
+      "field_statementMeta_dueDate": 1.0,
+      "field_statementMeta_issuerName": 1.0,
+      "field_statementMeta_statementDate": 1.0,
+      "field_statementMeta_statementPeriodEnd": 1.0,
+      "field_statementMeta_statementPeriodStart": 1.0,
+      "field_transactions_amount": 1.0,
+      "field_transactions_date": 1.0,
+      "field_transactions_description": 0.9615384615384616,
+      "field_transactions_direction": 1.0,
+      "field_transactions_rewardPointsOnThisTransaction": 1.0,
+      "aggregate": 0.9790209790209791
+    },
+    "general": {
+      "accuracy": 0.9891304347826086,
+      "accuracy_forgiven": 0.9891304347826086,
+      "accuracy_gated": 0.9963503649635036,
+      "field_cards_bigPicture_cardAvailableCreditLimit": 1.0,
+      "field_cards_bigPicture_cardCreditLimit": 1.0,
+      "field_cards_cardMeta_cardDisplayName": 0.0,
+      "field_cards_cardMeta_lastFourDigit": 1.0,
+      "field_cards_cardMeta_productFamily": 0.0,
+      "field_rewards_pointsEarnedThisCycle": 1.0,
+      "field_rewards_programType": 0.0,
+      "field_statementLevelSummary_availableCreditLimit": 1.0,
+      "field_statementLevelSummary_totalAmountDue": 1.0,
+      "field_statementLevelSummary_totalCreditLimit": 1.0,
+      "field_statementLevelSummary_totalMinimumAmountDue": 1.0,
+      "field_statementMeta_dueDate": 1.0,
+      "field_statementMeta_issuerName": 1.0,
+      "field_statementMeta_statementDate": 1.0,
+      "field_statementMeta_statementPeriodEnd": 1.0,
+      "field_statementMeta_statementPeriodStart": 1.0,
+      "field_transactions_amount": 1.0,
+      "field_transactions_date": 1.0,
+      "field_transactions_description": 1.0,
+      "field_transactions_direction": 1.0,
+      "field_transactions_rewardPointsOnThisTransaction": 1.0,
+      "aggregate": 0.9963503649635036
+    },
+    "mine": {
+      "accuracy": 0.9242424242424242,
+      "accuracy_forgiven": 0.9242424242424242,
+      "accuracy_gated": 0.9682539682539683,
+      "field_cards_bigPicture_cardAvailableCreditLimit": 1.0,
+      "field_cards_bigPicture_cardCreditLimit": 1.0,
+      "field_cards_cardMeta_cardDisplayName": 0.0,
+      "field_cards_cardMeta_lastFourDigit": 1.0,
+      "field_cards_cardMeta_productFamily": 0.0,
+      "field_rewards_closingPoints": 1.0,
+      "field_rewards_openingPoints": 1.0,
+      "field_rewards_pointsEarnedThisCycle": 1.0,
+      "field_rewards_pointsRedeemedThisCycle": 1.0,
+      "field_rewards_programType": 0.0,
+      "field_statementLevelSummary_availableCreditLimit": 1.0,
+      "field_statementLevelSummary_totalAmountDue": 1.0,
+      "field_statementLevelSummary_totalCreditLimit": 1.0,
+      "field_statementLevelSummary_totalMinimumAmountDue": 1.0,
+      "field_statementMeta_dueDate": 1.0,
+      "field_statementMeta_issuerName": 1.0,
+      "field_statementMeta_statementDate": 1.0,
+      "field_statementMeta_statementPeriodEnd": 1.0,
+      "field_statementMeta_statementPeriodStart": 1.0,
+      "field_transactions_amount": 1.0,
+      "field_transactions_date": 1.0,
+      "field_transactions_description": 1.0,
+      "field_transactions_direction": 1.0,
+      "aggregate": 0.9682539682539683
+    }
+  },
+  "cost_metrics": {
+    "n_rows": 50.0,
+    "latency_ms_median": 8455.046124989167,
+    "latency_ms_mean": 10475.988237544661,
+    "latency_ms_p90": 17036.226292024367,
+    "n_row_errors": 0.0,
+    "n_infra_retries": 0.0,
+    "n_infra_failed": 0.0,
+    "cost_usd_total": 0.08542995664,
+    "cost_usd_per_row": 0.0017085991328
+  },
+  "failures": [
+    {
+      "example_id": "1007014235",
+      "query": "1007014235",
+      "category": "amazon",
+      "strict_accuracy": 0.9444444444444444,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1040565634",
+      "query": "1040565634",
+      "category": "amazon",
+      "strict_accuracy": 0.9344262295081968,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1042795568",
+      "query": "1042795568",
+      "category": "amazon",
+      "strict_accuracy": 0.8461538461538461,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1049788265",
+      "query": "1049788265",
+      "category": "amazon",
+      "strict_accuracy": 0.9473684210526315,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1051615644",
+      "query": "1051615644",
+      "category": "amazon",
+      "strict_accuracy": 0.9767441860465116,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1058371220",
+      "query": "1058371220",
+      "category": "amazon",
+      "strict_accuracy": 0.9716312056737588,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1064311771",
+      "query": "1064311771",
+      "category": "amazon",
+      "strict_accuracy": 0.8461538461538461,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1065138420",
+      "query": "1065138420",
+      "category": "amazon",
+      "strict_accuracy": 0.896551724137931,
+      "judge_failures": [
+        "cards_cardMeta_lastFourDigit",
+        "cards_cardMeta_network",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_cardMeta_lastFourDigit": 0.0,
+        "cards_cardMeta_network": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "114630258",
+      "query": "114630258",
+      "category": "amazon",
+      "strict_accuracy": 0.946236559139785,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_network",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_network": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1147366257",
+      "query": "1147366257",
+      "category": "amazon",
+      "strict_accuracy": 0.9024390243902439,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1147813475",
+      "query": "1147813475",
+      "category": "amazon",
+      "strict_accuracy": 0.9152542372881356,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1148247063",
+      "query": "1148247063",
+      "category": "amazon",
+      "strict_accuracy": 0.9344262295081968,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1153000044",
+      "query": "1153000044",
+      "category": "amazon",
+      "strict_accuracy": 0.9743589743589743,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "121773132",
+      "query": "121773132",
+      "category": "amazon",
+      "strict_accuracy": 0.9849624060150376,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "123947328",
+      "query": "123947328",
+      "category": "amazon",
+      "strict_accuracy": 0.9622641509433962,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1298263361",
+      "query": "1298263361",
+      "category": "amazon",
+      "strict_accuracy": 0.9444444444444444,
+      "judge_failures": [
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1300210940",
+      "query": "1300210940",
+      "category": "amazon",
+      "strict_accuracy": 0.9230769230769231,
+      "judge_failures": [
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1301167179",
+      "query": "1301167179",
+      "category": "amazon",
+      "strict_accuracy": 0.8275862068965517,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1302697155",
+      "query": "1302697155",
+      "category": "amazon",
+      "strict_accuracy": 0.9215686274509803,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1303654252",
+      "query": "1303654252",
+      "category": "amazon",
+      "strict_accuracy": 0.9560439560439561,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1343494801",
+      "query": "1343494801",
+      "category": "amazon",
+      "strict_accuracy": 0.9285714285714286,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1202316015",
+      "query": "1202316015",
+      "category": "coral",
+      "strict_accuracy": 0.9180327868852459,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_cardDisplayName",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_cardDisplayName": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "121563623",
+      "query": "121563623",
+      "category": "coral",
+      "strict_accuracy": 0.9054054054054054,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_cardDisplayName",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_cardDisplayName": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1339811529",
+      "query": "1339811529",
+      "category": "coral",
+      "strict_accuracy": 0.8409090909090909,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_cardDisplayName",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_cardDisplayName": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1470473529",
+      "query": "1470473529",
+      "category": "coral",
+      "strict_accuracy": 0.7619047619047619,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_cardDisplayName",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_cardDisplayName": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1524173824",
+      "query": "1524173824",
+      "category": "coral",
+      "strict_accuracy": 0.9464285714285714,
+      "judge_failures": [
+        "cards_cardMeta_cardDisplayName",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_cardMeta_cardDisplayName": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1693006569",
+      "query": "1693006569",
+      "category": "coral",
+      "strict_accuracy": 0.9907192575406032,
+      "judge_failures": [
+        "cards_cardMeta_cardDisplayName",
+        "cards_cardMeta_productFamily",
+        "rewards_programType",
+        "statementLevelSummary_availableCreditLimit"
+      ],
+      "per_field": {
+        "cards_cardMeta_cardDisplayName": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0,
+        "statementLevelSummary_availableCreditLimit": 0.0
+      }
+    },
+    {
+      "example_id": "2048460122",
+      "query": "2048460122",
+      "category": "coral",
+      "strict_accuracy": 0.8611111111111112,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_cardDisplayName",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_cardDisplayName": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1066129964",
+      "query": "1066129964",
+      "category": "other",
+      "strict_accuracy": 0.9716088328075709,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_cardDisplayName",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_cardDisplayName": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1181596852",
+      "query": "1181596852",
+      "category": "other",
+      "strict_accuracy": 0.8571428571428571,
+      "judge_failures": [
+        "cards_cardMeta_cardDisplayName",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_cardMeta_cardDisplayName": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1359482145",
+      "query": "1359482145",
+      "category": "other",
+      "strict_accuracy": 0.8571428571428571,
+      "judge_failures": [
+        "cards_cardMeta_cardDisplayName",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_cardMeta_cardDisplayName": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1529317035",
+      "query": "1529317035",
+      "category": "other",
+      "strict_accuracy": 0.8979591836734694,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1066709581",
+      "query": "1066709581",
+      "category": "sapphiro",
+      "strict_accuracy": 0.9813664596273292,
+      "judge_failures": [
+        "cards_cardMeta_cardDisplayName",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_cardMeta_cardDisplayName": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1255188325",
+      "query": "1255188325",
+      "category": "sapphiro",
+      "strict_accuracy": 0.7586206896551724,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_cardDisplayName",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_cardDisplayName": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1315105175",
+      "query": "1315105175",
+      "category": "sapphiro",
+      "strict_accuracy": 0.9573170731707317,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_cardDisplayName",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_cardDisplayName": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1325399047",
+      "query": "1325399047",
+      "category": "sapphiro",
+      "strict_accuracy": 0.9716981132075472,
+      "judge_failures": [
+        "cards_cardMeta_cardDisplayName",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_cardMeta_cardDisplayName": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1025056219",
+      "query": "1025056219",
+      "category": "mmt",
+      "strict_accuracy": 0.8275862068965517,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1025079069",
+      "query": "1025079069",
+      "category": "mmt",
+      "strict_accuracy": 0.782608695652174,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_network",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_network": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1025085810",
+      "query": "1025085810",
+      "category": "mmt",
+      "strict_accuracy": 0.8444444444444444,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_cardDisplayName",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_cardDisplayName": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1766477063",
+      "query": "1766477063",
+      "category": "platinum",
+      "strict_accuracy": 0.8780487804878049,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_cardDisplayName",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_cardDisplayName": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "239154850",
+      "query": "239154850",
+      "category": "platinum",
+      "strict_accuracy": 0.8846153846153846,
+      "judge_failures": [
+        "cards_cardMeta_cardDisplayName",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_cardMeta_cardDisplayName": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1046763144",
+      "query": "1046763144",
+      "category": "adanione",
+      "strict_accuracy": 0.7619047619047619,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_cardDisplayName",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_cardDisplayName": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1066621585",
+      "query": "1066621585",
+      "category": "adanione",
+      "strict_accuracy": 0.9716981132075472,
+      "judge_failures": [
+        "cards_cardMeta_cardDisplayName",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_cardMeta_cardDisplayName": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1315106077",
+      "query": "1315106077",
+      "category": "hpcl",
+      "strict_accuracy": 0.9411764705882353,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_cardDisplayName",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_cardDisplayName": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1381125839",
+      "query": "1381125839",
+      "category": "hpcl",
+      "strict_accuracy": 0.9618320610687023,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_cardDisplayName",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_cardDisplayName": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1729531088",
+      "query": "1729531088",
+      "category": "rubyx",
+      "strict_accuracy": 0.9435483870967742,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_cardDisplayName",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_cardDisplayName": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "352358915",
+      "query": "352358915",
+      "category": "expressions",
+      "strict_accuracy": 0.9856850715746421,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "cards_cardMeta_cardDisplayName",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "cards_cardMeta_cardDisplayName": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "1795143075",
+      "query": "1795143075",
+      "category": "manu",
+      "strict_accuracy": 0.9722222222222222,
+      "judge_failures": [
+        "cards_bigPicture_cardAvailableCreditLimit",
+        "cards_bigPicture_cardCreditLimit",
+        "rewards_programType",
+        "transactions_description"
+      ],
+      "per_field": {
+        "cards_bigPicture_cardAvailableCreditLimit": 0.0,
+        "cards_bigPicture_cardCreditLimit": 0.0,
+        "rewards_programType": 0.0,
+        "transactions_description": 0.9615
+      }
+    },
+    {
+      "example_id": "232344130",
+      "query": "232344130",
+      "category": "general",
+      "strict_accuracy": 0.9891304347826086,
+      "judge_failures": [
+        "cards_cardMeta_cardDisplayName",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_cardMeta_cardDisplayName": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    },
+    {
+      "example_id": "636378563",
+      "query": "636378563",
+      "category": "mine",
+      "strict_accuracy": 0.9242424242424242,
+      "judge_failures": [
+        "cards_cardMeta_cardDisplayName",
+        "cards_cardMeta_productFamily",
+        "rewards_programType"
+      ],
+      "per_field": {
+        "cards_cardMeta_cardDisplayName": 0.0,
+        "cards_cardMeta_productFamily": 0.0,
+        "rewards_programType": 0.0
+      }
+    }
+  ],
+  "trace_ids": [],
+  "mlflow": {
+    "run_id": "",
+    "experiment_id": "419865818262082"
+  }
+}
