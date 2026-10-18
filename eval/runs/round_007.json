@@ -1,0 +1,29 @@
+{
+  "round_id": 7,
+  "branch": "anvil/exp-interstell-round-7",
+  "scaffold_commit_sha": "8190e1634762e7d3611fcd3028df6990d1fb0d69",
+  "parent_commit_sha": "8190e1634762e7d3611fcd3028df6990d1fb0d69",
+  "decision": "noop",
+  "action_kind": "noop",
+  "parse_status": "ok_last_of_many",
+  "levers": {
+    "route": "serving",
+    "temperature": 0.3,
+    "max_completion_tokens": 1024,
+    "model": "databricks-gemini-3-1-flash-lite"
+  },
+  "baseline_score": 0.508578431372549,
+  "score_delta_vs_parent": 0.0,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "None of the remaining lever settings has a realistic chance of passing the gate. To be kept, a round must beat the best so far by more than epsilon: first-action p50 under 535ms (best 585), or quality above 0.5455 (best 0.5155), with premature_transfers at 12 or fewer. Gemini 3.1 Flash-Lite gives the same output on every run: all 74 failures repeated across r1/r2/r3, and temperature 0.0 in round 6 left quality unchanged (delta 0.000) at 620ms. Raising temperature to 0.7 can only add variance, which risks extra premature transfers (epsilon 0). It cannot fix the 6 end-bucket samples that end too early, the 3 that miss end_call, or the 4 that transfer prematurely (S15/S17/S20/S23). Lowering max_completion_tokens to 256 or 512 cannot affect first-action latency because replies average ~57 tokens, and it risks cutting off scripted closings. The gateway route is measured at +40-130ms. Every model swap tried has failed. gpt-5-4-mini scored 0.40 (speak_and_act=0: the scripted line and the tool call came in separate responses). qwen3-next scored 0.33 at 1192ms and llama-4-maverick 0.33. deepseek-v4-1-flash scored 0.538 (+0.023 vs best, below the 0.03 epsilon) and was slower at 674ms. The untested models are gpt-5-4-nano (same family as mini, so expect speak_and_act ~0 and quality ~0.40), llama-3.1-8b (weaker than maverick, which already scored 0.33) and qwen35-122b-a10b (a Qwen like qwen3-next at 1192ms, likely slower than Gemini). None plausibly clears the quality floor while also beating 535ms. Also, the 585ms best is probably a lucky draw: Gemini's own runs span 585-682ms, a spread of about 100ms, twice the epsilon. Gemini repeats show no quality variation, and on latency only a lucky draw could pass the gate. Recommendation for the user: the levers are close to exhausted for this objective set. Further gains need (a) changes to the prompt or tool schema, currently outside the search space (the failures are the model misapplying script gates, e.g. the GATE 2 personal-loa\u2026",
+  "optimizer_run": {
+    "run_id": "6950517185bd47bdba19015051b96481",
+    "experiment_id": "3520618322063879"
+  },
+  "optimizer_session_url": null,
+  "optimizer_trace_id": "tr-4aac5c9d32a09ef53f0a34774d667b23",
+  "frontier_best": null
+}
