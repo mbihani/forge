@@ -265,7 +265,7 @@ def _format_objectives(
         "",
     ]
     for obj in objectives:
-        metric = "aggregate" if obj.source == "aggregate" else _COST_METRIC[obj.source]
+        metric = obj.cost_metric or "aggregate"
         base = baseline.get("aggregate") if baseline and obj.source == "aggregate" else None
         if base is None:
             base = cost_metrics.get(metric)
@@ -361,15 +361,6 @@ def _lever_history(repo_root: Path) -> dict[tuple[str, str], str]:
             text += f", median latency {statistics.median(b['lat']):.0f}ms"
         out[key] = text
     return out
-
-
-_COST_METRIC = {
-    "tokens": "total_tokens",
-    "context_chars": "total_context_chars",
-    "n_rows": "n_rows",
-    "latency": "latency_ms_median",
-    "cost": "cost_usd_per_row",
-}
 
 
 def _fmt(v: object) -> str:

@@ -153,16 +153,48 @@ class ParetoObjective(BaseModel):
     # ``latency`` reads ``cost_metrics["latency_ms_median"]`` — the savesage
     # code-mode/latency objective; ``cost`` reads ``cost_metrics
     # ["cost_usd_per_row"]`` (priced from the model catalog); the others read
-    # the aggregate or a token/context/row cost proxy.
-    source: Literal["aggregate", "tokens", "context_chars", "n_rows", "latency", "cost"] = (
-        "aggregate"
-    )
+    # the aggregate or a token/context/row cost proxy; ``metric`` reads the
+    # engine-reported ``cost_metrics[<metric>]`` named by ``metric`` (e.g. a
+    # safety-violation count used as a hard veto with epsilon 0).
+    source: Literal[
+        "aggregate", "tokens", "context_chars", "n_rows", "latency", "cost", "metric"
+    ] = "aggregate"
+    # The ``cost_metrics`` key to read when ``source: metric``.
+    metric: str | None = None
     # Optional per-objective epsilon. A single scalar ``gate.epsilon`` cannot
     # serve objectives on different scales (accuracy ∈ [0,1], epsilon ~0.005 vs
     # latency in ms, epsilon ~hundreds). When set, this objective uses its own
     # epsilon in the frontier's keep/regress test; when None it falls back to
     # the global ``gate.epsilon``.
     epsilon: float | None = None
+
+    @model_validator(mode="after")
+    def _metric_matches_source(self) -> ParetoObjective:
+        if self.source == "metric" and not self.metric:
+            raise ValueError(f"objective {self.name!r}: source 'metric' needs a 'metric' key")
+        if self.source != "metric" and self.metric:
+            raise ValueError(
+                f"objective {self.name!r}: 'metric' is only valid with source 'metric'"
+            )
+        return self
+
+    @property
+    def cost_metric(self) -> str | None:
+        """The ``cost_metrics`` key this objective reads (None for ``aggregate``)."""
+        if self.source == "aggregate":
+            return None
+        if self.source == "metric":
+            return self.metric
+        return _COST_METRIC_BY_SOURCE[self.source]
+
+
+_COST_METRIC_BY_SOURCE = {
+    "tokens": "total_tokens",
+    "context_chars": "total_context_chars",
+    "n_rows": "n_rows",
+    "latency": "latency_ms_median",
+    "cost": "cost_usd_per_row",
+}
 
 
 class ParetoConfig(BaseModel):

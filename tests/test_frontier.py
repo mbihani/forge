@@ -681,6 +681,36 @@ def test_scores_for_objectives_maps_latency_to_latency_ms_median() -> None:
     assert scores == {"latency": 1234.5}
 
 
+def test_metric_source_reads_named_cost_metric() -> None:
+    """``source="metric"`` reads the engine-reported cost_metrics key it names."""
+    report = SimpleNamespace(aggregate=0.9, cost_metrics={"premature_transfers": 3.0})
+    objectives = [
+        ParetoObjective(
+            name="safety", source="metric", metric="premature_transfers", direction="minimize"
+        )
+    ]
+    assert _scores_for_objectives(report, objectives) == {"safety": 3.0}
+
+
+def test_metric_source_requires_metric_key() -> None:
+    with pytest.raises(ValueError, match="needs a 'metric' key"):
+        ParetoObjective(name="safety", source="metric")
+    with pytest.raises(ValueError, match="only valid with source 'metric'"):
+        ParetoObjective(name="latency", source="latency", metric="premature_transfers")
+
+
+def test_metric_source_with_zero_epsilon_is_a_veto() -> None:
+    """A count objective at epsilon 0 reverts any increase, even with a big latency win."""
+    keep = Frontier.should_keep(
+        {"latency": 400.0, "safety": 4.0},
+        {"latency": 700.0, "safety": 3.0},
+        pareto=True,
+        directions={"latency": "minimize", "safety": "minimize"},
+        epsilons={"latency": 50.0, "safety": 0.0},
+    )
+    assert keep is False
+
+
 def test_should_keep_uses_per_objective_epsilon() -> None:
     """Per-objective epsilon allows a latency regression that the global
     epsilon (sized for accuracy) would reject.
