@@ -185,3 +185,11 @@ def test_commit_all_noop_returns_current_sha_without_identity(
     # attempt (and fail) an empty commit.
     sha = commit_all(repo, message="nothing to do")
     assert sha == before
+
+
+def test_round_branch_name_derives_from_parent() -> None:
+    from anvil.loop.git_ops import round_branch_name
+
+    assert round_branch_name(3) == "anvil/exp-round-3"
+    assert round_branch_name(3, "anvil/exp") == "anvil/exp-round-3"
+    assert round_branch_name(1, "anvil/exp-interstell") == "anvil/exp-interstell-round-1"

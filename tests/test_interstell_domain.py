@@ -91,3 +91,18 @@ def test_probe_classify() -> None:
     assert ok is False and "reasons by default" in err
     ok, _ = _classify({"error": "App call failed: ReadTimeout (timeout: after 3 attempts)"}, "none")
     assert ok is None
+
+
+def test_token_param_from_probe_and_max_tokens_extra() -> None:
+    from anvil.domains.interstell.eval import token_param
+
+    probe = _probe(
+        ("llama", {"reasoning": "none"}, False),
+        ("llama", {"reasoning": "omit", "token_param": "max_tokens"}, True),
+        ("gpt", {"reasoning": "none"}, True),
+    )
+    assert token_param("llama", probe) == "max_tokens"
+    assert token_param("gpt", probe) == "max_completion_tokens"
+    assert token_param("other", None) == "max_completion_tokens"
+    extra = request_extra({"max_completion_tokens": 512}, "omit", "max_tokens")
+    assert extra["max_completion_tokens"] is None and extra["max_tokens"] == 512

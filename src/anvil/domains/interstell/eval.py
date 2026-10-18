@@ -85,6 +85,7 @@ PER_JUDGE_NAMES = {
 # Models whose App profile already sets reasoning_effort=minimal (they reject "none").
 PROFILE_REASONING_PREFIXES = ("databricks-gemini-",)
 REASONING_MODES = ("none", "omit", "profile")
+TOKEN_PARAMS = ("max_completion_tokens", "max_tokens")
 DEFAULT_LEVERS = {"route": "gateway", "temperature": 0.3, "max_completion_tokens": 1024}
 APP_TIMEOUT_S = 120.0
 APP_ATTEMPTS = 3
@@ -125,14 +126,26 @@ def reasoning_mode(model: str, probe: dict | None) -> str | None:
     return "profile" if model.startswith(PROFILE_REASONING_PREFIXES) else "none"
 
 
-def request_extra(levers: dict[str, Any], reasoning: str) -> dict[str, Any]:
+def token_param(model: str, probe: dict | None) -> str:
+    """The output-cap field ``model`` accepts: ``max_completion_tokens`` (the production
+    request) or ``max_tokens`` (open models reject the former as an unknown field)."""
+    for r in (probe or {}).get("results", []):
+        if r.get("model") == model and r.get("ok") and "reasoning" in (r.get("settings") or {}):
+            return str(r["settings"].get("token_param", TOKEN_PARAMS[0]))
+    return TOKEN_PARAMS[0]
+
+
+def request_extra(
+    levers: dict[str, Any], reasoning: str, cap_field: str = "max_completion_tokens"
+) -> dict[str, Any]:
     """The ``/api/turn`` ``extra`` overrides for this round (None drops a key in the App)."""
+    cap = int(levers.get("max_completion_tokens", DEFAULT_LEVERS["max_completion_tokens"]))
     extra: dict[str, Any] = {
         "temperature": float(levers.get("temperature", DEFAULT_LEVERS["temperature"])),
-        "max_completion_tokens": int(
-            levers.get("max_completion_tokens", DEFAULT_LEVERS["max_completion_tokens"])
-        ),
+        "max_completion_tokens": cap,
     }
+    if cap_field == "max_tokens":
+        extra.update(max_completion_tokens=None, max_tokens=cap)
     if reasoning == "none":
         extra["reasoning_effort"] = "none"
     elif reasoning == "omit":
@@ -294,7 +307,7 @@ def evaluate_interstell(
             if why:
                 rejection = f"{model} rejects {key}={levers[key]!r}: {why}"
                 break
-    extra = request_extra(levers, reasoning or "none")
+    extra = request_extra(levers, reasoning or "none", token_param(model, probe))
 
     labels = load_labels()
     turns = _turns(assets.samples(), cfg.modes[selected_mode].rows, max_rows)

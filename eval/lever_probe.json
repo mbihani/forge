@@ -1,0 +1,426 @@
+{
+  "engine": "interstell",
+  "probed_at": "2026-10-18T09:55:41+00:00",
+  "results": [
+    {
+      "model": "databricks-gemini-3-1-flash-lite",
+      "settings": {
+        "reasoning": "profile"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gpt-5-4-mini",
+      "settings": {
+        "reasoning": "none"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gpt-5-4-nano",
+      "settings": {
+        "reasoning": "none"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-deepseek-v4-1-flash",
+      "settings": {
+        "reasoning": "none"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-qwen3-next-80b-a3b-instruct",
+      "settings": {
+        "reasoning": "none"
+      },
+      "ok": false,
+      "error": "BadRequestError: Error code: 400 - {'error_code': 'BAD_REQUEST', 'message': 'Bad request: json: unknown field \"max_completion_tokens\"\\n'}"
+    },
+    {
+      "model": "databricks-qwen3-next-80b-a3b-instruct",
+      "settings": {
+        "reasoning": "none",
+        "token_param": "max_tokens"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-llama-4-maverick",
+      "settings": {
+        "reasoning": "none"
+      },
+      "ok": false,
+      "error": "BadRequestError: Error code: 400 - {'error_code': 'BAD_REQUEST', 'message': 'Bad request: json: unknown field \"max_completion_tokens\"\\n'}"
+    },
+    {
+      "model": "databricks-llama-4-maverick",
+      "settings": {
+        "reasoning": "none",
+        "token_param": "max_tokens"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-qwen35-122b-a10b",
+      "settings": {
+        "reasoning": "none"
+      },
+      "ok": false,
+      "error": "BadRequestError: Error code: 400 - {'error_code': 'BAD_REQUEST', 'message': 'Bad request: json: unknown field \"max_completion_tokens\"\\n'}"
+    },
+    {
+      "model": "databricks-qwen35-122b-a10b",
+      "settings": {
+        "reasoning": "none",
+        "token_param": "max_tokens"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-meta-llama-3-1-8b-instruct",
+      "settings": {
+        "reasoning": "none"
+      },
+      "ok": false,
+      "error": "BadRequestError: Error code: 400 - {'error_code': 'BAD_REQUEST', 'message': 'Bad request: json: unknown field \"max_completion_tokens\"\\n'}"
+    },
+    {
+      "model": "databricks-meta-llama-3-1-8b-instruct",
+      "settings": {
+        "reasoning": "none",
+        "token_param": "max_tokens"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gemini-3-1-flash-lite",
+      "settings": {
+        "temperature": 0.0
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gemini-3-1-flash-lite",
+      "settings": {
+        "temperature": 0.3
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gemini-3-1-flash-lite",
+      "settings": {
+        "temperature": 0.7
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gemini-3-1-flash-lite",
+      "settings": {
+        "route": "gateway"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gemini-3-1-flash-lite",
+      "settings": {
+        "route": "serving"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gpt-5-4-mini",
+      "settings": {
+        "temperature": 0.0
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gpt-5-4-mini",
+      "settings": {
+        "temperature": 0.3
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gpt-5-4-mini",
+      "settings": {
+        "temperature": 0.7
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gpt-5-4-mini",
+      "settings": {
+        "route": "gateway"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gpt-5-4-mini",
+      "settings": {
+        "route": "serving"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gpt-5-4-nano",
+      "settings": {
+        "temperature": 0.0
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gpt-5-4-nano",
+      "settings": {
+        "temperature": 0.3
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gpt-5-4-nano",
+      "settings": {
+        "temperature": 0.7
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gpt-5-4-nano",
+      "settings": {
+        "route": "gateway"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-gpt-5-4-nano",
+      "settings": {
+        "route": "serving"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-deepseek-v4-1-flash",
+      "settings": {
+        "temperature": 0.0
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-deepseek-v4-1-flash",
+      "settings": {
+        "temperature": 0.3
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-deepseek-v4-1-flash",
+      "settings": {
+        "temperature": 0.7
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-deepseek-v4-1-flash",
+      "settings": {
+        "route": "gateway"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-deepseek-v4-1-flash",
+      "settings": {
+        "route": "serving"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-qwen3-next-80b-a3b-instruct",
+      "settings": {
+        "temperature": 0.0
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-qwen3-next-80b-a3b-instruct",
+      "settings": {
+        "temperature": 0.3
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-qwen3-next-80b-a3b-instruct",
+      "settings": {
+        "temperature": 0.7
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-qwen3-next-80b-a3b-instruct",
+      "settings": {
+        "route": "gateway"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-qwen3-next-80b-a3b-instruct",
+      "settings": {
+        "route": "serving"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-llama-4-maverick",
+      "settings": {
+        "temperature": 0.0
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-llama-4-maverick",
+      "settings": {
+        "temperature": 0.3
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-llama-4-maverick",
+      "settings": {
+        "temperature": 0.7
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-llama-4-maverick",
+      "settings": {
+        "route": "gateway"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-llama-4-maverick",
+      "settings": {
+        "route": "serving"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-qwen35-122b-a10b",
+      "settings": {
+        "temperature": 0.0
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-qwen35-122b-a10b",
+      "settings": {
+        "temperature": 0.3
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-qwen35-122b-a10b",
+      "settings": {
+        "temperature": 0.7
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-qwen35-122b-a10b",
+      "settings": {
+        "route": "gateway"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-qwen35-122b-a10b",
+      "settings": {
+        "route": "serving"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-meta-llama-3-1-8b-instruct",
+      "settings": {
+        "temperature": 0.0
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-meta-llama-3-1-8b-instruct",
+      "settings": {
+        "temperature": 0.3
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-meta-llama-3-1-8b-instruct",
+      "settings": {
+        "temperature": 0.7
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-meta-llama-3-1-8b-instruct",
+      "settings": {
+        "route": "gateway"
+      },
+      "ok": true,
+      "error": null
+    },
+    {
+      "model": "databricks-meta-llama-3-1-8b-instruct",
+      "settings": {
+        "route": "serving"
+      },
+      "ok": true,
+      "error": null
+    }
+  ]
+}

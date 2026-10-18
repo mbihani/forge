@@ -19,6 +19,7 @@ from anvil.domains.interstell import _interstell
 from anvil.domains.interstell.eval import (
     DEFAULT_LEVERS,
     PROFILE_REASONING_PREFIXES,
+    TOKEN_PARAMS,
     call_app,
     is_transport_error,
     request_extra,
@@ -65,36 +66,53 @@ def probe_interstell(
     models = [str(m) for m in spec.allowed] if spec else [cfg.effective_runtime_model]
     messages = assets.sample(PROBE_SAMPLE)["messages"]
 
-    def _one(model: str, settings: dict[str, Any], reasoning: str) -> ProbeResult:
+    def _one(
+        model: str, settings: dict[str, Any], reasoning: str, cap_field: str = TOKEN_PARAMS[0]
+    ) -> ProbeResult:
         levers = {**DEFAULT_LEVERS, "max_completion_tokens": _PROBE_MAX_TOKENS}
-        levers.update({k: v for k, v in settings.items() if k != "reasoning"})
+        levers.update({k: v for k, v in settings.items() if k in DEFAULT_LEVERS})
         outputs, _ = call_app(
             messages,
             PROBE_SAMPLE,
             model=model,
             route=str(levers["route"]),
-            extra=request_extra(levers, reasoning),
+            extra=request_extra(levers, reasoning, cap_field),
         )
         ok, error = _classify(outputs, reasoning)
         return ProbeResult(model=model, settings=settings, ok=bool(ok), error=error)
 
+    def _reasoning_with(model: str, mode: str) -> list[ProbeResult]:
+        # Production sends max_completion_tokens; retry with max_tokens when the
+        # endpoint rejects the field itself, recording which one worked.
+        first = _one(model, {"reasoning": mode}, mode)
+        if first.ok or 'unknown field "max_completion_tokens"' not in (first.error or ""):
+            return [first]
+        return [
+            first,
+            _one(model, {"reasoning": mode, "token_param": "max_tokens"}, mode, "max_tokens"),
+        ]
+
     def _reasoning(model: str) -> list[ProbeResult]:
         if model.startswith(PROFILE_REASONING_PREFIXES):
-            return [_one(model, {"reasoning": "profile"}, "profile")]
-        first = _one(model, {"reasoning": "none"}, "none")
-        if first.ok or (first.error or "").startswith("unknown:"):
-            return [first]
-        return [first, _one(model, {"reasoning": "omit"}, "omit")]
+            return _reasoning_with(model, "profile")
+        first = _reasoning_with(model, "none")
+        if first[-1].ok or (first[-1].error or "").startswith("unknown:"):
+            return first
+        return first + _reasoning_with(model, "omit")
 
     with ThreadPoolExecutor(max_workers=max(1, max_workers)) as ex:
         per_model = dict(zip(models, ex.map(_reasoning, models), strict=True))
         combos = []
         for model, results in per_model.items():
-            working = next((r.settings["reasoning"] for r in results if r.ok), None)
+            working = next((r.settings for r in results if r.ok), None)
             if working is None:
                 continue
-            combos += [(model, {"temperature": t}, working) for t in _allowed(cfg, "temperature")]
-            combos += [(model, {"route": r}, working) for r in _allowed(cfg, "route")]
+            mode = working["reasoning"]
+            cap_field = working.get("token_param", TOKEN_PARAMS[0])
+            combos += [
+                (model, {"temperature": t}, mode, cap_field) for t in _allowed(cfg, "temperature")
+            ]
+            combos += [(model, {"route": r}, mode, cap_field) for r in _allowed(cfg, "route")]
         rest = list(ex.map(lambda c: _one(*c), combos))
     results = [r for rs in per_model.values() for r in rs] + rest
     # Unknown (transport) outcomes are not evidence either way: drop them.

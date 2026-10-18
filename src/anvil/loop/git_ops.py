@@ -129,15 +129,24 @@ def check_clean_worktree() -> None:
         )
 
 
+def round_branch_name(round_id: int, parent_branch: str = "anvil/exp") -> str:
+    """``<parent>-round-<N>`` — ``anvil/exp-round-<N>`` for the default parent.
+
+    Deriving the name from the parent keeps sessions on different parents
+    (one per domain / worktree) from colliding on the same round branch.
+    """
+    return f"{parent_branch}-round-{round_id}"
+
+
 def create_round_branch(
     repo_root: Path | str, round_id: int, *, parent_branch: str = "anvil/exp"
 ) -> str:
-    """Create ``anvil/exp-round-<N>`` from ``parent_branch`` and check it out.
+    """Create ``<parent_branch>-round-<N>`` from ``parent_branch`` and check it out.
 
     Idempotent on a clean tree: if the branch already exists, raises
     ``GitError`` (the loop should not silently reuse a stale branch).
     """
-    branch = f"anvil/exp-round-{round_id}"
+    branch = round_branch_name(round_id, parent_branch)
     _run(repo_root, ["checkout", parent_branch])
     _run(repo_root, ["checkout", "-b", branch])
     return branch

@@ -146,18 +146,18 @@ levers:
       - databricks-gemini-3-1-flash-lite
       - databricks-gpt-5-4-mini
       - databricks-gpt-5-4-nano
-      - databricks-gpt-5-mini
       - databricks-deepseek-v4-1-flash
       - databricks-qwen3-next-80b-a3b-instruct
       - databricks-llama-4-maverick
-      - databricks-gpt-oss-20b
       - databricks-qwen35-122b-a10b
       - databricks-meta-llama-3-1-8b-instruct
-      - databricks-openjev-qwen35-4b
     description: >-
       runtime model for the voice-agent turn. reasoning_effort is fixed at none (user rule);
       Gemini 3.1 Flash-Lite (the baseline incumbent) rejects none and runs its App default
-      minimal (0 reasoning tokens). Models listed here passed the lever probe.
+      minimal (0 reasoning tokens). Models listed here passed the lever probe;
+      dropped 2026-10-18: gpt-5-mini (rejects reasoning none + temperature != 1),
+      openjev-qwen35-4b (no chat/completions).
+      gpt-oss-20b (reasoning_effort none not supported with tools). Open models take max_tokens, not max_completion_tokens.
   route:
     allowed: [gateway, serving]
     default: gateway
@@ -200,6 +200,19 @@ eval:
     # speak_and_act / reply_quality assessments. The judges are code-defined @scorers in
     # interstell-ai/evals (not registered), so the engine imports and re-runs them directly.
     experiment_id: "3145915622642643"
+    # review_agent_evals finds no REGISTERED judges, so the agreed metrics (= Interstell's
+    # own scorers, re-run unchanged by the engine; user decision 2026-10-18) are recorded here.
+    user_metrics:
+      - name: action_correct
+        description: agent action == Opus-labelled expected action (evals/scorers.py); weight 2
+      - name: speak_and_act
+        description: transfer/end turns call the tool AND say an acceptable verbatim scripted line; weight 1
+      - name: reply_quality
+        description: Opus judge on expected-speak turns (on-script, concise, no hallucination/leak); weight 1
+      - name: premature_transfers
+        description: transfer_call the TRANSFER GATE does not allow (transfer_gate_safety); hard veto, epsilon 0
+      - name: first_action_p50_ms
+        description: first word or tool call p50, measured in-app (target <450ms); primary objective
   # Permit the one-time held-out evaluation performed by scripts/finalize.py.
   held_out_test: false
   # Default mode for `evaluate_branch`. One of: quick, standard, full.
