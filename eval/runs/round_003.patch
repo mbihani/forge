@@ -1,0 +1,9 @@
+diff --git a/scaffold/harness.yaml b/scaffold/harness.yaml
+index 521f2d4..3cb068a 100644
+--- a/scaffold/harness.yaml
++++ b/scaffold/harness.yaml
+@@ -8,3 +8,4 @@ rules: []
+ tools: []
+ levers:
+   route: serving
++  model: databricks-qwen3-next-80b-a3b-instruct
