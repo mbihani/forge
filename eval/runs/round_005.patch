@@ -1,0 +1,9 @@
+diff --git a/scaffold/harness.yaml b/scaffold/harness.yaml
+index 521f2d4..8fe474b 100644
+--- a/scaffold/harness.yaml
++++ b/scaffold/harness.yaml
+@@ -8,3 +8,4 @@ rules: []
+ tools: []
+ levers:
+   route: serving
++  model: databricks-llama-4-maverick
