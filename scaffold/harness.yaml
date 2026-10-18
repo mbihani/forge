@@ -1,7 +1,3 @@
-# Interstell levers-only session: the system prompt is the client's fixed file,
-# so skills/rules/sampling here are inert. Levers unset = config defaults
-# (model gemini-3-1-flash-lite, route gateway, temperature 0.3,
-# max_completion_tokens 1024) — the production request shape the baseline measures.
 sampling:
   temperature: 0.3
   max_tokens: 1024
@@ -10,3 +6,5 @@ skills:
 - file: identity.md
 rules: []
 tools: []
+levers:
+  route: serving
