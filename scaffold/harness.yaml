@@ -1,34 +1,12 @@
+# Interstell levers-only session: the system prompt is the client's fixed file,
+# so skills/rules/sampling here are inert. Levers unset = config defaults
+# (model gemini-3-1-flash-lite, route gateway, temperature 0.3,
+# max_completion_tokens 1024) — the production request shape the baseline measures.
 sampling:
   temperature: 0.3
-  top_p: null
-  max_tokens: 2048
+  max_tokens: 1024
   tool_choice: auto
-  max_tool_calls: 3
 skills:
 - file: identity.md
-- file: greeting.md
-- file: classification.md
-- file: escalation.md
-- file: refund.md
-rules:
-- file: no_repeat_failed_mutations.md
-- file: answer_scope_discipline.md
-tools:
-- name: search_knowledge_base
-  description: 'Search the knowledge base by natural-language query.
-
-    Returns the top-k matching documents, each with doc_id, title,
-
-    and a snippet of the body. Use whenever the user asks about the
-
-    platform — features, pricing, API, integrations, rate limits,
-
-    service tiers, data regions, account setup, SLAs, or support
-
-    plans. If the result is "No matching policy documents." the
-
-    question is out of scope for this knowledge base and you should
-
-    say so.
-
-    '
+rules: []
+tools: []

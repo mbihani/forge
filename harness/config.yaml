@@ -29,18 +29,19 @@ mode: prompt
 # Set DATABRICKS_HOST and DATABRICKS_TOKEN in the environment (or a
 # ~/.databrickscfg profile); the gateway client refreshes the SP token
 # on each request.
-runtime_endpoint: databricks-claude-sonnet-4-6
+runtime_endpoint: databricks-gemini-3-1-flash-lite
 
 # FMAPI model the ANVIL optimizer loop uses for trace analysis +
 # mutation planning. Reached via the gateway's Anthropic route (the
 # Claude Agent SDK), not the OpenAI-compatible route. Not read by the
 # runtime agent.
-optimizer_endpoint: databricks-claude-opus-4-7
+optimizer_endpoint: databricks-claude-opus-5-5
 
 # FMAPI model the MLflow LLM judges call — through the same gateway
 # client as the runtime agent. Kept separate so a future round can pin
 # a different judge model.
-judge_endpoint: databricks-claude-sonnet-4-6
+# Interstell's own judge model (evals/llm.py DEFAULT_JUDGE).
+judge_endpoint: databricks-claude-opus-5-5
 
 # Optimizer backend selection — where the optimizer agent runs.
 #
@@ -123,10 +124,13 @@ loop:
   revert_lookback: 20
   # Hard cap on optimizer turns per round. Round aborts as `noop` if
   # exceeded.
-  max_optimizer_turns: 30
+  max_optimizer_turns: 40
   # Max mutations one round may apply together via a `compound` action
   # (gated as one unit). 1 = classic single-mutation rounds. Max 5.
-  max_mutations_per_round: 1
+  max_mutations_per_round: 2
+  # First 3 turns run before the full eval; all-error canaries revert early.
+  canary_rows: 3
+  stop_after_consecutive_noops: 3
 
 # Runtime levers the optimizer may set with `set_lever` (the choice lives in
 # scaffold/harness.yaml > levers). Only values listed here are accepted.
@@ -136,14 +140,40 @@ loop:
 #   <name> — any other name is opaque to core and read by your engine via
 #            snapshot.config.levers (e.g. an input-format switch).
 # See docs/onboarding.md §13.
-# levers:
-#   model:
-#     allowed: [databricks-claude-sonnet-4-6, databricks-claude-haiku-4-5]
-#     description: runtime model for the agent call
-#   input_mode:
-#     allowed: [direct, text]
-#     default: direct
-#     description: how inputs reach the model
+levers:
+  model:
+    allowed:
+      - databricks-gemini-3-1-flash-lite
+      - databricks-gpt-5-4-mini
+      - databricks-gpt-5-4-nano
+      - databricks-gpt-5-mini
+      - databricks-deepseek-v4-1-flash
+      - databricks-qwen3-next-80b-a3b-instruct
+      - databricks-llama-4-maverick
+      - databricks-gpt-oss-20b
+      - databricks-qwen35-122b-a10b
+      - databricks-meta-llama-3-1-8b-instruct
+      - databricks-openjev-qwen35-4b
+    description: >-
+      runtime model for the voice-agent turn. reasoning_effort is fixed at none (user rule);
+      Gemini 3.1 Flash-Lite (the baseline incumbent) rejects none and runs its App default
+      minimal (0 reasoning tokens). Models listed here passed the lever probe.
+  route:
+    allowed: [gateway, serving]
+    default: gateway
+    description: >-
+      gateway = AI Gateway unified URL (<workspace-id>.ai-gateway.../mlflow/v1);
+      serving = <host>/serving-endpoints. Interstell measured the gateway adding 40-130ms.
+  temperature:
+    allowed: [0.0, 0.3, 0.7]
+    default: 0.3
+    description: sampling temperature (production 0.3)
+  max_completion_tokens:
+    allowed: [256, 512, 1024]
+    default: 1024
+    description: >-
+      output cap (production 1024). Replies are short (~57 tokens mean); a cap that cuts a
+      tool call or scripted closing short fails the turn.
 
 # Model prices: scripts/sync_model_catalog.py exports this Google Sheet into
 # `path`; the loop reads only that committed CSV (never the sheet). Re-sync
@@ -157,6 +187,7 @@ model_catalog:
 
 # Eval configuration.
 eval:
+  engine: interstell
   # The agent's EXISTING evals — reviewed first, then re-used to score every
   # round (see docs/onboarding.md §16). Point experiment_id at the MLflow
   # experiment holding the agent's own traces, judges and human feedback and
@@ -165,19 +196,14 @@ eval:
   # the user under user_metrics. The stock demo agent has no prior evals, so
   # its metrics (the scorers below) are recorded here.
   agent_evals:
-    # experiment_id: "<the agent's own eval experiment>"
-    # judges: []   # subset of the reviewed judges to re-use (empty = all)
-    user_metrics:
-      - name: correctness
-        description: answer matches the golden reference answer
-      - name: retrieval_groundedness
-        description: answer is grounded in the retrieved knowledge-base documents
-      - name: refusal_appropriateness
-        description: out-of-scope questions are refused, in-scope ones answered
+    # Interstell's own experiment: eval runs with action_correct / transfer_gate_safety /
+    # speak_and_act / reply_quality assessments. The judges are code-defined @scorers in
+    # interstell-ai/evals (not registered), so the engine imports and re-runs them directly.
+    experiment_id: "3145915622642643"
   # Permit the one-time held-out evaluation performed by scripts/finalize.py.
-  held_out_test: true
+  held_out_test: false
   # Default mode for `evaluate_branch`. One of: quick, standard, full.
-  default_mode: quick
+  default_mode: standard
   # Anti-overfit data split. When enabled, the golden set is partitioned
   # into train (reserved for optimizer-visible use; currently not scored),
   # dev (round-by-round eval), and test (held-out finalization only). Split is
@@ -188,11 +214,11 @@ eval:
   #   dev_ratio: 0.2
   #   seed: 42
   # Row count per mode (deterministic sub-set of the golden set).
+  # interstell: rows = TURNS = 36 client samples x ceil(rows / 36) repeats.
   modes:
-    quick:    {rows: 8,  buckets: {direct: 2, multi_hop: 2, distractor: 2, out_of_scope: 2}}
-    standard: {rows: 12, buckets: {direct: 4, multi_hop: 4, distractor: 2, out_of_scope: 2}}
-    full:     {rows: 20, buckets: {direct: 6, multi_hop: 6, distractor: 4, out_of_scope: 4}}
-    test:     {rows: 20, buckets: {direct: 6, multi_hop: 6, distractor: 4, out_of_scope: 4}}
+    quick:    {rows: 36}
+    standard: {rows: 108}
+    full:     {rows: 180}
   # Parallelism for predict_fn rows. Tune down if TPM saturates.
   n_workers: 4
   # Cooldown seconds between row tasks inside the thread pool when
@@ -282,7 +308,21 @@ gate:
   # Multi-objective optimization (only used when type: frontier). Disabled
   # preserves the single aggregate objective used by older configurations.
   pareto:
-    enabled: false
+    enabled: true
+    objectives:
+      - name: latency
+        direction: minimize
+        source: latency          # first-action p50 ms (interstell engine)
+        epsilon: 50
+      - name: quality
+        direction: maximize
+        source: aggregate        # action_correct x2 + speak_and_act + reply_quality
+        epsilon: 0.03
+      - name: premature_transfers
+        direction: minimize
+        source: metric
+        metric: premature_transfers
+        epsilon: 0               # hard veto: never add a premature transfer
     # Example:
     # objectives:
     #   - name: quality
