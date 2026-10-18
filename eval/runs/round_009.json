@@ -1,0 +1,29 @@
+{
+  "round_id": 9,
+  "branch": "anvil/exp-interstell-round-9",
+  "scaffold_commit_sha": "3b4b8e9ebdf0cf342843f404cd1d36b9a223d5aa",
+  "parent_commit_sha": "3b4b8e9ebdf0cf342843f404cd1d36b9a223d5aa",
+  "decision": "noop",
+  "action_kind": "noop",
+  "parse_status": "ok_last_of_many",
+  "levers": {
+    "route": "serving",
+    "temperature": 0.3,
+    "max_completion_tokens": 1024,
+    "model": "databricks-gemini-3-1-flash-lite"
+  },
+  "baseline_score": 0.508578431372549,
+  "score_delta_vs_parent": 0.0,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "No lever value left can realistically pass the gate (needs first-action p50 <=535ms, or quality >0.5455, with premature_transfers <=12). I re-checked DeepSeek V4.1 Flash, the only alternative model that holds up on quality (round 4: 0.538, 6 premature transfers, reverted at 674ms p50). Its round-4 failed-row latency by repeat was r1 885ms (cold start), r2 684ms, r3 640ms, against Gemini at 566-618ms per repeat in rounds 1 and 6, with no warm-up effect. So even warm, DeepSeek is about 60-80ms slower, which still fails the <=635ms latency tolerance; a re-run would very likely revert. Temperature is ruled out (round 6 at 0.0 changed quality by 0.000; 0.7 only risks premature transfers, where any increase reverts the round). The token cap doesn't affect first-action latency and risks truncating tool calls. The gateway route is slower. The GPT/Llama/Qwen families scored speak_and_act=0, and qwen35-122b (more active parameters) is unlikely to beat the 1192ms of Qwen3-Next. For the user: DeepSeek halves premature transfers and raises quality at a cost of about 60-90ms. Relaxing the latency tolerance, or warming the endpoint before scoring, is the decision that would unlock it.",
+  "optimizer_run": {
+    "run_id": "6950517185bd47bdba19015051b96481",
+    "experiment_id": "3520618322063879"
+  },
+  "optimizer_session_url": null,
+  "optimizer_trace_id": "tr-950e911d0795dfe0e3a30cfc9a738746",
+  "frontier_best": null
+}
