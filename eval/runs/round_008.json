@@ -1,0 +1,29 @@
+{
+  "round_id": 8,
+  "branch": "anvil/exp-interstell-round-8",
+  "scaffold_commit_sha": "315277247774dd4690008f8f482dd3892475b2f0",
+  "parent_commit_sha": "315277247774dd4690008f8f482dd3892475b2f0",
+  "decision": "noop",
+  "action_kind": "noop",
+  "parse_status": "ok_last_of_many",
+  "levers": {
+    "route": "serving",
+    "temperature": 0.3,
+    "max_completion_tokens": 1024,
+    "model": "databricks-gemini-3-1-flash-lite"
+  },
+  "baseline_score": 0.508578431372549,
+  "score_delta_vs_parent": 0.0,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "No remaining lever value can plausibly pass the gate (latency <535ms, or quality >0.5455, with premature_transfers <=12). Gemini 3.1 Flash-Lite gives the same output on every run: all 74 failures repeated across r1/r2/r3, and temperature 0.0 (round 6) scored the same as the baseline. So temperature 0.7 can only stay the same or add premature transfers, and a lower token cap doesn't affect first-action latency but risks cutting off tool calls or scripted closings. The gateway route is slower. GPT-5.4-mini, Qwen3-Next and Llama-4-Maverick all scored speak_and_act=0 and quality 0.33-0.40, so GPT-5.4-nano (same family as mini) and Llama-3.1-8B would almost certainly regress quality, and Qwen3.5-122B-A10B (more active parameters than Qwen3-Next at 1192ms) is unlikely to beat 535ms. DeepSeek-v4.1-flash (0.538, 6 premature transfers) fails only on +89ms latency, and no lever cuts latency enough to offset that. For the user: DeepSeek is the only option that halves premature transfers; whether to trade about 90ms of latency for that is a policy decision outside this gate.",
+  "optimizer_run": {
+    "run_id": "6950517185bd47bdba19015051b96481",
+    "experiment_id": "3520618322063879"
+  },
+  "optimizer_session_url": null,
+  "optimizer_trace_id": "tr-0c647c2b6e51e36f80060132aae5c569",
+  "frontier_best": null
+}
