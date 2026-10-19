@@ -1,0 +1,29 @@
+{
+  "round_id": 7,
+  "branch": "anvil/exp-interstell-sa-round-7",
+  "scaffold_commit_sha": "8a1f3ee921100f582c5bd8ea1f42baab1d3782c1",
+  "parent_commit_sha": "8a1f3ee921100f582c5bd8ea1f42baab1d3782c1",
+  "decision": "noop",
+  "action_kind": "noop",
+  "parse_status": "ok_last_of_many",
+  "levers": {
+    "model": "databricks-deepseek-v4-1-flash",
+    "route": "serving",
+    "temperature": 0.3,
+    "max_completion_tokens": 1024
+  },
+  "baseline_score": 0.5235814022578729,
+  "score_delta_vs_parent": 0.0,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "The best scaffold (round 5) passes speak_and_act on 99/108 rows (0.9167). A keep needs more than +0.03, so at least 103/108. Only 9 rows still fail. S06 and S34 (6 rows) are already-disputed labels and are not tuned to. The other 3 are S29 (voicemail). In r1 and r3 the agent says the correct 'I'll reach out later, goodbye' and calls end_call, but DeepSeek's tool-call markup (<\uff5cDSML\uff5c calls>) and unrelated rambling leak into the spoken text. That is a model output artifact a prompt edit is unlikely to fix. In r2 it repeats rung 2. Fixing all of S29 reaches at most 102/108 (0.944, +0.028), below the 0.03 epsilon, so no prompt edit can be kept. A model swap is risky: under the unedited prompt the other models call the tool without speaking. The median latency (675ms) is close to the 700ms limit, which argues against longer prompts. No change is the correct call. The next real gain needs the S06/S34 dispute resolved, or the DSML leak handled in the engine's text extraction (outside scaffold/).",
+  "optimizer_run": {
+    "run_id": "6ab3cbda694e4588a1d78aa281fc5df3",
+    "experiment_id": "3520618322063879"
+  },
+  "optimizer_session_url": null,
+  "optimizer_trace_id": "tr-7f38bf3db31e07a29f2519bc1e3287bb",
+  "frontier_best": null
+}
