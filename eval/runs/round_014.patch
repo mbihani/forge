@@ -1,0 +1,12 @@
+diff --git a/scaffold/skills/response_format.md b/scaffold/skills/response_format.md
+index bcc54c9..96c4198 100644
+--- a/scaffold/skills/response_format.md
++++ b/scaffold/skills/response_format.md
+@@ -20,3 +20,7 @@ The line you say decides the tool. Check before you send:
+     - They gave a credit card amount under $7,000 and "Do you have any personal loans?" is not in your earlier lines: do NOT end, even if they say bye, "have a good day" or "already done this". Call `respond`: "Do you have any personal loans?"
+     A do-not-call / stop-bothering-me request, a callback request, or the caller's own "no debt" still ends as scripted.
+ - Unsecured answered only with a bare "okay" / "I see", and their later "yeah" answered only "And you handle these bills yourself?": unsecured is still missing. Do not say the transfer line. Call `respond`: "And these are unsecured debts, with no collateral attached, right?"
++- About to say "I didn't catch that." or "I'm having trouble understanding."? If "I'm having trouble understanding." is already anywhere in your earlier lines and the caller is still not engaging (gibberish, single words, fragments like "call", "for the"): do not send a strike line or a cue. Call `end_call`: "I'm unable to assist at this time. Goodbye"
++- Echo: the caller's latest line repeats your own earlier words back ("do you handle these bills yourself", "your debt is unsecured", a figure you said first). It answers nothing and is not engaging. Never answer your own question for them. Use the not-engaging ladder: the next unused strike line + "Could you tell me roughly how much you owe on your credit cards combined — like ten thousand, twenty thousand, or more?"
++- A figure that includes a car or truck loan, mortgage or other excluded debt ("my truck payments and my credit cards, fourteen thousand") is not a qualifying amount. Do not transfer. Call `respond`: "Truck and car loans don't count toward our program — leaving that aside, roughly how much do you owe on personal loans, if any?"
++- Your own cut-off fragment ("I didn't", "Just", "Thanks—this will") is not a line you must finish. Reply to what the caller said. A caller explaining on topic ("it's been written off", "I just told you") is engaging, not a strike-line case: acknowledge it and ask the next question (e.g. "Oh, got it, they wrote it off. Is that no debt at all now, or debt under 7K?").
