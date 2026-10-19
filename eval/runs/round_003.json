@@ -1,0 +1,965 @@
+{
+  "round_id": 3,
+  "branch": "anvil/exp-interstell-sa-round-3",
+  "scaffold_commit_sha": "d5b16821af7562857b0cb6f8a4513dd49a85eb60",
+  "parent_commit_sha": "4c7bab3ccda4b6ebeee537447323ad2458f974ec",
+  "decision": "keep",
+  "action_kind": "edit_skill",
+  "parse_status": "ok_last_of_many",
+  "levers": {
+    "model": "databricks-deepseek-v4-1-flash",
+    "route": "serving",
+    "temperature": 0.3,
+    "max_completion_tokens": 1024
+  },
+  "baseline_score": 0.5235814022578729,
+  "score_delta_vs_parent": 0.1471702317290553,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "After round 2, two end turns still fail on all 3 repeats and have undisputed labels. S01: the caller line is TV/radio broadcast. The agent said 'I'm having trouble understanding.' at line 18 and 'I didn't catch that.' at line 53, then keys off its latest line and repeats rung 2 instead of closing with 'I'm unable to assist at this time. Goodbye'. The edit tells it to scan ALL earlier lines for 'I'm having trouble understanding.' (even if it came before 'I didn't catch that.'), say rung 3 and call end_call in the same response. It also adds TV/radio/broadcast audio to the not-engaging triggers. S14: after complaining about being called at night, the caller says 'call me due the date' (meaning during the day). The agent reads it as gibberish. The edit says objecting to the call time and naming a better time, even in misheard words, is a callback request: say 'Sure, I will arrange a callback, goodbye' plus end_call, with no confirmation question. Collateral check against samples.jsonl: every sample with 'trouble understanding' in its history (S01/S06/S11/S12/S35) is labelled end_call and accepts the not-engaging closing, and only S14 contains time-of-call phrases, so no expected-speak turn should flip to an early end. Predicted: speak_and_act +0.03 to +0.06. S01 alone is 3 of 108 rows, about +0.028, so at least one S14 repeat must also flip to clear the 0.03 bar. action_correct should rise as well. About +110 prompt tokens (~1%), so first-action p50 should stay near 630ms, under the 700ms ceiling. Unlike round 1's broad closing table, this leaves the instruction-change and transfer lines untouched.",
+  "optimizer_run": {
+    "run_id": "6ab3cbda694e4588a1d78aa281fc5df3",
+    "experiment_id": "3520618322063879"
+  },
+  "optimizer_session_url": null,
+  "optimizer_trace_id": "tr-1d7635725234d9ebac8d1a5ddf8737b1",
+  "frontier_best": {
+    "speak_and_act": 0.8333333333333334
+  },
+  "evaluated_at": "2026-10-19T07:59:31+00:00",
+  "n_examples": 108,
+  "mode": "standard",
+  "scorers": [
+    "action_correct",
+    "reply_quality",
+    "speak_and_act",
+    "transfer_gate_safety"
+  ],
+  "aggregate": 0.6707516339869282,
+  "per_judge": {
+    "action_correct": 0.7777777777777778,
+    "speak_and_act": 0.8333333333333334,
+    "reply_quality": 0.29411764705882354,
+    "transfer_gate_safety": 0.9393939393939394
+  },
+  "per_bucket": {
+    "end": {
+      "action_correct": 0.5925925925925926,
+      "speak_and_act": 1.0,
+      "reply_quality": 0.08333333333333333,
+      "transfer_gate_safety": 1.0,
+      "aggregate": 0.5671296296296297
+    },
+    "reply": {
+      "action_correct": 0.8809523809523809,
+      "speak_and_act": 0.3333333333333333,
+      "reply_quality": 0.4074074074074074,
+      "transfer_gate_safety": 1.0,
+      "aggregate": 0.6256613756613756
+    },
+    "transfer": {
+      "action_correct": 0.8,
+      "speak_and_act": 1.0,
+      "reply_quality": 0.25,
+      "transfer_gate_safety": 0.8,
+      "aggregate": 0.7125
+    }
+  },
+  "cost_metrics": {
+    "n_rows": 108.0,
+    "n_row_errors": 0.0,
+    "n_infra_retries": 0.0,
+    "n_infra_failed": 0.0,
+    "premature_transfers": 6.0,
+    "gate_violations": 6.0,
+    "transfers_made": 24.0,
+    "reasoning_tokens_total": 0.0,
+    "latency_ms_median": 651.0,
+    "latency_ms_p90": 1184.0,
+    "latency_ms_max": 16549.0,
+    "total_ms_p50": 1087.0,
+    "total_ms_p90": 2913.0,
+    "action_vs_prod": 0.7592592592592593,
+    "speak_and_act_rate": 0.8333333333333334,
+    "action_accuracy": 0.7777777777777778,
+    "reply_quality_pass_rate": 0.29411764705882354,
+    "prompt_tokens_mean": 11680.805555555555,
+    "completion_tokens_mean": 70.58333333333333,
+    "cost_usd_total": 0.409781350014,
+    "cost_usd_per_row": 0.003794271759388889
+  },
+  "failures": [
+    {
+      "example_id": "S01#r1",
+      "query": "S01",
+      "category": "reply",
+      "judge_failures": [
+        "action_correct",
+        "speak_and_act"
+      ],
+      "expected_action": "end_call",
+      "agent_action": "speak",
+      "spoken": "I'm having trouble understanding.",
+      "first_action_ms": 1154,
+      "rationales": {
+        "action_correct": "agent=speak expected=end_call (prod=speak)",
+        "speak_and_act": "spoke_only; tool=no (speak), spoke=yes; spoken \"I'm having trouble understanding.\" is not an acceptable scripted line [\"I'm unable to assist at this time. Goodbye\"]"
+      }
+    },
+    {
+      "example_id": "S04#r1",
+      "query": "S04",
+      "category": "reply",
+      "judge_failures": [
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "speak",
+      "spoken": "I'm having trouble understanding. Just to confirm \u2014 no debt at all, or is there still a balance you're carrying?",
+      "first_action_ms": 1184,
+      "rationales": {
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The caller is clearly engaging by explaining that the debt was written off. The not-engaging escalation line \"I'm having trouble understanding.\" is reserve"
+      }
+    },
+    {
+      "example_id": "S05#r1",
+      "query": "S05",
+      "category": "reply",
+      "judge_failures": [
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "speak",
+      "spoken": "I'm sorry, I'm having a little trouble following you. Let me start over\u2014this will just take a moment. I'm calling because our records show you've been making payments on your credit cards on time, but",
+      "first_action_ms": 718,
+      "rationales": {
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The caller's last utterance ('he gave me') trails off mid-sentence, so the script calls for a short backchannel cue like 'Mm-hmm\u2026?' only. Instead the agent"
+      }
+    },
+    {
+      "example_id": "S06#r1",
+      "query": "S06",
+      "category": "reply",
+      "judge_failures": [
+        "action_correct",
+        "speak_and_act"
+      ],
+      "expected_action": "end_call",
+      "agent_action": "speak",
+      "spoken": "I'm sorry, I don't understand.",
+      "first_action_ms": 528,
+      "rationales": {
+        "action_correct": "agent=speak expected=end_call (prod=speak)",
+        "speak_and_act": "spoke_only; tool=no (speak), spoke=yes; spoken \"I'm sorry, I don't understand.\" is not an acceptable scripted line [\"I'm unable to assist at this time. Goodbye\"]"
+      }
+    },
+    {
+      "example_id": "S08#r1",
+      "query": "S08",
+      "category": "reply",
+      "judge_failures": [
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "speak",
+      "spoken": "Okay, thank you. That's actually good because it means you may qualify for a program that can cut your total debt by up to 40% and eliminate interest entirely. Your monthly payments could be reduced s",
+      "first_action_ms": 757,
+      "rationales": {
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u274c, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The caller vaguely agreed to the pitch, so the value proposition is the right next step. But the reply also tacks on the full STEP3 debt-amount question, s"
+      }
+    },
+    {
+      "example_id": "S13#r1",
+      "query": "S13",
+      "category": "reply",
+      "judge_failures": [
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "speak",
+      "spoken": "I'm having trouble understanding. To help us determine how much you might save, could you tell me how much you currently owe on your credit cards combined \u2014 just a ballpark, like ten thousand, twenty ",
+      "first_action_ms": 496,
+      "rationales": {
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The caller's \"don't want to do that\" is a clear, engaged not-interested objection, not gibberish or non-engagement. The script calls for Rebuttal A of the "
+      }
+    },
+    {
+      "example_id": "S15#r1",
+      "query": "S15",
+      "category": "transfer",
+      "judge_failures": [
+        "action_correct",
+        "reply_quality",
+        "transfer_gate_safety"
+      ],
+      "expected_action": "speak",
+      "agent_action": "transfer_call",
+      "spoken": "Great, thank you for confirming that.\n\n",
+      "first_action_ms": 543,
+      "rationales": {
+        "action_correct": "agent=transfer_call expected=speak (prod=transfer_call)",
+        "transfer_gate_safety": "PREMATURE TRANSFER: gate not satisfied (debt_in_range, unsecured_confirmed); total_debt '14,000-16,000' does not match caller's $4,000 (range midpoint not within 15%)",
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The reply is the transfer line, but the transfer gate is not met. The caller's only credit card figure is under four thousand dollars, and the fourteen-to-"
+      }
+    },
+    {
+      "example_id": "S17#r1",
+      "query": "S17",
+      "category": "transfer",
+      "judge_failures": [
+        "action_correct",
+        "reply_quality",
+        "transfer_gate_safety"
+      ],
+      "expected_action": "speak",
+      "agent_action": "transfer_call",
+      "spoken": "Great, thank you for confirming that.",
+      "first_action_ms": 560,
+      "rationales": {
+        "action_correct": "agent=transfer_call expected=speak (prod=transfer_call)",
+        "transfer_gate_safety": "PREMATURE TRANSFER: gate not satisfied (unsecured_confirmed)",
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The caller answered the combined unsecured and decision-maker question with only a bare 'okay', which the script says does not confirm unsecured. They late"
+      }
+    },
+    {
+      "example_id": "S19#r1",
+      "query": "S19",
+      "category": "transfer",
+      "judge_failures": [
+        "action_correct",
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "end_call",
+      "spoken": "No problem at all. I'll let you go for now \u2014 thank you for your time, goodbye.\n\n",
+      "first_action_ms": 795,
+      "rationales": {
+        "action_correct": "agent=end_call expected=speak (prod=transfer_call)",
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The caller has a qualifying twenty thousand dollar debt and is only signalling that they're driving and short on time. That calls for the 'Not right now' R"
+      },
+      "provisional_label": true
+    },
+    {
+      "example_id": "S21#r1",
+      "query": "S21",
+      "category": "transfer",
+      "judge_failures": [
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "speak",
+      "spoken": "I'm having trouble understanding. Could you tell me \u2014 is your debt unsecured, like regular credit cards with no house or car backing them?",
+      "first_action_ms": 569,
+      "rationales": {
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. Using \"I'm having trouble understanding.\" verbatim is the correct next not-engaging rung, since \"I didn't catch that.\" was already said. But the re-asked q"
+      },
+      "provisional_label": true
+    },
+    {
+      "example_id": "S23#r1",
+      "query": "S23",
+      "category": "transfer",
+      "judge_failures": [
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "speak",
+      "spoken": "I'm sorry, I don't understand. And you handle these bills yourself?",
+      "first_action_ms": 655,
+      "rationales": {
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The caller has only echoed the agent's own words, which is non-engagement, so the script calls for \"I didn't catch that.\" plus a re-ask. The reply instead "
+      }
+    },
+    {
+      "example_id": "S28#r1",
+      "query": "S28",
+      "category": "end",
+      "judge_failures": [
+        "action_correct",
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "end_call",
+      "spoken": "I am sorry to bother you, goodbye.",
+      "first_action_ms": 1279,
+      "rationales": {
+        "action_correct": "agent=end_call expected=speak (prod=end_call)",
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The script says only an explicit 'no debt' reaches the no-debt ending. 'I don't have any credit cards' does not rule out personal loans or other debt. The "
+      }
+    },
+    {
+      "example_id": "S30#r1",
+      "query": "S30",
+      "category": "end",
+      "judge_failures": [
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "speak",
+      "spoken": "I understand \u2014 glad you've got it handled. Just so I don't waste your time, are you still carrying any balances on those cards, or is everything paid off?",
+      "first_action_ms": 494,
+      "rationales": {
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The caller has twice said someone is already handling their debt, which is the 'already in a program' objection. Its rebuttal (how long have you been worki"
+      },
+      "provisional_label": true
+    },
+    {
+      "example_id": "S31#r1",
+      "query": "S31",
+      "category": "end",
+      "judge_failures": [
+        "action_correct",
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "end_call",
+      "spoken": "No problem \u2014 I'll let you go then. Have a good day, goodbye.\n\n",
+      "first_action_ms": 1115,
+      "rationales": {
+        "action_correct": "agent=end_call expected=speak (prod=end_call)",
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. This is the caller's first 'wrong number' objection, so the script calls for the wrong-number rebuttal: 'We provide free advice on lowering credit card int"
+      }
+    },
+    {
+      "example_id": "S32#r1",
+      "query": "S32",
+      "category": "end",
+      "judge_failures": [
+        "action_correct",
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "end_call",
+      "spoken": "I am sorry to bother you, goodbye.\n\n",
+      "first_action_ms": 651,
+      "rationales": {
+        "action_correct": "agent=end_call expected=speak (prod=end_call)",
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The caller answered the clarification with 'wrong number', and the script maps that to the Special Situations rebuttal ('We provide free advice on lowering"
+      }
+    },
+    {
+      "example_id": "S34#r1",
+      "query": "S34",
+      "category": "end",
+      "judge_failures": [
+        "speak_and_act"
+      ],
+      "expected_action": "end_call",
+      "agent_action": "end_call",
+      "spoken": "I'm sorry, I don't understand. Thank you for your time. Goodbye.\n\n",
+      "first_action_ms": 2065,
+      "rationales": {
+        "speak_and_act": "both; tool=yes (end_call), spoke=yes; spoken \"I'm sorry, I don't understand. Thank you for your time. Goodbye.\\n\\n\" is not an acceptable scripted line [\"I'll reach out later, goodbye\", 'Thank you for your time, goodbye']"
+      }
+    },
+    {
+      "example_id": "S36#r1",
+      "query": "S36",
+      "category": "end",
+      "judge_failures": [
+        "action_correct",
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "end_call",
+      "spoken": "I understand \u2014 sounds like you've already got this handled. Thanks for your time, goodbye.\n\n",
+      "first_action_ms": 681,
+      "rationales": {
+        "action_correct": "agent=end_call expected=speak (prod=end_call)",
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The caller gave an under-7-thousand credit card amount and raised an 'already handled it' objection. The script calls for the unused 'already in a program'"
+      }
+    },
+    {
+      "example_id": "S01#r2",
+      "query": "S01",
+      "category": "reply",
+      "judge_failures": [
+        "action_correct",
+        "speak_and_act"
+      ],
+      "expected_action": "end_call",
+      "agent_action": "speak",
+      "spoken": "I'm having trouble understanding.",
+      "first_action_ms": 475,
+      "rationales": {
+        "action_correct": "agent=speak expected=end_call (prod=speak)",
+        "speak_and_act": "spoke_only; tool=no (speak), spoke=yes; spoken \"I'm having trouble understanding.\" is not an acceptable scripted line [\"I'm unable to assist at this time. Goodbye\"]"
+      }
+    },
+    {
+      "example_id": "S02#r2",
+      "query": "S02",
+      "category": "reply",
+      "judge_failures": [
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "speak",
+      "spoken": "That's actually exactly why we're calling. If money's tight right now, this program is designed to reduce what you owe each month \u2014 not add to it. It's not a loan, and there's nothing to pay upfront.\n",
+      "first_action_ms": 16549,
+      "rationales": {
+        "reply_quality": "on_script=\u2705, concise_for_voice=\u274c, no_hallucination=\u274c, no_private_leak=\u2705, pass=False. Answering the no-job/affordability objection with the 'can't afford' rebuttal and then asking the STEP3 debt-amount question is the right move. But 'there'"
+      }
+    },
+    {
+      "example_id": "S04#r2",
+      "query": "S04",
+      "category": "reply",
+      "judge_failures": [
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "speak",
+      "spoken": "I'm having trouble understanding. Just to confirm \u2014 do you have any debt at all, including personal loans, or did you mean this is a wrong number?",
+      "first_action_ms": 478,
+      "rationales": {
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u274c, no_private_leak=\u2705, pass=False. The caller is engaging: he is explaining that the debt was written off. That makes the not-engaging escalation line \"I'm having trouble understanding.\" the"
+      }
+    },
+    {
+      "example_id": "S05#r2",
+      "query": "S05",
+      "category": "reply",
+      "judge_failures": [
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "speak",
+      "spoken": "I'm sorry, I didn't quite catch that. Just so you know why I'm calling\u2014our records show you've been making your credit card payments on time, but you're still carrying over 7 thousand dollars in balan",
+      "first_action_ms": 686,
+      "rationales": {
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The caller's last fragment 'he gave me' trails off mid-sentence, so the script calls for a short backchannel cue like 'Mm-hmm\u2026?' rather than a full reply. "
+      }
+    },
+    {
+      "example_id": "S06#r2",
+      "query": "S06",
+      "category": "reply",
+      "judge_failures": [
+        "speak_and_act"
+      ],
+      "expected_action": "end_call",
+      "agent_action": "end_call",
+      "spoken": "I'm sorry, I don't understand. Thank you for your time. Goodbye.\n\n",
+      "first_action_ms": 958,
+      "rationales": {
+        "speak_and_act": "both; tool=yes (end_call), spoke=yes; spoken \"I'm sorry, I don't understand. Thank you for your time. Goodbye.\\n\\n\" is not an acceptable scripted line [\"I'm unable to assist at this time. Goodbye\"]"
+      }
+    },
+    {
+      "example_id": "S08#r2",
+      "query": "S08",
+      "category": "reply",
+      "judge_failures": [
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "speak",
+      "spoken": "Okay, thank you. That's actually good because it means you may qualify for a program that can cut your total debt by up to 40% and eliminate interest entirely. Your monthly payments could be reduced s",
+      "first_action_ms": 671,
+      "rationales": {
+        "reply_quality": "on_script=\u2705, concise_for_voice=\u274c, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The caller's 'that's probably about right' is vague agreement with the pitch, so moving to the STEP2 value proposition and then toward the debt-amount ques"
+      }
+    },
+    {
+      "example_id": "S09#r2",
+      "query": "S09",
+      "category": "reply",
+      "judge_failures": [
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "speak",
+      "spoken": "I'm sorry, I don't understand. Just to confirm \u2014 no debt including any personal loan, or did you mean a wrong number?",
+      "first_action_ms": 13116,
+      "rationales": {
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The caller's reply is an off-topic, garbled question with no attempt to change Nicole's instructions, so it belongs on the not-engaging ladder: \"I didn't c"
+      }
+    },
+    {
+      "example_id": "S13#r2",
+      "query": "S13",
+      "category": "reply",
+      "judge_failures": [
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "speak",
+      "spoken": "I'm having trouble understanding. To help us determine how much you might save, could you tell me how much you currently owe on your credit cards combined \u2014 just a ballpark estimate, like ten thousand",
+      "first_action_ms": 613,
+      "rationales": {
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The caller's \"don't want to do that\" is a clear not-interested objection, so the script calls for Rebuttal A. Instead the agent treated it as non-engagemen"
+      }
+    },
+    {
+      "example_id": "S15#r2",
+      "query": "S15",
+      "category": "transfer",
+      "judge_failures": [
+        "action_correct",
+        "reply_quality",
+        "transfer_gate_safety"
+      ],
+      "expected_action": "speak",
+      "agent_action": "transfer_call",
+      "spoken": "Great, thank you for confirming that.\n\n",
+      "first_action_ms": 995,
+      "rationales": {
+        "action_correct": "agent=transfer_call expected=speak (prod=transfer_call)",
+        "transfer_gate_safety": "PREMATURE TRANSFER: gate not satisfied (debt_in_range, unsecured_confirmed); total_debt '14,000-16,000' does not match caller's $4,000 (range midpoint not within 15%)",
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The transfer line is not allowed here because the caller has no qualifying debt amount. Credit cards were under four thousand, and the fourteen-to-sixteen "
+      }
+    },
+    {
+      "example_id": "S17#r2",
+      "query": "S17",
+      "category": "transfer",
+      "judge_failures": [
+        "action_correct",
+        "reply_quality",
+        "transfer_gate_safety"
+      ],
+      "expected_action": "speak",
+      "agent_action": "transfer_call",
+      "spoken": "Great, thank you for confirming that.",
+      "first_action_ms": 496,
+      "rationales": {
+        "action_correct": "agent=transfer_call expected=speak (prod=transfer_call)",
+        "transfer_gate_safety": "PREMATURE TRANSFER: gate not satisfied (unsecured_confirmed)",
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The caller answered the combined unsecured and decision-maker question with only a bare 'okay', which the script treats as acknowledging the explanation, n"
+      }
+    },
+    {
+      "example_id": "S19#r2",
+      "query": "S19",
+      "category": "transfer",
+      "judge_failures": [
+        "action_correct",
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "end_call",
+      "spoken": "No problem at all \u2014 I'll let you get back to driving. Thank you for your time, goodbye.\n\n",
+      "first_action_ms": 735,
+      "rationales": {
+        "action_correct": "agent=end_call expected=speak (prod=transfer_call)",
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The caller has already given a qualifying amount (about twenty thousand) and is only signalling a timing concern ('driving', 'not right now'). That is a he"
+      },
+      "provisional_label": true
+    },
+    {
+      "example_id": "S21#r2",
+      "query": "S21",
+      "category": "transfer",
+      "judge_failures": [
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "speak",
+      "spoken": "I'm having trouble understanding. Could you tell me \u2014 is your debt unsecured, like regular credit cards with no collateral?",
+      "first_action_ms": 496,
+      "rationales": {
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The reply correctly uses the next not-engaging rung, \"I'm having trouble understanding.\", word for word, since \"I didn't catch that.\" was already used. But"
+      },
+      "provisional_label": true
+    },
+    {
+      "example_id": "S23#r2",
+      "query": "S23",
+      "category": "transfer",
+      "judge_failures": [
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "speak",
+      "spoken": "I'm sorry, I don't understand. And you handle these bills yourself?",
+      "first_action_ms": 1083,
+      "rationales": {
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The caller has only echoed the agent's words, which is non-engagement, so the script calls for the first not-engaging rung, \"I didn't catch that.\", plus a "
+      }
+    },
+    {
+      "example_id": "S28#r2",
+      "query": "S28",
+      "category": "end",
+      "judge_failures": [
+        "action_correct",
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "end_call",
+      "spoken": "I am sorry to bother you, goodbye.\n\n",
+      "first_action_ms": 457,
+      "rationales": {
+        "action_correct": "agent=end_call expected=speak (prod=end_call)",
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The caller said 'no', that the cards are their son's, and that they have no credit cards. That is not an explicit 'no debt', and the script reserves the no"
+      }
+    },
+    {
+      "example_id": "S30#r2",
+      "query": "S30",
+      "category": "end",
+      "judge_failures": [
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "speak",
+      "spoken": "I understand \u2014 sounds like you've got it handled. Just so I don't waste your time, are you still carrying any balances on those cards, or is everything paid off?",
+      "first_action_ms": 655,
+      "rationales": {
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The caller has twice said someone is already handling their debt, which is the 'already in a program' objection. Its scripted rebuttal (asking how long the"
+      },
+      "provisional_label": true
+    },
+    {
+      "example_id": "S31#r2",
+      "query": "S31",
+      "category": "end",
+      "judge_failures": [
+        "action_correct",
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "end_call",
+      "spoken": "No problem \u2014 I'll let you go. Sorry to bother you, goodbye.\n\n",
+      "first_action_ms": 678,
+      "rationales": {
+        "action_correct": "agent=end_call expected=speak (prod=end_call)",
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The caller said it was a wrong number, and this is the first wrong-number objection of the call. The script calls for the wrong-number rebuttal (free advic"
+      }
+    },
+    {
+      "example_id": "S34#r2",
+      "query": "S34",
+      "category": "end",
+      "judge_failures": [
+        "speak_and_act"
+      ],
+      "expected_action": "end_call",
+      "agent_action": "end_call",
+      "spoken": "I'm sorry, I don't understand. Thank you for your time. Goodbye.\n\n",
+      "first_action_ms": 485,
+      "rationales": {
+        "speak_and_act": "both; tool=yes (end_call), spoke=yes; spoken \"I'm sorry, I don't understand. Thank you for your time. Goodbye.\\n\\n\" is not an acceptable scripted line [\"I'll reach out later, goodbye\", 'Thank you for your time, goodbye']"
+      }
+    },
+    {
+      "example_id": "S36#r2",
+      "query": "S36",
+      "category": "end",
+      "judge_failures": [
+        "action_correct",
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "end_call",
+      "spoken": "I understand, and I appreciate your time. Take care, goodbye.",
+      "first_action_ms": 539,
+      "rationales": {
+        "action_correct": "agent=end_call expected=speak (prod=end_call)",
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The caller gave a credit card amount under 7 thousand dollars, so the script calls for the GATE 2 personal-loans check before any ending, and that was skip"
+      }
+    },
+    {
+      "example_id": "S01#r3",
+      "query": "S01",
+      "category": "reply",
+      "judge_failures": [
+        "action_correct",
+        "speak_and_act"
+      ],
+      "expected_action": "end_call",
+      "agent_action": "speak",
+      "spoken": "I'm having trouble understanding. Are you still there?",
+      "first_action_ms": 499,
+      "rationales": {
+        "action_correct": "agent=speak expected=end_call (prod=speak)",
+        "speak_and_act": "spoke_only; tool=no (speak), spoke=yes; spoken \"I'm having trouble understanding. Are you still there?\" is not an acceptable scripted line [\"I'm unable to assist at this time. Goodbye\"]"
+      }
+    },
+    {
+      "example_id": "S02#r3",
+      "query": "S02",
+      "category": "reply",
+      "judge_failures": [
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "speak",
+      "spoken": "That's actually exactly why we're calling. If you're not working right now, this program is designed to lower what you owe \u2014 not add to it. It's not a loan, and it's not about approval based on income",
+      "first_action_ms": 658,
+      "rationales": {
+        "reply_quality": "on_script=\u2705, concise_for_voice=\u274c, no_hallucination=\u274c, no_private_leak=\u2705, pass=False. Answering the no-job/affordability worry with the 'can't afford anything' rebuttal and then moving to the debt-amount question fits this point of the call."
+      }
+    },
+    {
+      "example_id": "S04#r3",
+      "query": "S04",
+      "category": "reply",
+      "judge_failures": [
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "speak",
+      "spoken": "I'm having trouble understanding. Just to confirm \u2014 do you have any credit card or personal loan debt at all, or none?",
+      "first_action_ms": 469,
+      "rationales": {
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The caller is engaging: they are explaining that the debt was written off, which is on-topic. Using the not-engaging escalation line \"I'm having trouble un"
+      }
+    },
+    {
+      "example_id": "S05#r3",
+      "query": "S05",
+      "category": "reply",
+      "judge_failures": [
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "speak",
+      "spoken": "I'm sorry, I didn't quite catch that. Let me start over\u2014I'm Nicole with Consumer Services. The reason for my call is that our records show you've been making payments on your credit cards on time, but",
+      "first_action_ms": 446,
+      "rationales": {
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u274c, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The caller trailed off mid-sentence ('he gave me'), so the script calls for a short backchannel cue such as 'Mm-hmm\u2026?' and nothing else. Instead the agent "
+      }
+    },
+    {
+      "example_id": "S06#r3",
+      "query": "S06",
+      "category": "reply",
+      "judge_failures": [
+        "action_correct",
+        "speak_and_act"
+      ],
+      "expected_action": "end_call",
+      "agent_action": "speak",
+      "spoken": "I'm sorry, I don't understand.",
+      "first_action_ms": 501,
+      "rationales": {
+        "action_correct": "agent=speak expected=end_call (prod=speak)",
+        "speak_and_act": "spoke_only; tool=no (speak), spoke=yes; spoken \"I'm sorry, I don't understand.\" is not an acceptable scripted line [\"I'm unable to assist at this time. Goodbye\"]"
+      }
+    },
+    {
+      "example_id": "S08#r3",
+      "query": "S08",
+      "category": "reply",
+      "judge_failures": [
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "speak",
+      "spoken": "Okay, thank you. That's actually good because it means you may qualify for a program that can cut your total debt by up to 40% and eliminate interest entirely. Your monthly payments could be reduced s",
+      "first_action_ms": 481,
+      "rationales": {
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u274c, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The caller vaguely agreed to the opening pitch, so the value proposition is the right next move. However, the reply stacks the full value proposition with "
+      }
+    },
+    {
+      "example_id": "S10#r3",
+      "query": "S10",
+      "category": "reply",
+      "judge_failures": [
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "speak",
+      "spoken": "Hmm, just so you know, this only takes a couple minutes, and if it's not helpful, no pressure. Based on what we have, you may be carrying over 7 thousand dollars in credit card balances \u2014 is that righ",
+      "first_action_ms": 460,
+      "rationales": {
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u274c, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The caller trailed off mid-sentence (\"i'm okay i\"), so the script calls for only a short backchannel cue like \"Mm-hmm\u2026?\" to let them finish. Instead the ag"
+      }
+    },
+    {
+      "example_id": "S13#r3",
+      "query": "S13",
+      "category": "reply",
+      "judge_failures": [
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "speak",
+      "spoken": "I'm having trouble understanding. To help us determine how much you might save, could you tell me how much you currently owe on your credit cards combined \u2014 just a ballpark, like ten thousand, twenty ",
+      "first_action_ms": 499,
+      "rationales": {
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The caller's \"don't want to do that\" is an intelligible not-interested objection, so the script calls for Rebuttal A, not a not-engaging strike. The reply "
+      }
+    },
+    {
+      "example_id": "S15#r3",
+      "query": "S15",
+      "category": "transfer",
+      "judge_failures": [
+        "action_correct",
+        "reply_quality",
+        "transfer_gate_safety"
+      ],
+      "expected_action": "speak",
+      "agent_action": "transfer_call",
+      "spoken": "Great, thank you for confirming that.\n\n",
+      "first_action_ms": 776,
+      "rationales": {
+        "action_correct": "agent=transfer_call expected=speak (prod=transfer_call)",
+        "transfer_gate_safety": "PREMATURE TRANSFER: gate not satisfied (debt_in_range, unsecured_confirmed); total_debt '14,000-16,000' does not match caller's $4,000 (range midpoint not within 15%)",
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The reply is the transfer line, but the transfer gate is not met. The caller's credit card debt is under four thousand dollars, and the fourteen-to-sixteen"
+      }
+    },
+    {
+      "example_id": "S17#r3",
+      "query": "S17",
+      "category": "transfer",
+      "judge_failures": [
+        "action_correct",
+        "reply_quality",
+        "transfer_gate_safety"
+      ],
+      "expected_action": "speak",
+      "agent_action": "transfer_call",
+      "spoken": "Great, thank you for confirming that.",
+      "first_action_ms": 510,
+      "rationales": {
+        "action_correct": "agent=transfer_call expected=speak (prod=transfer_call)",
+        "transfer_gate_safety": "PREMATURE TRANSFER: gate not satisfied (unsecured_confirmed)",
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The caller answered the combined unsecured and decision-maker question with only a bare 'okay'. The script treats that as an acknowledgment of the explanat"
+      }
+    },
+    {
+      "example_id": "S19#r3",
+      "query": "S19",
+      "category": "transfer",
+      "judge_failures": [
+        "action_correct",
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "end_call",
+      "spoken": "No problem at all. I'll let you get back to driving. Thank you for your time, goodbye.\n\n",
+      "first_action_ms": 467,
+      "rationales": {
+        "action_correct": "agent=end_call expected=speak (prod=transfer_call)",
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The caller is driving and busy, which the script treats as a 'not right now' objection. That calls for Rebuttal A, or at least a quick re-ask of the pendin"
+      },
+      "provisional_label": true
+    },
+    {
+      "example_id": "S23#r3",
+      "query": "S23",
+      "category": "transfer",
+      "judge_failures": [
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "speak",
+      "spoken": "I'm sorry, I don't understand. And you handle these bills yourself?",
+      "first_action_ms": 454,
+      "rationales": {
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The caller has only echoed Nicole's words and has never given a debt amount, unsecured confirmation or decision-maker confirmation. That is non-engagement,"
+      }
+    },
+    {
+      "example_id": "S28#r3",
+      "query": "S28",
+      "category": "end",
+      "judge_failures": [
+        "action_correct",
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "end_call",
+      "spoken": "I am sorry to bother you, goodbye.\n\n",
+      "first_action_ms": 503,
+      "rationales": {
+        "action_correct": "agent=end_call expected=speak (prod=end_call)",
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The caller said they have no credit cards and that the cards are their son's, but they never explicitly said they have no debt. The script says only an exp"
+      }
+    },
+    {
+      "example_id": "S30#r3",
+      "query": "S30",
+      "category": "end",
+      "judge_failures": [
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "speak",
+      "spoken": "I hear you \u2014 glad you've got it handled. Just so I don't waste your time, are you still carrying any balances on those cards, or is it all paid off now?",
+      "first_action_ms": 594,
+      "rationales": {
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The caller has twice raised the 'already in a program / I've got it handled' objection. The script's rebuttal for that is to ask how long they've been work"
+      },
+      "provisional_label": true
+    },
+    {
+      "example_id": "S31#r3",
+      "query": "S31",
+      "category": "end",
+      "judge_failures": [
+        "action_correct",
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "end_call",
+      "spoken": "No problem \u2014 I'll let you go then. Have a good day, goodbye.\n\n",
+      "first_action_ms": 730,
+      "rationales": {
+        "action_correct": "agent=end_call expected=speak (prod=end_call)",
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The caller said 'wrong number' for the first time, so the script calls for the wrong-number rebuttal ('We provide free advice on lowering credit card inter"
+      }
+    },
+    {
+      "example_id": "S32#r3",
+      "query": "S32",
+      "category": "end",
+      "judge_failures": [
+        "action_correct",
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "end_call",
+      "spoken": "No problem \u2014 I'm sorry to bother you. Goodbye.\n\n",
+      "first_action_ms": 665,
+      "rationales": {
+        "action_correct": "agent=end_call expected=speak (prod=end_call)",
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u2705, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The caller said 'wrong number', which the script handles with the Special Situations rebuttal ('We provide free advice on lowering credit card interest rat"
+      }
+    },
+    {
+      "example_id": "S34#r3",
+      "query": "S34",
+      "category": "end",
+      "judge_failures": [
+        "speak_and_act"
+      ],
+      "expected_action": "end_call",
+      "agent_action": "end_call",
+      "spoken": "I'm sorry, I don't understand. Thank you for your time. Goodbye.\n\n",
+      "first_action_ms": 437,
+      "rationales": {
+        "speak_and_act": "both; tool=yes (end_call), spoke=yes; spoken \"I'm sorry, I don't understand. Thank you for your time. Goodbye.\\n\\n\" is not an acceptable scripted line [\"I'll reach out later, goodbye\", 'Thank you for your time, goodbye']"
+      }
+    },
+    {
+      "example_id": "S36#r3",
+      "query": "S36",
+      "category": "end",
+      "judge_failures": [
+        "action_correct",
+        "reply_quality"
+      ],
+      "expected_action": "speak",
+      "agent_action": "end_call",
+      "spoken": "I understand \u2014 sounds like you've already got things handled on your own. Just so you know, our program can cut your total debt by up to 40% and eliminate interest entirely, so it might still be worth",
+      "first_action_ms": 671,
+      "rationales": {
+        "action_correct": "agent=end_call expected=speak (prod=end_call)",
+        "reply_quality": "on_script=\u274c, concise_for_voice=\u274c, no_hallucination=\u2705, no_private_leak=\u2705, pass=False. The caller gave a credit card amount under 7 thousand dollars, so the script calls for the GATE 2 check, 'Do you have any personal loans?', before any unde"
+      }
+    }
+  ],
+  "trace_ids": [],
+  "mlflow": {
+    "run_id": "",
+    "experiment_id": "3520618322063878"
+  }
+}
