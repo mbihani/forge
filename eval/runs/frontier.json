@@ -1,16 +1,18 @@
 {
   "best": {
-    "speak_and_act": 0.5833333333333334
+    "speak_and_act": 0.75
   },
   "objectives": [
     "speak_and_act"
   ],
   "pareto": true,
   "directions": {
-    "speak_and_act": "maximize"
+    "speak_and_act": "maximize",
+    "latency": "minimize"
   },
   "sources": {
-    "speak_and_act": "metric"
+    "speak_and_act": "metric",
+    "latency": "latency"
   },
   "epsilon": 0.0,
   "epsilons": {
