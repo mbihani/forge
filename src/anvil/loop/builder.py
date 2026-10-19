@@ -269,6 +269,13 @@ def _format_objectives(
         base = baseline.get("aggregate") if baseline and obj.source == "aggregate" else None
         if base is None:
             base = cost_metrics.get(metric)
+        if obj.limit is not None:
+            bound = "<=" if obj.direction == "minimize" else ">="
+            lines.append(
+                f"- {obj.name} ({metric}): HARD LIMIT {bound} {obj.limit:g} — over it the "
+                f"round is reverted; within it, not compared. baseline={_fmt(base)}"
+            )
+            continue
         eps = "gate default" if obj.epsilon is None else f"{obj.epsilon:g}"
         lines.append(
             f"- {obj.name} ({obj.direction} {metric}; epsilon={eps}): "

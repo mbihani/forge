@@ -167,6 +167,11 @@ class ParetoObjective(BaseModel):
     # epsilon in the frontier's keep/regress test; when None it falls back to
     # the global ``gate.epsilon``.
     epsilon: float | None = None
+    # Hard constraint instead of a frontier dimension: a round whose value is
+    # worse than ``limit`` (above it for ``minimize``, below for ``maximize``)
+    # is reverted; within the limit the objective does not take part in the
+    # keep/regress comparison (e.g. "latency p50 <= 700ms is fine").
+    limit: float | None = None
 
     @model_validator(mode="after")
     def _metric_matches_source(self) -> ParetoObjective:

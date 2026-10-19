@@ -754,3 +754,51 @@ def test_should_keep_per_objective_epsilon_rejects_beyond_threshold() -> None:
         objectives=["accuracy", "latency"],
         directions={"accuracy": "maximize", "latency": "minimize"},
     )
+
+
+def test_gate_limit_objective_is_a_ceiling_not_a_dimension(tmp_path: Path) -> None:
+    """latency <= 700 is a hard limit: worse-but-within latency does not block a quality
+    gain, and anything over the limit reverts even with a quality gain."""
+    from anvil.runtime.models import ParetoConfig
+
+    pareto = ParetoConfig(
+        enabled=True,
+        objectives=[
+            ParetoObjective(name="sa", source="aggregate", epsilon=0.03),
+            ParetoObjective(name="latency", source="latency", direction="minimize", limit=700),
+        ],
+    )
+    base = {"sa": 0.58, "latency": 585.0}
+
+    def gate(scores):
+        return gate_decision(
+            repo_root=tmp_path,
+            gate_type="frontier",
+            epsilon=0.0,
+            pareto=pareto,
+            baseline_scores=base,
+            baseline_aggregate=base["sa"],
+            mutated_scores=scores,
+            mutated_aggregate=scores["sa"],
+            action_kind="set_lever",
+            eval_failed=False,
+            parse_status="ok",
+        )
+
+    # +0.1 speak-and-act at 690ms (100ms slower than best) -> keep.
+    assert gate({"sa": 0.68, "latency": 690.0})[0] == Decision.KEEP
+    # Over the ceiling -> revert, best-so-far untouched.
+    decision, frontier = gate({"sa": 0.90, "latency": 701.0})
+    assert decision == Decision.REVERT
+    assert frontier.best["sa"] == 0.68
+    # Faster but no speak-and-act gain -> revert (latency is not a dimension).
+    assert gate({"sa": 0.68, "latency": 400.0})[0] == Decision.REVERT
+
+
+def test_violates_limits_fails_closed_on_missing_value() -> None:
+    from anvil.loop.frontier import violates_limits
+
+    limits = {"latency": (700.0, "minimize")}
+    assert violates_limits({}, limits) is True
+    assert violates_limits({"latency": 700.0}, limits) is False
+    assert violates_limits({"q": 0.4}, {"q": (0.5, "maximize")}) is True

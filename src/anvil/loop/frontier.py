@@ -326,6 +326,17 @@ class Frontier:
 # ---------------------------------------------------------------------------
 
 
+def violates_limits(scores: dict[str, float], limits: dict[str, tuple[float, str]]) -> bool:
+    """True when any limited objective is missing, non-finite, or beyond its limit."""
+    for name, (limit, direction) in limits.items():
+        value = scores.get(name)
+        if value is None or not math.isfinite(value):
+            return True
+        if (value > limit) if direction == "minimize" else (value < limit):
+            return True
+    return False
+
+
 def _scores_for_objectives(report: Any, objectives: list[ParetoObjective]) -> dict[str, float]:
     scores: dict[str, float] = {}
     cost_metrics = getattr(report, "cost_metrics", {}) or {}
@@ -501,6 +512,7 @@ def gate_decision(
         directions: dict[str, str] = {}
         sources: dict[str, str] = {}
         epsilons: dict[str, float] = {}
+        limits: dict[str, tuple[float, str]] = {}
     else:
         pareto_enabled = pareto.enabled
         objectives = (
@@ -526,6 +538,14 @@ def gate_decision(
             if pareto.enabled
             else {}
         )
+        # Objectives with a ``limit`` are hard constraints, not frontier dimensions.
+        limits = (
+            {o.name: (o.limit, o.direction) for o in pareto.objectives if o.limit is not None}
+            if pareto.enabled
+            else {}
+        )
+        if limits and objectives is not None:
+            objectives = [o for o in objectives if o not in limits] or [AGGREGATE_KEY]
 
     frontier = load_frontier(repo_root)
     if frontier is None:
@@ -536,7 +556,7 @@ def gate_decision(
             # than silently keeping or reverting.
             return Decision.INFRA_FAIL, None
         frontier = Frontier.from_scores(
-            baseline_scores,
+            {k: v for k, v in baseline_scores.items() if k not in limits},
             pareto=pareto_enabled,
             directions=directions,
             sources=sources,
@@ -554,7 +574,12 @@ def gate_decision(
             frontier.directions = directions
             frontier.sources = sources
 
-    kept = frontier.update(mutated_scores)
+    if violates_limits(mutated_scores, limits):
+        # Over a hard limit: revert without touching the best-so-far.
+        save_frontier(repo_root, frontier)
+        return Decision.REVERT, frontier
+
+    kept = frontier.update({k: v for k, v in mutated_scores.items() if k not in limits})
     # Persist after every scored round (KEEP updates the best-so-far; REVERT
     # rewrites the unchanged frontier so the file is present + fresh).
     save_frontier(repo_root, frontier)
