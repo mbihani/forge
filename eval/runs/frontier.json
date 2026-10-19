@@ -1,0 +1,24 @@
+{
+  "best": {
+    "on_script": 0.4552238805970149,
+    "false_ladder_lines": 14.0
+  },
+  "objectives": [
+    "on_script",
+    "false_ladder_lines"
+  ],
+  "pareto": true,
+  "directions": {
+    "on_script": "maximize",
+    "false_ladder_lines": "minimize"
+  },
+  "sources": {
+    "on_script": "metric",
+    "false_ladder_lines": "metric"
+  },
+  "epsilon": 0.0,
+  "epsilons": {
+    "on_script": 0.03,
+    "false_ladder_lines": 0.0
+  }
+}

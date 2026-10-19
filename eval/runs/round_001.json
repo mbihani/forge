@@ -1,0 +1,2589 @@
+{
+  "round_id": 1,
+  "branch": "anvil/exp-interstell-ladder-round-1",
+  "scaffold_commit_sha": "34dd5033c636179179573e25b06ab789443e7be0",
+  "parent_commit_sha": "b022aff4f1c8d37f5bf47a2c574126751906dc18",
+  "decision": "revert",
+  "action_kind": "compound",
+  "parse_status": "ok_last_of_many",
+  "levers": {
+    "route": "serving",
+    "temperature": 0.3,
+    "speech_in_tools": true,
+    "eval_set": "turns",
+    "tool_choice": "auto",
+    "max_completion_tokens": 1024,
+    "model": "databricks-gpt-5-4-mini"
+  },
+  "baseline_score": 0.44029850746268656,
+  "score_delta_vs_parent": 0.007462686567164201,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "Target: on_script, ladder turns. The judge's rubric (evals/turn_eval.py) treats echoed audio as not-engaging and keeps the injection ladder separate. The scaffold breaks both rules. (a) It has no echo rule, so S23 fails on almost every turn: the judge wants 'I didn't catch that.' + re-ask and the agent keeps pitching. (b) Two passages still describe the shared ladder that the user overruled, and one tells the model to use the injection line unless the caller 'seems genuinely confused'. The result is 'I'm sorry, I don't understand.' on TV or off-topic callers in S01, S06, S18 and S21. Predicted effect: +0.03 to +0.07 on_script, mostly from S23 rung-1 turns and from S01/S06/S18 turns where the injection line was misused. ladder_line_accuracy should rise. false_ladder_lines is protected because the echo rule needs a word-for-word replay of the agent's own words with nothing of the caller's own. Latency should be flat or slightly better, since the prompt gets shorter.",
+  "optimizer_run": {
+    "run_id": "349198b600af461d8726c1c83a392a93",
+    "experiment_id": "3520618322063879"
+  },
+  "optimizer_session_url": null,
+  "optimizer_trace_id": "tr-cfccdfb7d4c74d10d2a7378371e0264f",
+  "frontier_best": {
+    "on_script": 0.4552238805970149,
+    "false_ladder_lines": 14.0
+  },
+  "evaluated_at": "2026-10-19T18:35:36+00:00",
+  "n_examples": 268,
+  "mode": "standard",
+  "scorers": [
+    "concise_for_voice",
+    "no_hallucination",
+    "no_private_leak",
+    "on_script",
+    "right_action"
+  ],
+  "aggregate": 0.44776119402985076,
+  "per_judge": {
+    "right_action": 0.8619402985074627,
+    "on_script": 0.458955223880597,
+    "concise_for_voice": 0.9738805970149254,
+    "no_hallucination": 0.9850746268656716,
+    "no_private_leak": 1.0
+  },
+  "per_bucket": {
+    "end": {
+      "turn_pass_rate": 0.5277777777777778,
+      "on_script_rate": 0.5277777777777778,
+      "ladder_line_accuracy": 0.2
+    },
+    "reply": {
+      "turn_pass_rate": 0.4105263157894737,
+      "on_script_rate": 0.43157894736842106,
+      "ladder_line_accuracy": 0.2765957446808511
+    },
+    "transfer": {
+      "turn_pass_rate": 0.45255474452554745,
+      "on_script_rate": 0.45985401459854014,
+      "ladder_line_accuracy": 0.125
+    }
+  },
+  "cost_metrics": {
+    "turn_pass_rate": 0.44776119402985076,
+    "right_action_rate": 0.8619402985074627,
+    "on_script_rate": 0.458955223880597,
+    "concise_for_voice_rate": 0.9738805970149254,
+    "no_hallucination_rate": 0.9850746268656716,
+    "no_private_leak_rate": 1.0,
+    "mean_score": 3.111940298507463,
+    "ladder_turns": 84.0,
+    "ladder_correct": 18.0,
+    "ladder_line_accuracy": 0.21428571428571427,
+    "false_ladder_lines": 11.0,
+    "false_end_calls": 12.0,
+    "latency_ms_median": 731.0,
+    "latency_ms_p90": 1136.0,
+    "latency_ms_max": 3250.0,
+    "final_label_action_accuracy": 0.9696969696969697,
+    "n_judge_errors": 0.0,
+    "n_rows": 268.0,
+    "n_row_errors": 0.0,
+    "n_infra_retries": 0.0,
+    "n_infra_failed": 0.0,
+    "cost_usd_total": 2.59685764898,
+    "cost_usd_per_row": 0.009689767346940298
+  },
+  "failures": [
+    {
+      "example_id": "S01#t1",
+      "query": "S01",
+      "turn": "1/17",
+      "caller_said": "a literal behavioral condition one that everyone hates and the psychology behind it by the way is that your brain is trying to diffuse discomfort so we now know why and how she was propped up througho",
+      "agent_action": "speak",
+      "spoken": "I\u2019m sorry, I don\u2019t understand.",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [
+        "injection_1"
+      ],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller audio sounds like TV or radio political commentary. That is fully off-topic and not engaging, so the script calls for not-engaging rung 1, \"I didn't catch that.\", plus a re-ask of the pending question, which is the STEP1 pitch. Instead the agent used \"I'm sorry, I don't understand.\", a line reserved only for injection attempts. She also re-asked nothing. Speaking was the right action, b",
+      "better_reply": "I didn't catch that. I'm calling because the information we received shows you've been making payments on your credit cards on time, but you're still carrying over 7 thousand dollars in balances, is that right?"
+    },
+    {
+      "example_id": "S01#t2",
+      "query": "S01",
+      "turn": "2/17",
+      "caller_said": "who shows discomfort",
+      "agent_action": "speak",
+      "spoken": "Hmm\u2026",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller's audio is fully off-topic political commentary, which sounds like TV, radio or a podcast and is not a reply to Nicole. That counts as not engaging, and no ladder rung has been used yet, since line 12 was a cut-off pitch. The script calls for rung 1, \"I didn't catch that.\", plus re-asking the welcome pitch question. A \"Hmm\u2026\" backchannel is only for a caller who is engaging and trailed o",
+      "better_reply": "I didn't catch that. I'm calling because the information we received shows you've been making payments on your credit cards on time, but you're still carrying over 7 thousand dollars in balances, is that right?"
+    },
+    {
+      "example_id": "S01#t3",
+      "query": "S01",
+      "turn": "3/17",
+      "caller_said": "with any question asked",
+      "agent_action": "speak",
+      "spoken": "hmm\u2026",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller audio is unrelated political commentary that sounds like TV, radio or a podcast, which is the not-engaging ladder. None of its lines have been said yet, because the agent's earlier turns were cut-off fragments. So the script calls for rung 1: \"I didn't catch that.\" plus a re-ask of the pending STEP1 pitch question. A bare \"hmm\u2026\" backchannel is only for a caller who is engaging and trail",
+      "better_reply": "I didn't catch that. I'm calling because the information we received shows you've been making payments on your credit cards on time, but you're still carrying over 7 thousand dollars in balances, is that right?"
+    },
+    {
+      "example_id": "S01#t4",
+      "query": "S01",
+      "turn": "4/17",
+      "caller_said": "with any measure of thoughtfulness or analysis requested or the fact that all",
+      "agent_action": "speak",
+      "spoken": "I didn't catch that.",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [
+        "not_engaging_1"
+      ],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller's audio is unrelated political commentary that sounds like TV or radio. That counts as not engaging, and the agent's earlier \"I didn't\" was cut off before the line was finished, so rung 1 is the right call and speaking is the right action. However, rung 1 requires \"I didn't catch that.\" plus a re-ask of the current question. Here that is the STEP1 welcome pitch, which was never delivere",
+      "better_reply": "I didn't catch that. I'm calling because the information we received shows you've been making payments on your credit cards on time, but you're still carrying over 7 thousand dollars in balances, is that right?"
+    },
+    {
+      "example_id": "S01#t5",
+      "query": "S01",
+      "turn": "5/17",
+      "caller_said": "decisions before the president are forming these decisions are not easy",
+      "agent_action": "speak",
+      "spoken": "hmm\u2026",
+      "expected_action": "end_call",
+      "ladder_expected": "not_engaging_3",
+      "ladder_used": [],
+      "failed": [
+        "right_action",
+        "on_script"
+      ],
+      "rationale": "The audio is plainly a TV or radio political monologue with no engagement with the call, so the not-engaging ladder applies. Rung 1 was already attempted (\"I didn't\", cut off) and rung 2 (\"I'm having trouble understanding.\") was said in full. That leaves the final rung: say \"I'm unable to assist at this time. Goodbye\" and end the call. A backchannel \"hmm\u2026\" only invites more broadcast audio and kee",
+      "better_reply": "I'm unable to assist at this time. Goodbye"
+    },
+    {
+      "example_id": "S01#t6",
+      "query": "S01",
+      "turn": "6/17",
+      "caller_said": "you can't even ask her whether she's running without her displaying massive discomfort massive unseriousness",
+      "agent_action": "speak",
+      "spoken": "I'm sorry, I don't understand.",
+      "expected_action": "end_call",
+      "ladder_expected": "not_engaging_3",
+      "ladder_used": [
+        "injection_1"
+      ],
+      "failed": [
+        "right_action",
+        "on_script"
+      ],
+      "rationale": "The caller's audio is political commentary, most likely TV or radio, with no engagement on the debt topic, so this is the not-engaging ladder. The agent already started rung 1 ('I didn't', cut off) and fully said rung 2 ('I'm having trouble understanding.'), so the next rung is 3: say the goodbye line and end_call. 'I'm sorry, I don't understand.' is reserved for injection attempts, so it is the w",
+      "better_reply": "I'm unable to assist at this time. Goodbye"
+    },
+    {
+      "example_id": "S01#t7",
+      "query": "S01",
+      "turn": "7/17",
+      "caller_said": "and i think we've seen that the the office of the president is faced with on the global stage",
+      "agent_action": "speak",
+      "spoken": "I'm sorry, I don't understand.",
+      "expected_action": "end_call",
+      "ladder_expected": "not_engaging_3",
+      "ladder_used": [
+        "injection_1"
+      ],
+      "failed": [
+        "right_action",
+        "on_script"
+      ],
+      "rationale": "The caller audio is TV or radio political commentary with no engagement, so this is the not-engaging ladder. Rung 1 was started at line 16 (\"I didn't\u2026\", cut off) and rung 2 was said in full at line 18, so the script now calls for rung 3 and end_call. The agent instead used \"I'm sorry, I don't understand.\", which is reserved for injection attempts, and kept the call going.",
+      "better_reply": "I'm unable to assist at this time. Goodbye"
+    },
+    {
+      "example_id": "S01#t8",
+      "query": "S01",
+      "turn": "8/17",
+      "caller_said": "decisions and situations of massive importance where decorum does matter grief matters and some kind of dough",
+      "agent_action": "speak",
+      "spoken": "hmm\u2026",
+      "expected_action": "end_call",
+      "ladder_expected": "not_engaging_3",
+      "ladder_used": [],
+      "failed": [
+        "right_action",
+        "on_script"
+      ],
+      "rationale": "The audio is clearly a TV or radio political monologue with no engagement in the debt topic, so the not-engaging ladder applies. The agent already said \"I didn't...\" (rung 1, cut off) and \"I'm having trouble understanding.\" (rung 2). That leaves rung 3: \"I'm unable to assist at this time. Goodbye\" and end_call. A backchannel \"hmm\u2026\" is meant for a real caller trailing off, not for broadcast audio, ",
+      "better_reply": "I'm unable to assist at this time. Goodbye"
+    },
+    {
+      "example_id": "S01#t9",
+      "query": "S01",
+      "turn": "9/17",
+      "caller_said": "of actual strength not pretend strength if you're sitting around the table drinking coffee and explaining it away so look",
+      "agent_action": "speak",
+      "spoken": "hmm\u2026",
+      "expected_action": "end_call",
+      "ladder_expected": "not_engaging_3",
+      "ladder_used": [],
+      "failed": [
+        "right_action",
+        "on_script"
+      ],
+      "rationale": "The audio is a continuous off-topic political monologue, most likely TV, radio or a podcast. It never responds to the agent, so it counts as not engaging. The agent has already used rung 1 (\"I didn't\u2026\", cut off) and rung 2 (\"I'm having trouble understanding.\"), so rung 3 is next: say the verbatim goodbye line and end the call. Backchanneling with \"hmm\u2026\" because the fragment trailed off keeps a dea",
+      "better_reply": "I'm unable to assist at this time. Goodbye"
+    },
+    {
+      "example_id": "S01#t10",
+      "query": "S01",
+      "turn": "10/17",
+      "caller_said": "we know that she failed",
+      "agent_action": "speak",
+      "spoken": "I didn't catch that.",
+      "expected_action": "end_call",
+      "ladder_expected": "not_engaging_3",
+      "ladder_used": [
+        "not_engaging_1"
+      ],
+      "failed": [
+        "right_action",
+        "on_script"
+      ],
+      "rationale": "The caller audio is continuous off-topic political commentary, most likely a TV or radio, so this is a non-engaging caller. The agent already started rung 1 ('I didn't...', cut off) and fully said rung 2 ('I'm having trouble understanding.'), so the next rung is the final one: 'I'm unable to assist at this time. Goodbye' with end_call. Saying 'I didn't catch that.' moves back up the ladder, which ",
+      "better_reply": "I'm unable to assist at this time. Goodbye"
+    },
+    {
+      "example_id": "S01#t11",
+      "query": "S01",
+      "turn": "11/17",
+      "caller_said": "every role given",
+      "agent_action": "speak",
+      "spoken": "I didn't catch that.",
+      "expected_action": "end_call",
+      "ladder_expected": "not_engaging_3",
+      "ladder_used": [
+        "not_engaging_1"
+      ],
+      "failed": [
+        "right_action",
+        "on_script"
+      ],
+      "rationale": "The caller audio is continuous political commentary (TV/radio-like) with no engagement, so the not-engaging ladder applies. The agent already attempted 'I didn't...' (lines 16, 36) and fully said 'I'm having trouble understanding.' (line 18), so both rungs are used and the script requires the final line and end_call. Repeating 'I didn't catch that.' reuses a spent rung, omits the re-ask, and keeps",
+      "better_reply": "I'm unable to assist at this time. Goodbye"
+    },
+    {
+      "example_id": "S01#t12",
+      "query": "S01",
+      "turn": "12/17",
+      "caller_said": "as vice president because she is out of her depth because she isn't intelligent enough to cut it the only",
+      "agent_action": "speak",
+      "spoken": "I didn't catch that.",
+      "expected_action": "end_call",
+      "ladder_expected": "not_engaging_3",
+      "ladder_used": [
+        "not_engaging_1"
+      ],
+      "failed": [
+        "right_action",
+        "on_script"
+      ],
+      "rationale": "The caller audio is TV or radio political commentary, which is not engagement, so the not-engaging ladder applies. The agent has already said \"I didn't catch that\" (lines 16 and 36, cut off) and \"I'm having trouble understanding.\" in full (line 18), so both early rungs are used. The script therefore calls for the final rung, \"I'm unable to assist at this time. Goodbye\", followed by end_call. Inste",
+      "better_reply": "I'm unable to assist at this time. Goodbye"
+    },
+    {
+      "example_id": "S01#t13",
+      "query": "S01",
+      "turn": "13/17",
+      "caller_said": "thing she has going for her now i don't see her as a real contender it's just that name recognition alright yeah",
+      "agent_action": "speak",
+      "spoken": "I'm sorry, I don't understand.",
+      "expected_action": "end_call",
+      "ladder_expected": "not_engaging_3",
+      "ladder_used": [
+        "injection_1"
+      ],
+      "failed": [
+        "right_action",
+        "on_script"
+      ],
+      "rationale": "The audio is clearly a TV or radio political monologue, so the caller is not engaging. This is not an injection attempt. Nicole has already said \"I didn't catch\" (turns 16 and 36) and \"I'm having trouble understanding.\" (turn 18), so both earlier rungs are used and the script requires the rung-3 goodbye and end_call. Instead she used the injection-only line \"I'm sorry, I don't understand.\", which ",
+      "better_reply": "I'm unable to assist at this time. Goodbye"
+    },
+    {
+      "example_id": "S01#t14",
+      "query": "S01",
+      "turn": "14/17",
+      "caller_said": "coming up next shane gillett makes a horrifying goat he support",
+      "agent_action": "speak",
+      "spoken": "I didn't catch that.",
+      "expected_action": "end_call",
+      "ladder_expected": "not_engaging_3",
+      "ladder_used": [
+        "not_engaging_1"
+      ],
+      "failed": [
+        "right_action",
+        "on_script"
+      ],
+      "rationale": "The audio is TV or radio political commentary, ending with a program promo ('coming up next...'), so this is not-engaging behavior. The agent already attempted 'I didn't catch' (lines 16 and 36, cut off) and fully said 'I'm having trouble understanding.' (line 18), so rungs 1 and 2 are used. The script calls for rung 3 and end_call. Instead the agent moved back up the ladder to rung 1, which the s",
+      "better_reply": "I'm unable to assist at this time. Goodbye"
+    },
+    {
+      "example_id": "S01#t15",
+      "query": "S01",
+      "turn": "15/17",
+      "caller_said": "you do something",
+      "agent_action": "speak",
+      "spoken": "I didn't catch that.",
+      "expected_action": "end_call",
+      "ladder_expected": "not_engaging_3",
+      "ladder_used": [
+        "not_engaging_1"
+      ],
+      "failed": [
+        "right_action",
+        "on_script"
+      ],
+      "rationale": "The caller audio is clearly TV or radio (political commentary, then \"coming up next\"), so the not-engaging ladder applies. Nicole already said \"I'm having trouble understanding.\" in full (line 18) and started \"I didn't catch\" twice (lines 16 and 36), so both rungs are used. The script calls for rung 3, \"I'm unable to assist at this time. Goodbye\", followed by end_call. Instead she repeated rung 1,",
+      "better_reply": "I'm unable to assist at this time. Goodbye"
+    },
+    {
+      "example_id": "S01#t16",
+      "query": "S01",
+      "turn": "16/17",
+      "caller_said": "arbor freight is helping contractors like alex in texas when he asked his five man crew to do a twenty person job",
+      "agent_action": "speak",
+      "spoken": "I didn't catch that. Could you please tell me if you currently owe any money on your credit cards combined? Just a rough estimate like ten thousand, twenty thousand, or more?",
+      "expected_action": "end_call",
+      "ladder_expected": "not_engaging_3",
+      "ladder_used": [
+        "not_engaging_1"
+      ],
+      "failed": [
+        "right_action",
+        "on_script"
+      ],
+      "rationale": "The caller audio is clearly TV or radio (a political commentary segment, then a Harbor Freight ad), so it falls on the not-engaging ladder. The agent already said \"I'm having trouble understanding.\" in full at line 18 and \"I didn't catch that.\" in full at line 53, so both rungs are used up. The script requires \"I'm unable to assist at this time. Goodbye\" and end_call. Instead the agent repeated ru",
+      "better_reply": "I'm unable to assist at this time. Goodbye"
+    },
+    {
+      "example_id": "S02#t4",
+      "query": "S02",
+      "turn": "4/4",
+      "caller_said": "no i don't have a job right now so you're not gonna approve me for anything",
+      "agent_action": "speak",
+      "spoken": "I hear you. This isn\u2019t based on whether you\u2019re working right now \u2014 I just need to see if the debt itself fits. About how much do you currently owe on your credit cards combined?",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script",
+        "no_hallucination"
+      ],
+      "rationale": "The caller raised an affordability objection (no job, won't be approved). The script's answer is the \"I can't afford anything right now\" rebuttal: it's not a loan and it's designed to reduce the monthly obligation. Instead, the agent claimed the program isn't based on whether the caller is working. That claim isn't in the script and contradicts it, since the program description says it is based on",
+      "better_reply": "Oh, I hear you, and that's exactly why we're calling. This isn't a loan, it's meant to lower your monthly obligation, not add to it. Roughly how much do you owe on your credit cards combined, like ten, twenty, thirty thousand or more?"
+    },
+    {
+      "example_id": "S03#t1",
+      "query": "S03",
+      "turn": "1/4",
+      "caller_said": "i'm fine what can i get for you",
+      "agent_action": "speak",
+      "spoken": "Okay, thank you. That's actually good because it means you may qualify for a program that can cut your total debt by up to 40% and eliminate interest entirely. Your monthly payments could be reduced significantly, giving you more breathing ",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller only answered the greeting with a pleasantry, so the agent should give the STEP1 welcome pitch and confirm the 7 thousand dollar balance. Instead the agent skipped to the STEP2 value proposition. Its opening 'Okay, thank you. That's actually good' reacts to a confirmation the caller never gave. Speaking is the right action, but the wrong step was delivered, so the turn fails on_script.",
+      "better_reply": "Thanks, this'll just take a moment. I'm calling because the information we received shows you've been making payments on your credit cards on time, but you're still carrying over 7 thousand dollars in balances, is that right?"
+    },
+    {
+      "example_id": "S04#t1",
+      "query": "S04",
+      "turn": "1/5",
+      "caller_said": "i'm good now who'd you say you were with",
+      "agent_action": "speak",
+      "spoken": "Sure \u2014 I'm Nicole with Consumer Services. We help people look at options for unsecured debt like credit cards or personal loans.",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller asked who Nicole is with, which is the script's identity objection. The script answers that with the name and company, then goes straight into the STEP1 pitch question. The agent repeated the name and company and added a general line about the service, but asked no question. That leaves the call stalled and skips the pending STEP1 confirmation. Speaking was the right action, and the rep",
+      "better_reply": "Sure, I'm Nicole with Consumer Services. I'm calling because our records show you've been making your credit card payments on time, but you're still carrying over 7 thousand dollars in balances, is that right?"
+    },
+    {
+      "example_id": "S04#t4",
+      "query": "S04",
+      "turn": "4/5",
+      "caller_said": "look",
+      "agent_action": "speak",
+      "spoken": "I didn't catch that. Just to confirm, no debt including any personal loan, or did you mean a wrong number? I ask because we may be able to cut your debt by up to 40%.",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [
+        "not_engaging_1"
+      ],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller is engaged and was explaining that the debt was written off. \"look\" is the start of a sentence, so the script calls for a short backchannel cue to let them continue. Using \"I didn't catch that.\" wrongly spends the not-engaging rung 1 on a caller who is clearly engaging. It also repeats the same clarifying question word for word, which makes the turn feel robotic.",
+      "better_reply": "Mm-hmm\u2026"
+    },
+    {
+      "example_id": "S04#t5",
+      "query": "S04",
+      "turn": "5/5",
+      "caller_said": "i just told you they wrote it",
+      "agent_action": "speak",
+      "spoken": "I didn't catch that. Just to confirm, no debt including any personal loan, or did you mean a wrong number? I ask because we may be able to cut your debt by up to 40%.",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [
+        "not_engaging_1"
+      ],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller is engaging: she is explaining that her debt was written off, so the not-engaging line \"I didn't catch that.\" is misused and burns a strike rung. The agent also repeated the first clarification ask word for word, though the script allows that ask only once. The next step was to acknowledge the write-off and use the second clarification, \"No debt at all, or debt under 7K?\". Speaking rath",
+      "better_reply": "Oh, I see, so those cards were written off. Just so I understand, is there no debt at all now, or is there still some under 7 thousand dollars?"
+    },
+    {
+      "example_id": "S05#t1",
+      "query": "S05",
+      "turn": "1/2",
+      "caller_said": "i'm blessed how about you ma'am what do you say stop this wrong hello the wrong that you did there were no times",
+      "agent_action": "speak",
+      "spoken": "I didn't catch that. Could you tell me how much you owe on your credit cards combined?",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [
+        "not_engaging_1"
+      ],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller is engaging: they answered the greeting and asked 'ma'am what do you say'. That is confusion or a garbled line, not a not-engaging caller, so 'I didn't catch that.' should not be used up here. The STEP1 welcome pitch has not been delivered yet, so the agent should acknowledge the caller and give the pitch. Instead she skipped STEP1 and STEP2 and jumped straight to the debt-amount questi",
+      "better_reply": "I'm doing well, thanks for asking! I'm calling because the information we received shows you've been making payments on your credit cards on time, but you're still carrying over 7 thousand dollars in balances, is that right?"
+    },
+    {
+      "example_id": "S06#t1",
+      "query": "S06",
+      "turn": "1/25",
+      "caller_said": "we're in a difficult year",
+      "agent_action": "speak",
+      "spoken": "Oh... I hear you. A lot of people are feeling that right now. I just need to ask one quick thing \u2014 are you the one who handles the bills on these credit cards?",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller engaged by sharing that it's been a difficult year, so the agent should empathize briefly and deliver the STEP1 welcome pitch to confirm credit card balances over 7 thousand dollars. Instead, the agent skipped STEP1, the value proposition and the debt amount question, and jumped straight to the decision-maker question. It also referred to 'these credit cards' before the caller had confi",
+      "better_reply": "Oh... I'm sorry to hear that, it's been a tough year for a lot of folks. I'm calling because the information we received shows you've been making payments on your credit cards on time, but you're still carrying over 7 thousand dollars in ba"
+    },
+    {
+      "example_id": "S06#t2",
+      "query": "S06",
+      "turn": "2/25",
+      "caller_said": "here i already have like my opinion on for or and i was gonna accept steven privately",
+      "agent_action": "speak",
+      "spoken": "hmm\u2026",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The agent's last line was cut off, so the STEP1 welcome pitch was never delivered. The caller is engaging, mentioning a difficult year, but in fragments, and the last utterance is a complete clause rather than a trail-off, so a bare backchannel doesn't fit. Strike lines don't apply to an engaged but unclear caller. She should deliver the welcome pitch now to move the call forward, rather than stal",
+      "better_reply": "Thanks \u2014 this will just take a moment. I'm calling because the information we received shows you've been making payments on your credit cards on time, but you're still carrying over 7 thousand dollars in balances, is that right?"
+    },
+    {
+      "example_id": "S06#t4",
+      "query": "S06",
+      "turn": "4/25",
+      "caller_said": "she got very aggressive and could bully people and talk bad",
+      "agent_action": "speak",
+      "spoken": "Hmm\u2026",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller's last line is a complete sentence about someone being aggressive. It is not a trailing-off fragment, so a second bare backchannel is not what the script calls for. The talk is fully off topic and the STEP1 pitch has never been delivered, so the agent should use the first not-engaging rung, \"I didn't catch that.\", and put the pitch question to the caller. Another \"Hmm\u2026\" just stalls the ",
+      "better_reply": "I didn't catch that. I'm calling because the information we received shows you've been making payments on your credit cards on time, but you're still carrying over 7 thousand dollars in balances, is that right?"
+    },
+    {
+      "example_id": "S06#t5",
+      "query": "S06",
+      "turn": "5/25",
+      "caller_said": "right it showed one incident after the next disrespect",
+      "agent_action": "speak",
+      "spoken": "Okay, thank you. To help me see if this makes sense for you, about how much do you currently owe on your credit cards combined?",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller's reply continues an unrelated story about someone being aggressive and disrespectful. The leading 'right' reads as part of that narrative, not as agreement to the pitch, so the reply is fully off-topic. No not-engaging rung has been used yet, so the script calls for 'I didn't catch that.' plus a re-ask of the pitch question. The agent instead took it as confirmation and jumped to the d",
+      "better_reply": "I didn't catch that. Are you still carrying over 7 thousand dollars in credit card balances?"
+    },
+    {
+      "example_id": "S06#t6",
+      "query": "S06",
+      "turn": "6/25",
+      "caller_said": "to teachers and fellow students",
+      "agent_action": "speak",
+      "spoken": "Hmm\u2026",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller's speech is a fully off-topic story about bullying, teachers and students, likely background audio or a side conversation. It never engages with the pitch question; the 'right' is part of the story, not an answer. The utterance is complete, not trailing off, so another bare backchannel is wrong. No not-engaging rung has been used yet, so the script calls for 'I didn't catch that.' plus ",
+      "better_reply": "I didn't catch that. Are you still carrying over 7 thousand dollars in credit card balances?"
+    },
+    {
+      "example_id": "S06#t8",
+      "query": "S06",
+      "turn": "8/25",
+      "caller_said": "her parents would offer excuses for her behavior and typically intended to walk away from those negative interactions at school with",
+      "agent_action": "speak",
+      "spoken": "Hmm\u2026",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "For many turns the caller has talked only about a student's behavior at school, which has nothing to do with debt. This sounds like TV, radio or a background conversation, so it counts as fully off-topic, not a caller who is engaging but unclear. The agent has already backchanneled twice, and a third 'Hmm\u2026' only stretches out a non-engaging loop. The trailing 'with' does not make this a genuine on",
+      "better_reply": "I didn't catch that. Could you tell me roughly how much you owe on your credit cards combined, like ten thousand, twenty thousand, thirty thousand, or more?"
+    },
+    {
+      "example_id": "S06#t9",
+      "query": "S06",
+      "turn": "9/25",
+      "caller_said": "more freedom less consequences",
+      "agent_action": "speak",
+      "spoken": "Uh-huh\u2026",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "For many turns the caller has narrated an unrelated story about a student's behavior, which sounds like TV, radio or off-topic speech, and has not engaged with the debt-amount question. The last utterance is a complete phrase, not a trail-off, so a backchannel is not called for. Neither escalation line has been used yet, so the script calls for rung 1, \"I didn't catch that.\", plus a re-ask of the ",
+      "better_reply": "I didn't catch that. Could you tell me roughly how much you owe on your credit cards combined, like ten thousand, twenty thousand, thirty thousand, or more?"
+    },
+    {
+      "example_id": "S06#t10",
+      "query": "S06",
+      "turn": "10/25",
+      "caller_said": "and her actions being completely different",
+      "agent_action": "speak",
+      "spoken": "Hmm\u2026",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "Since the debt question, every caller line has been an unrelated story about a student and her parents, which sounds like TV, radio or background audio. That is not engagement, and the earlier 'right' was not a real answer either. None of the not-engaging lines have been used yet, so the script calls for 'I didn't catch that.' plus a re-ask of the debt amount question. Another 'Hmm\u2026' backchannel k",
+      "better_reply": "I didn't catch that. Could you tell me roughly how much you owe on your credit cards combined, like ten thousand, twenty thousand, thirty thousand, or more?"
+    },
+    {
+      "example_id": "S06#t11",
+      "query": "S06",
+      "turn": "11/25",
+      "caller_said": "by a perfect turn no",
+      "agent_action": "speak",
+      "spoken": "Hmm\u2026",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "For many turns the caller has only produced unrelated narration about a student's behavior, which sounds like TV, radio or a side conversation. That is fully off-topic, not-engaging audio. The last utterance doesn't trail off on a conjunction or filler, so another backchannel only stalls the call. No not-engaging rung has been used yet, so the script calls for \"I didn't catch that.\" plus a re-ask ",
+      "better_reply": "I didn't catch that. Could you tell me roughly how much you owe on your credit cards combined, like ten thousand, twenty thousand, thirty thousand, or more?"
+    },
+    {
+      "example_id": "S06#t12",
+      "query": "S06",
+      "turn": "12/25",
+      "caller_said": "no no one is no so i need to make mistakes with my kids sure",
+      "agent_action": "speak",
+      "spoken": "Sounds good, and roughly how much?",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "Since the debt question was asked, the caller has given a long, fully off-topic monologue about a child's school behavior. It sounds like TV/radio audio or unrelated speech, and the trailing 'sure' belongs to that monologue rather than answering the question. That is not-engaging behavior, and neither ladder line has been used yet, so rung 1 applies: 'I didn't catch that.' plus the debt-amount que",
+      "better_reply": "I didn't catch that. Could you tell me roughly how much you owe on your credit cards combined, like ten thousand, twenty thousand, thirty thousand, or more?"
+    },
+    {
+      "example_id": "S06#t13",
+      "query": "S06",
+      "turn": "13/25",
+      "caller_said": "it's fine you know",
+      "agent_action": "speak",
+      "spoken": "I need a rough estimate to see if you qualify - is it closer to 10 thousand, 20 thousand, or more?",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "Since the debt-amount question was asked, the caller's lines have all been an unrelated story about a child's behavior at school, with no attempt to answer. That is fully off-topic, which counts as not engaging. No not-engaging rung has been used yet on this call, so the script calls for the verbatim line \"I didn't catch that.\" followed by a re-ask of the debt question. The agent instead used the ",
+      "better_reply": "I didn't catch that. Could you tell me roughly how much you owe on your credit cards combined, like ten thousand, twenty thousand, thirty thousand, or more?"
+    },
+    {
+      "example_id": "S06#t15",
+      "query": "S06",
+      "turn": "15/25",
+      "caller_said": "if any of you are saying that that party situation is my fault",
+      "agent_action": "speak",
+      "spoken": "I\u2019m sorry, I don\u2019t understand. To keep going, could you tell me how much you currently owe on your credit cards combined?",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [
+        "injection_1"
+      ],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "For many turns the caller has been talking about a child, school and a teacher, and never answered the debt-amount question. That is not engaging, not an injection attempt. No not-engaging rung has been used yet, so rung 1 is called for: \"I didn't catch that.\" plus the re-ask. The agent was right to keep talking and re-ask the debt amount, but it used \"I'm sorry, I don't understand.\", which the sc",
+      "better_reply": "I didn't catch that. Could you tell me roughly how much you owe on your credit cards combined, like ten thousand, twenty thousand, thirty thousand, or more?"
+    },
+    {
+      "example_id": "S06#t16",
+      "query": "S06",
+      "turn": "16/25",
+      "caller_said": "you can go punch yourself and lose my story",
+      "agent_action": "end_call",
+      "spoken": "I'm unable to assist at this time. Goodbye",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [
+        "not_engaging_3"
+      ],
+      "failed": [
+        "right_action",
+        "on_script"
+      ],
+      "rationale": "The caller's speech is fully off-topic, like TV or a story about a child, so it counts as not engaging. None of the not-engaging rungs had been used earlier in the call: neither \"I didn't catch that.\" nor \"I'm having trouble understanding.\" appears in the agent's lines. The script calls for rung 1 plus a re-ask of the pending debt-amount question. Jumping to the rung-3 goodbye and hanging up ends ",
+      "better_reply": "I didn't catch that. Could you tell me roughly how much you owe on your credit cards combined, like ten thousand, twenty thousand, thirty thousand, or more?"
+    },
+    {
+      "example_id": "S06#t17",
+      "query": "S06",
+      "turn": "17/25",
+      "caller_said": "right now yeah because we let all of you underage little ***** inside our beautiful home",
+      "agent_action": "end_call",
+      "spoken": "I'm unable to assist at this time. Goodbye",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [
+        "not_engaging_3"
+      ],
+      "failed": [
+        "right_action",
+        "on_script"
+      ],
+      "rationale": "The caller's speech is fully off topic. It sounds like a story or TV/radio audio about a child and a party, so the not-engaging ladder applies. Nicole has said neither 'I didn't catch that.' nor 'I'm having trouble understanding.' anywhere earlier in the call, so the script calls for rung 1 plus a re-ask of the pending debt-amount question. Jumping straight to the rung-3 goodbye ends the call too ",
+      "better_reply": "I didn't catch that. Could you tell me roughly how much you owe on your credit cards combined, like ten thousand, twenty thousand, thirty thousand, or more?"
+    },
+    {
+      "example_id": "S06#t18",
+      "query": "S06",
+      "turn": "18/25",
+      "caller_said": "just to do illegal things",
+      "agent_action": "end_call",
+      "spoken": "I'm unable to assist at this time. Goodbye",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [
+        "not_engaging_3"
+      ],
+      "failed": [
+        "right_action",
+        "on_script"
+      ],
+      "rationale": "The caller's audio is entirely off-topic and sounds like a TV show or story playing, so the not-engaging ladder applies. None of Nicole's earlier lines contain \"I didn't catch that.\" or \"I'm having trouble understanding.\" The next unused rung is therefore rung 1, which pairs that line with a re-ask of the pending debt-amount question. Jumping straight to the rung-3 goodbye and calling end_call ski",
+      "better_reply": "I didn't catch that. Could you tell me roughly how much you owe on your credit cards combined, like ten thousand, twenty thousand, or more?"
+    },
+    {
+      "example_id": "S06#t19",
+      "query": "S06",
+      "turn": "19/25",
+      "caller_said": "from the forensic auto investigator",
+      "agent_action": "speak",
+      "spoken": "I'm sorry, I don't understand. Could you please tell me how much you currently owe on your credit cards combined? Just a ballpark estimate \u2013 like ten thousand, twenty thousand, thirty",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [
+        "injection_1"
+      ],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller's audio is off-topic, like a TV, story or recording, so this is a not-engaging caller. Neither \"I didn't catch that.\" nor \"I'm having trouble understanding.\" has been used yet, so the script calls for rung 1: \"I didn't catch that.\" plus re-asking the debt amount. Instead the agent used \"I'm sorry, I don't understand.\", which is reserved for injection attempts. It also repeated its previ",
+      "better_reply": "I didn't catch that. Roughly how much do you owe on your credit cards combined \u2014 about ten thousand, twenty thousand, thirty thousand, or more?"
+    },
+    {
+      "example_id": "S06#t23",
+      "query": "S06",
+      "turn": "23/25",
+      "caller_said": "and in his professional",
+      "agent_action": "speak",
+      "spoken": "I'm unable to assist at this time. Goodbye",
+      "expected_action": "end_call",
+      "ladder_expected": "not_engaging_3",
+      "ladder_used": [
+        "not_engaging_3"
+      ],
+      "failed": [
+        "right_action"
+      ],
+      "rationale": "The caller has been fully off-topic for the whole call, sounding like TV or echoed audio, so the not-engaging ladder applies. \"I'm having trouble understanding.\" was already said at line 51. The ladder only moves down, never back to the top, so the final rung is due. The agent spoke the correct verbatim goodbye but chose speak with no end_call, and the goodbye line alone does not hang up. That lea",
+      "better_reply": "I'm unable to assist at this time. Goodbye [Execute end_call]"
+    },
+    {
+      "example_id": "S06#t24",
+      "query": "S06",
+      "turn": "24/25",
+      "caller_said": "the slipper was stuck to the floorboard because of the impact the floorboard had actually crumbled around the yeah so it had no contribution",
+      "agent_action": "speak",
+      "spoken": "Hmm\u2026",
+      "expected_action": "end_call",
+      "ladder_expected": "not_engaging_3",
+      "ladder_used": [],
+      "failed": [
+        "right_action",
+        "on_script"
+      ],
+      "rationale": "The caller has given a long, fully off-topic monologue (sounds like a TV or radio story) and has never answered the debt amount question. The agent has already said \"I'm having trouble understanding.\" (line 51). Because the ladder only moves down, the next step is rung 3: \"I'm unable to assist at this time. Goodbye\" followed by end_call. Another \"Hmm\u2026\" backchannel just prolongs a non-engaging call",
+      "better_reply": "I'm unable to assist at this time. Goodbye"
+    },
+    {
+      "example_id": "S08#t2",
+      "query": "S08",
+      "turn": "2/4",
+      "caller_said": "and from the services of what",
+      "agent_action": "speak",
+      "spoken": "Consumer Services is a support team that helps people dealing with high interest unsecured debt, such as credit cards or personal loans, by reviewing possible relief options.",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "Speaking was the right action. The caller asked a genuine 'Consumer Services of what?' question, so no ladder line applies. The agent answered correctly using the script's own description, but then stopped without returning to the unfinished STEP1 pitch question. The script says to answer on-topic questions and then come back to the next unanswered step, so the call is left stalled. A strong reply",
+      "better_reply": "Oh, Consumer Services is the team that reviews unsecured debt like credit cards and checks what relief options you might have. I'm calling because our info shows you've been paying your cards on time but you're still carrying over 7 thousan"
+    },
+    {
+      "example_id": "S08#t3",
+      "query": "S08",
+      "turn": "3/4",
+      "caller_said": "first of all how did you get my information how did you get my information",
+      "agent_action": "speak",
+      "spoken": "That's a good question. Your info likely came through a financial inquiry you made online \u2014 like a debt help form, loan search, or credit evaluation. We only reach out to people who've shown interest in financial relief options. We're not c",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script",
+        "concise_for_voice"
+      ],
+      "rationale": "Speaking is right: this is the first time the caller asked how we got their information, so the scripted rebuttal is correct. But the script says to answer an on-topic question and then return to the next unanswered step. The agent never re-asked the pending STEP1 question about carrying over 7 thousand dollars, which stalls the call. The reply is also four sentences, past the roughly three-senten",
+      "better_reply": "That's a good question. Your info likely came through a financial inquiry you made online, like a debt help form or loan search. So, are you still carrying over 7 thousand dollars in credit card balances?"
+    },
+    {
+      "example_id": "S09#t1",
+      "query": "S09",
+      "turn": "1/3",
+      "caller_said": "***** yep yes ma'am",
+      "agent_action": "speak",
+      "spoken": "Okay, thank you. That's actually good because it means you may qualify for a program that can cut your total debt by up to 40% and eliminate interest entirely. Your monthly payments could be reduced significantly, giving you more breathing ",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller only answered the 'how are you' greeting. The STEP1 welcome pitch, which confirms the right person and the 7 thousand dollar balance, has not been said yet. The agent skipped straight to the STEP2 value proposition. Its 'that's actually good because it means you may qualify' responds to a confirmation the caller never gave, and it ends without a question to move the call forward.",
+      "better_reply": "Glad to hear it! Thanks, this will just take a moment. I'm calling because the information we received shows you've been making payments on your credit cards on time, but you're still carrying over 7 thousand dollars in balances, is that ri"
+    },
+    {
+      "example_id": "S09#t2",
+      "query": "S09",
+      "turn": "2/3",
+      "caller_said": "mccarty *******",
+      "agent_action": "speak",
+      "spoken": "Hmm\u2026",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller's reply \"mccarty *******\" is unintelligible and does not respond to the pitch question. It does not end in a conjunction or filler, so it is not a trailing-off utterance, and a backchannel is the wrong move. No not-engaging rung has been used yet, so the script calls for \"I didn't catch that.\" plus a re-ask of the STEP1 question. A bare \"Hmm\u2026\" stalls the call without re-asking the pendi",
+      "better_reply": "I didn't catch that. Are you still carrying over 7 thousand dollars in credit card balances?"
+    },
+    {
+      "example_id": "S09#t3",
+      "query": "S09",
+      "turn": "3/3",
+      "caller_said": "what what color are your *******",
+      "agent_action": "speak",
+      "spoken": "I didn't catch that. Could you tell me roughly how much you owe on your credit cards combined?",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [
+        "not_engaging_1"
+      ],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller's 'what color are your...' is a fully off-topic reply. No not-engaging rung has been used yet, so 'I didn't catch that.' plus a re-ask is correct, and the agent spoke the rung verbatim. However, the pending question was the STEP1 check on whether the caller has debt or it's a wrong number. The agent instead jumped to the STEP3 debt-amount question, skipping both the RPC/debt confirmatio",
+      "better_reply": "I didn't catch that. Are you still carrying credit card or personal loan balances, or did I reach the wrong number?"
+    },
+    {
+      "example_id": "S10#t2",
+      "query": "S10",
+      "turn": "2/6",
+      "caller_said": "i'm well and yourself",
+      "agent_action": "speak",
+      "spoken": "Okay, thank you. That's actually good because it means you may qualify for a program that can cut your total debt by up to 40% and eliminate interest entirely. Your monthly payments could be reduced significantly, giving you more breathing ",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "Nicole's welcome pitch was cut off, so the caller never heard or confirmed the over-7-thousand-dollar balance question. The caller only answered the greeting. The agent skipped STEP1 and went straight to the STEP2 value proposition. 'That's actually good because it means you may qualify' responds to a confirmation that never happened. She should return the pleasantry and deliver the STEP1 pitch qu",
+      "better_reply": "I'm doing great, thanks for asking! I'm calling because the information we received shows you've been making payments on your credit cards on time, but you're still carrying over 7 thousand dollars in balances, is that right?"
+    },
+    {
+      "example_id": "S10#t4",
+      "query": "S10",
+      "turn": "4/6",
+      "caller_said": "oh i think we're breaking up i think i'm going through a yeah i'm actually going through a bad area and i'm losing reception with you alright like what's the call regarding if you don't mind",
+      "agent_action": "speak",
+      "spoken": "Let me try speaking up a bit. We\u2019re checking whether you may qualify for help with unsecured debts like credit cards or personal loans.",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "This is the caller's first connection complaint, plus an on-topic 'what's this about' question. Speaking was the right action, and the verbatim 'Let me try speaking up a bit.' with a short purpose line is correct. However, the connection rule requires repeating the pending question, and the STEP1 pitch was never completed. The agent ended without asking anything, so the call stalls instead of movi",
+      "better_reply": "Let me try speaking up a bit. We're checking if you qualify for help with credit card debt. Our records show you're still carrying over 7 thousand dollars in balances, is that right?"
+    },
+    {
+      "example_id": "S10#t5",
+      "query": "S10",
+      "turn": "5/6",
+      "caller_said": "no thank you",
+      "agent_action": "end_call",
+      "spoken": "Sure, I will arrange a callback, goodbye",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "right_action",
+        "on_script"
+      ],
+      "rationale": "The caller's \"no thank you\" is a plain not-interested objection, and Rebuttal A has not been used yet, so the script calls for Rebuttal A and keeping the call going. The caller never asked for a callback, so the callback goodbye is the wrong ending trigger. The earlier reception complaint calls for \"Let me try speaking up a bit,\" not hanging up. Ending here throws away a live prospect.",
+      "better_reply": "Totally understand, just curious, is that because you've already resolved your debts, or you're just not sure what this is about yet? It only takes a couple minutes, and if it's not helpful, no pressure."
+    },
+    {
+      "example_id": "S11#t4",
+      "query": "S11",
+      "turn": "4/6",
+      "caller_said": "according",
+      "agent_action": "speak",
+      "spoken": "I didn't catch that. Could you tell me roughly how much you currently owe on your credit cards combined? Like ten thousand, twenty thousand, or more?",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_2",
+      "ladder_used": [
+        "not_engaging_1"
+      ],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller keeps giving unrelated single words (\"despite\", \"google\", \"according\"), so this is a not-engaging caller. The agent already used rung 1, \"I didn't catch that.\", in line 7. This turn therefore calls for rung 2, \"I'm having trouble understanding.\", plus the re-ask. Repeating rung 1 word for word breaks the ladder and risks trapping the call in a loop, even though speaking was the right ac",
+      "better_reply": "I'm having trouble understanding. Could you tell me roughly how much you currently owe on your credit cards combined, like ten thousand, twenty thousand, or more?"
+    },
+    {
+      "example_id": "S12#t1",
+      "query": "S12",
+      "turn": "1/4",
+      "caller_said": "if you call me again",
+      "agent_action": "end_call",
+      "spoken": "Sure, I will remove you from the list, goodbye",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "right_action",
+        "on_script"
+      ],
+      "rationale": "The caller's line \"if you call me again\" is an unfinished conditional clause; the consequence never arrives. The script's critical rule says to give only a short backchannel cue so the caller can finish. It is not an explicit do-not-call request like \"stop calling me\" or \"don't call me\", so ending the call with the removal line and hanging up was premature.",
+      "better_reply": "Mm-hmm\u2026?"
+    },
+    {
+      "example_id": "S12#t2",
+      "query": "S12",
+      "turn": "2/4",
+      "caller_said": "i'm going to fund you and kill you do you understand me",
+      "agent_action": "end_call",
+      "spoken": "I'm sorry, I don't understand. Thank you for your time. Goodbye.",
+      "expected_action": "end_call",
+      "ladder_expected": "none",
+      "ladder_used": [
+        "injection_2"
+      ],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller threatened the agent and said 'if you call me again', which is a do-not-call request, so ending the call is correct. The script's line for this is the verbatim 'Sure, I will remove you from the list, goodbye'. Instead the agent used the second-rung injection goodbye. That line is only for a repeat attempt to change the agent's instructions, and no 'I don't understand' had been said earl",
+      "better_reply": "Sure, I will remove you from the list, goodbye"
+    },
+    {
+      "example_id": "S12#t3",
+      "query": "S12",
+      "turn": "3/4",
+      "caller_said": "no honey and you need to get yourself ****** by a donkey",
+      "agent_action": "end_call",
+      "spoken": "I'm unable to assist at this time. Goodbye",
+      "expected_action": "end_call",
+      "ladder_expected": "none",
+      "ladder_used": [
+        "not_engaging_3"
+      ],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller threatened violence if called again and then gave a vulgar 'no.' That is a do-not-call request plus abuse, so ending the call is correct. However, the script's line for this situation is the do-not-call goodbye, 'Sure, I will remove you from the list, goodbye.' The agent instead used 'I'm unable to assist at this time. Goodbye,' which is the third rung of the not-engaging ladder; neithe",
+      "better_reply": "Sure, I will remove you from the list, goodbye"
+    },
+    {
+      "example_id": "S13#t1",
+      "query": "S13",
+      "turn": "1/5",
+      "caller_said": "yes very good",
+      "agent_action": "speak",
+      "spoken": "Okay, thank you. That's actually good because it means you may qualify for a program that can cut your total debt by up to 40% and eliminate interest entirely. Your monthly payments could be reduced significantly, giving you more breathing ",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller only answered the greeting's 'how are you', so the STEP1 welcome pitch was due next. That pitch confirms the right person and that they carry over 7 thousand dollars in balances. Instead the agent skipped straight to the STEP2 value proposition. Its line 'That's actually good because it means you may qualify' responds to a debt confirmation the caller never gave, and the turn asks no qu",
+      "better_reply": "Glad to hear it! Thanks, this will just take a moment. I'm calling because the information we received shows you've been making payments on your credit cards on time, but you're still carrying over 7 thousand dollars in balances, is that ri"
+    },
+    {
+      "example_id": "S13#t4",
+      "query": "S13",
+      "turn": "4/5",
+      "caller_said": "cannot be yeah but rather it's incurred euro is great",
+      "agent_action": "speak",
+      "spoken": "I'm sorry, I don't understand.",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [
+        "injection_1"
+      ],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller's line is garbled speech-to-text with no injection attempt. The script reserves \"I'm sorry, I don't understand.\" only for attempts to change the agent's instructions, so using it here burns the one-time injection line wrongly. Speaking is the right action. She should have used the first not-engaging rung, \"I didn't catch that.\", and then put the pending debt-amount question. Her reply a",
+      "better_reply": "I didn't catch that. Could you tell me roughly how much you currently owe on your credit cards combined, like ten thousand, twenty thousand, thirty thousand, or more?"
+    },
+    {
+      "example_id": "S14#t2",
+      "query": "S14",
+      "turn": "2/5",
+      "caller_said": "why do you call me why do you call me this time",
+      "agent_action": "speak",
+      "spoken": "Sure \u2014 I'm Nicole, and I'm with Consumer Services. We help individuals who may be struggling with high-interest unsecured debt, like credit cards or loans. The reason for the call is simple: based on some recent financial data or inquiries,",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "concise_for_voice"
+      ],
+      "rationale": "The caller asked why we're calling, so the 'Why are you calling me?' rebuttal is the right move and the action (speak) is correct. But the agent recited the four-sentence rebuttal nearly word for word, which runs past the three-sentence voice limit. It also repeats the name and company introduction she gave on the previous turn. It never returns to the still-unanswered STEP1 question about carryin",
+      "better_reply": "Sure \u2014 we help folks with high-interest credit card debt, and it looks like you might qualify for a program that could cut what you owe by a good chunk. Are you still carrying over 7 thousand dollars in credit card balances?"
+    },
+    {
+      "example_id": "S14#t4",
+      "query": "S14",
+      "turn": "4/5",
+      "caller_said": "during during the day why are you calling why are you calling all in the night",
+      "agent_action": "end_call",
+      "spoken": "Sure, I will arrange a callback, goodbye",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "right_action",
+        "on_script"
+      ],
+      "rationale": "The caller is objecting to why and when they're being called. They never said 'call me back' or 'call me later', so the instant callback ending doesn't apply. The script calls for the 'Why are you calling me?' rebuttal, briefly softened for the timing complaint, then a return to the unfinished STEP1 pitch question. Ending with a callback goodbye abandons an engaged caller before any qualification.",
+      "better_reply": "Oh, sorry about the late call. I'm Nicole with Consumer Services, and we help people lower high-interest credit card debt, and it only takes a minute. Are you still carrying over 7 thousand dollars in credit card balances?"
+    },
+    {
+      "example_id": "S15#t1",
+      "query": "S15",
+      "turn": "1/31",
+      "caller_said": "i'm fine what's this about",
+      "agent_action": "speak",
+      "spoken": "Sure \u2014 I'm Nicole, and I'm with Consumer Services. We help individuals who may be struggling with high-interest unsecured debt \u2014 things like credit cards or loans. The reason for the call is simple: based on some recent financial data or in",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script",
+        "concise_for_voice"
+      ],
+      "rationale": "Speaking and answering the caller's 'what's this about' was correct, and the agent used the script's matching rebuttal word for word. But that recital runs four long sentences, past the roughly three-sentence limit. The script says to shorten scripted lines for voice. It also never returns to the pending STEP1 pitch question, so the caller has nothing to answer and the call stalls instead of movin",
+      "better_reply": "Sure \u2014 I'm with Consumer Services, and we help folks lower high-interest credit card debt. Our info shows you've been paying your cards on time but still carrying over 7 thousand dollars in balances, is that right?"
+    },
+    {
+      "example_id": "S15#t12",
+      "query": "S15",
+      "turn": "12/31",
+      "caller_said": "you know almost tripled my payment and it kinda messed me up a little bit",
+      "agent_action": "speak",
+      "spoken": "I\u2019m sorry, I don\u2019t understand. Could you tell me roughly how much you currently owe on your credit cards combined?",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [
+        "injection_1"
+      ],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller is genuinely engaging, explaining how the card company nearly tripled their payment. That is an on-topic story, not an injection attempt, so the injection-only line \"I'm sorry, I don't understand.\" is misused. It also spends the caller's one injection rung for the call. The caller roughly said \"ten thousand... probably less than,\" which leaves the amount unclear, so the script calls for",
+      "better_reply": "Oh, I'm sorry, that sounds really frustrating, and that's exactly the kind of thing we help with. Just to confirm, is your total credit card debt more than 7 thousand dollars?"
+    },
+    {
+      "example_id": "S15#t13",
+      "query": "S15",
+      "turn": "13/31",
+      "caller_said": "you know what i mean because i based it on a certain amount and then they turned around and were tripling my payment and kinda you know it kinda put me in a bad spot",
+      "agent_action": "speak",
+      "spoken": "I\u2019m sorry to hear that.",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller finished an on-topic hardship story about the card company tripling his payment, so speaking is the right action. But the agent repeated 'I'm sorry to hear that.', the same line she used at turn 29, and didn't return to the pending step. The debt amount is still unclear: he said 'ten thousand' and then 'probably less than'. The script calls for answering the concern briefly, then asking",
+      "better_reply": "Oh, that's really frustrating, and that's exactly the kind of thing this program helps with. Just to confirm, is your total credit card debt more than 7 thousand dollars?"
+    },
+    {
+      "example_id": "S15#t14",
+      "query": "S15",
+      "turn": "14/31",
+      "caller_said": "so now i'm looking to consolidate my credit card so i have one payment",
+      "agent_action": "speak",
+      "spoken": "Oh, I get that. To see if this makes sense for you, about how much do you owe on your credit cards altogether?",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller has engaged and gave a partial amount: 'ten thousand\u2026 probably less than.' That figure is genuinely unclear, since it could fall above or below the 7 thousand minimum. The script calls for the confirmation question 'Is your total credit card debt more than 7 thousand dollars?' at this point. Instead, the agent re-asked the open-ended debt question, which was already asked in line 7, and",
+      "better_reply": "Oh, that makes sense, and one payment is exactly what this program can help with. Just to confirm, is your total credit card debt more than 7 thousand dollars?"
+    },
+    {
+      "example_id": "S15#t16",
+      "query": "S15",
+      "turn": "16/31",
+      "caller_said": "yeah yeah they kinda hurt me a little bit doing that to me you know",
+      "agent_action": "speak",
+      "spoken": "Oh, I get that. To see if this makes sense for you, roughly how much do you owe on your credit cards altogether?",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "Speaking is the right action, and the empathy fits the caller's story. But the caller already answered the amount question: about ten thousand, then 'probably less than' that. The figure is now unclear rather than missing, so the script calls for the confirmation line asking whether the total is more than 7 thousand dollars. Re-asking 'roughly how much' repeats a question the caller partly answere",
+      "better_reply": "Oh, I'm sorry, that's frustrating when they change the payment on you. Got it. Just to confirm \u2014 is your total credit card debt more than 7 thousand dollars?"
+    },
+    {
+      "example_id": "S15#t19",
+      "query": "S15",
+      "turn": "19/31",
+      "caller_said": "then when they kept tripling it and i kept paying my payment on time but then they just they kept raising my payment and it i you know i had prior other bills too that i you know i just adjusted it in",
+      "agent_action": "speak",
+      "spoken": "Uh-huh\u2026",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller's last line, \"income and it kinda messed me up,\" is a complete thought, not a trail-off, so a bare backchannel is not what the script calls for. The script says to briefly acknowledge an on-topic story and then return to the next unanswered step. The debt amount is still unclear: the caller said ten thousand, then \"probably less than.\" That calls for the STEP4 confirmation question abou",
+      "better_reply": "Oh, I'm sorry, that really does put you in a tough spot, and that's exactly the kind of thing we help with. Just to confirm, is your total credit card debt more than 7 thousand dollars?"
+    },
+    {
+      "example_id": "S15#t20",
+      "query": "S15",
+      "turn": "20/31",
+      "caller_said": "not me you know",
+      "agent_action": "speak",
+      "spoken": "Uh-huh\u2026",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "Speaking is the right action, but another bare backchannel stalls the call. The caller has finished the story; 'not me... you know' is a closing tag, not a trailing conjunction, and the agent had already tried to respond. The debt amount is still ambiguous ('ten thousand' followed by 'probably less than'), so she should briefly empathize and ask the script's clarifying question about being over 7 ",
+      "better_reply": "I'm sorry, that sounds really frustrating, and that's exactly the kind of situation we help with. Got it. Just to confirm \u2014 Is your total credit card debt more than 7 thousand dollars?"
+    },
+    {
+      "example_id": "S15#t23",
+      "query": "S15",
+      "turn": "23/31",
+      "caller_said": "yes i i",
+      "agent_action": "speak",
+      "spoken": "Do you have any personal loans?",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller said 'yes i i', which answers the personal-loans question with a yes and then trails off mid-thought. The script calls for a short backchannel so they can finish, or, taking the yes, the follow-up 'How much approximately do you owe on personal loans?' Re-asking 'Do you have any personal loans?' repeats a question the caller just answered and stalls GATE 2. Speaking was the right action,",
+      "better_reply": "Uh-huh\u2026?"
+    },
+    {
+      "example_id": "S15#t25",
+      "query": "S15",
+      "turn": "25/31",
+      "caller_said": "for",
+      "agent_action": "speak",
+      "spoken": "How much approximately do you owe on personal loans?",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller's last fragment, \"for\", is incomplete and likely the start of an amount such as \"four thousand\". The script says a trailing or incomplete utterance gets only a short backchannel cue so the caller can finish. Instead the agent re-asked the personal-loan amount a third time, talking over a caller who was already starting to answer. The action (speak) and tone are fine, but the content is ",
+      "better_reply": "Uh-huh\u2026?"
+    },
+    {
+      "example_id": "S15#t27",
+      "query": "S15",
+      "turn": "27/31",
+      "caller_said": "i would probably say about sixteen",
+      "agent_action": "speak",
+      "spoken": "Uh-huh\u2026",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller answered the pending personal-loan amount question with 'about sixteen'. The utterance ends on a number, not a conjunction or filler, so a bare backchannel stalls instead of processing the answer. That figure lumps in truck payments, which the program excludes, so per STEP4 GATE 2 the agent should ask for the personal-loan portion alone to compute the qualifying combined total with the ",
+      "better_reply": "Got it \u2014 and leaving out the truck payment, roughly how much of that is personal loans?"
+    },
+    {
+      "example_id": "S15#t29",
+      "query": "S15",
+      "turn": "29/31",
+      "caller_said": "maybe about fourteen i don't know fourteen to sixteen thousand i don't really know i haven't checked for a long time but yeah",
+      "agent_action": "speak",
+      "spoken": "Okay, so about fourteen to sixteen thousand dollars. I'm sure you're the one who handles the bills for these unsecured credit cards. These are the ones with no collateral attached, right?",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller already put credit card debt under 4 thousand dollars. The 'fourteen to sixteen thousand' explicitly lumps truck payments in with credit cards, and truck loans are excluded. So there is still no usable personal-loan figure and no qualifying combined amount. Moving to STEP5 treats excluded truck debt as qualifying and heads toward an invalid transfer. The agent should keep talking and is",
+      "better_reply": "Got it, and just so I'm clear, leaving out the truck payment, roughly how much do you owe on personal loans by themselves?"
+    },
+    {
+      "example_id": "S15#t30",
+      "query": "S15",
+      "turn": "30/31",
+      "caller_said": "i would say that",
+      "agent_action": "speak",
+      "spoken": "Great, thank you for confirming that.",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script",
+        "no_hallucination"
+      ],
+      "rationale": "The caller trailed off with \"i would say that,\" so the script calls for a short backchannel to let them finish. The agent instead said the transfer line, \"Great, thank you for confirming that.\", which is forbidden unless the transfer gate is met, and it isn't. The fourteen-to-sixteen thousand figure includes excluded truck payments, the credit cards alone are under four thousand, no personal loan ",
+      "better_reply": "Uh-huh\u2026?"
+    },
+    {
+      "example_id": "S15#t31",
+      "query": "S15",
+      "turn": "31/31",
+      "caller_said": "yes yeah i am the decision maker these are my dads yes",
+      "agent_action": "speak",
+      "spoken": "And these are unsecured debts, with no collateral attached, right?",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller's credit card debt is under four thousand dollars. The fourteen to sixteen thousand figure covered 'my truck payments and my credit cards,' and truck loans are excluded, so there is still no qualifying combined amount. The caller also gave a positive 'yes' to the combined unsecured and decision-maker question. Re-asking unsecured re-asks what was answered and skips the real gap, the per",
+      "better_reply": "Got it, thanks. Just so I have it right, leaving the truck loan aside, about how much do you owe on personal loans by themselves?"
+    },
+    {
+      "example_id": "S16#t1",
+      "query": "S16",
+      "turn": "1/12",
+      "caller_said": "okay oh",
+      "agent_action": "speak",
+      "spoken": "Oh...",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller answered the greeting with 'okay' and a stray 'oh'. That is a complete reply, not a trailing-off utterance, so the agent should have moved straight into the STEP1 welcome pitch. Answering with only 'Oh...' stalls the call and skips the required pitch. The action type (speak) is right, but the content is not.",
+      "better_reply": "Glad to hear it. Thanks, this will just take a moment. I'm calling because the information we received shows you've been making payments on your credit cards on time, but you're still carrying over 7 thousand dollars in balances, is that ri"
+    },
+    {
+      "example_id": "S16#t2",
+      "query": "S16",
+      "turn": "2/12",
+      "caller_said": "i would have to check i don't i'm not home right now i i don't know",
+      "agent_action": "speak",
+      "spoken": "Okay, no problem. Just a rough estimate is fine \u2014 is it closer to ten thousand, twenty thousand, or more?",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller was hesitant at the STEP1 pitch. That is not a no, a callback request or disengagement, so speaking is the right action. However, the agent skipped STEP2, which the script marks MUST COMPLETE and calls for in High Education mode when the caller is hesitant. It jumped straight to the bracket question, which is the vague-response wording, without reassuring the caller or resolving the pit",
+      "better_reply": "No problem, you don't need exact numbers. I ask because people carrying that kind of balance may qualify to cut their total debt by up to 40 percent and drop the interest entirely. Off the top of your head, would you say it's over 7 thousan"
+    },
+    {
+      "example_id": "S16#t5",
+      "query": "S16",
+      "turn": "5/12",
+      "caller_said": "that's about it",
+      "agent_action": "speak",
+      "spoken": "Just to confirm, do you have any personal loans or other debt, or no debt at all?",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller named only the house and property taxes, which are excluded debts. That is not an explicit 'no debt', so speaking is right, and the script's second clarifying ask applies: 'No debt at all, or debt under 7K?' The agent instead largely repeated its line-5 question about personal loans and any debt, again opening with 'Just to confirm'. It also asked about 'other debt', which invites more ",
+      "better_reply": "Got it, the house doesn't count for our program. So no credit card debt at all, or just under 7 thousand dollars?"
+    },
+    {
+      "example_id": "S16#t6",
+      "query": "S16",
+      "turn": "6/12",
+      "caller_said": "oh jeez",
+      "agent_action": "speak",
+      "spoken": "Hmm\u2026",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "Speaking is the right action, since the debt-amount question is still unanswered and nothing ends the call. But \"oh jeez\" is a complete, hesitant reaction, not a trailing utterance, so a bare backchannel stalls the call. The script says to reassure a hesitant caller and use the vague-response prompt (\"closer to 10 thousand, 20 thousand, or more?\"). This also matters because the caller has only men",
+      "better_reply": "No worries, just a rough guess is fine. Is it closer to 10 thousand, 20 thousand, or more on your credit cards?"
+    },
+    {
+      "example_id": "S16#t10",
+      "query": "S16",
+      "turn": "10/12",
+      "caller_said": "i i would guess fifty forty somewhere in there",
+      "agent_action": "speak",
+      "spoken": "Got it \u2014 so around forty to fifty thousand dollars?",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller gave a usable range of forty to fifty thousand. The script treats 'between X and Y' as the midpoint (about $45K), and that is qualified. The script says not to ask a caller to confirm a clear qualified number and to go straight to STEP5 with the personalized savings hook. Re-confirming the amount stalls the call on a slot that is already filled. The correct action was to speak, but the ",
+      "better_reply": "Got it, so with around forty-five thousand dollars, you might only need to pay back around twenty-seven thousand. Quick question \u2014 I'm sure you're the one who handles the bills for these unsecured credit cards, the ones with no collateral a"
+    },
+    {
+      "example_id": "S17#t1",
+      "query": "S17",
+      "turn": "1/5",
+      "caller_said": "i'm good thank you",
+      "agent_action": "speak",
+      "spoken": "Okay, thank you. Okay, thank you. That's actually good because it means you may qualify for a program that can cut your total debt by up to 40% and eliminate interest entirely. Your monthly payments could be reduced significantly, giving yo",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script",
+        "concise_for_voice"
+      ],
+      "rationale": "The caller only answered the 'how are you' greeting, so the script calls for the STEP1 welcome pitch, which confirms the right person and the balances over 7 thousand dollars. The agent skipped STEP1 and went straight into the STEP2 value proposition. Its 'That's actually good because it means you may qualify' is a non sequitur after 'I'm good thank you'. It also stuttered 'Okay, thank you.' twice",
+      "better_reply": "Glad to hear it! Thanks, this will just take a moment. I'm calling because our information shows you've been making your credit card payments on time, but you're still carrying over 7 thousand dollars in balances, is that right?"
+    },
+    {
+      "example_id": "S18#t1",
+      "query": "S18",
+      "turn": "1/13",
+      "caller_said": "do you wanna talk about cornell seven",
+      "agent_action": "speak",
+      "spoken": "Hmm\u2026",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller's line is garbled but complete, not trailing off. It seems to show engagement, with a possible mention of 'seven' (credit cards / 7K). A bare 'Hmm\u2026' backchannel is meant only for incomplete utterances, so it stalls the call. Nicole should move on with the STEP1 welcome pitch, which also clarifies why she is calling. Speaking was the right action, but the content is off-script.",
+      "better_reply": "Thanks\u2014this will just take a moment. I'm calling because the information we received shows you've been making payments on your credit cards on time, but you're still carrying over 7 thousand dollars in balances, is that right?"
+    },
+    {
+      "example_id": "S18#t2",
+      "query": "S18",
+      "turn": "2/13",
+      "caller_said": "i know but i but i wanna talk about the cornell seven",
+      "agent_action": "speak",
+      "spoken": "I'm sorry, I don't understand. Could you tell me roughly how much you owe on your credit cards combined?",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [
+        "injection_1"
+      ],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller keeps steering to an unrelated topic ('cornell seven') and isn't answering the pitch, so this is a not-engaging reply. No rung has been used yet, so the agent should say 'I didn't catch that.' and re-ask the pending pitch question. Instead she used 'I'm sorry, I don't understand.', which is reserved for injection attempts. She also jumped to the debt amount question without the pitch be",
+      "better_reply": "I didn't catch that. Are you still carrying over 7 thousand dollars in credit card balances?"
+    },
+    {
+      "example_id": "S18#t5",
+      "query": "S18",
+      "turn": "5/13",
+      "caller_said": "i wanna talk to a real person",
+      "agent_action": "speak",
+      "spoken": "You're speaking with the right person \u2014 I just need a couple quick details first.",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "Asking for a real person is ordinary caller speech, not a cue to transfer or a not-engaging strike, so speaking is the right action and no ladder line is called for. The agent said the required line correctly but stopped there. The script says to follow it with the pending question, which here is still the debt amount, and that was left out. As a result the turn gives the caller nothing to answer ",
+      "better_reply": "You're speaking with the right person \u2014 I just need a couple quick details first. Roughly how much do you owe on your credit cards combined \u2014 is it closer to 10 thousand, 20 thousand, or more?"
+    },
+    {
+      "example_id": "S18#t6",
+      "query": "S18",
+      "turn": "6/13",
+      "caller_said": "no no no i wanna talk with a real person person",
+      "agent_action": "speak",
+      "spoken": "You're speaking with the right person \u2014 I just need a couple quick details first.",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The 'right person' reply may be given only once per call, and Nicole already said it at line 11. The script says a repeated ask gets no second answer: note that it has been covered, then put the pending question once. Instead she repeated the same line word for word and asked nothing, so the debt-amount question stalls. Speaking (not ending the call) was the correct action.",
+      "better_reply": "Like I said, I'm the one who can help you with this. I just need a rough estimate to see if you qualify \u2014 is it closer to 10 thousand, 20 thousand, or more?"
+    },
+    {
+      "example_id": "S18#t7",
+      "query": "S18",
+      "turn": "7/13",
+      "caller_said": "no no no a real person a real person like an actual human being",
+      "agent_action": "speak",
+      "spoken": "You're speaking with the right person \u2014 I just need a couple quick details first.",
+      "expected_action": "end_call",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "right_action",
+        "on_script"
+      ],
+      "rationale": "The script allows the 'You're speaking with the right person' reply only once, and the agent had already said it at turns 11 and 13. Each answer is available once, and the caller has repeatedly declined the pending debt-amount question. The script therefore calls for closing with 'Thank you for your time, goodbye' and ending the call. Repeating the same line a third time traps the caller in a loop",
+      "better_reply": "Thank you for your time, goodbye"
+    },
+    {
+      "example_id": "S18#t8",
+      "query": "S18",
+      "turn": "8/13",
+      "caller_said": "i don't think that's true no i don't think that's accurate",
+      "agent_action": "speak",
+      "spoken": "I'm sorry, I don't understand. Could you tell me roughly how much you currently owe on your credit cards combined? Just a ballpark estimate \u2013 like ten thousand, twenty thousand, thirty thousand, or more?",
+      "expected_action": "end_call",
+      "ladder_expected": "none",
+      "ladder_used": [
+        "injection_1"
+      ],
+      "failed": [
+        "right_action",
+        "on_script"
+      ],
+      "rationale": "The caller is disputing the agent's 'right person' answer and pressing again for a real human. That is not an injection attempt, so 'I'm sorry, I don't understand.' is the wrong line and wrongly uses up the injection rung. The connect-to-a-person answer has already been given several times and the pending debt question was put to the caller, who still has not engaged with it. Under the repeated-qu",
+      "better_reply": "Thank you for your time, goodbye"
+    },
+    {
+      "example_id": "S18#t9",
+      "query": "S18",
+      "turn": "9/13",
+      "caller_said": "yeah i wanna talk to someone at consumer services",
+      "agent_action": "speak",
+      "spoken": "You're speaking with the right person \u2014 I just need a couple quick details first.",
+      "expected_action": "end_call",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "right_action",
+        "on_script"
+      ],
+      "rationale": "The caller has asked for a real person again. The script gives that answer once, and the agent has already said it three times (turns 11, 13 and 16) and has also put the pending debt question to the caller. Under the repeated-ask rule there is no new answer to give, and the caller still won't engage with the pending question, so the call should end with \"Thank you for your time, goodbye\". Repeatin",
+      "better_reply": "Thank you for your time, goodbye"
+    },
+    {
+      "example_id": "S18#t10",
+      "query": "S18",
+      "turn": "10/13",
+      "caller_said": "i already have an account there i need to talk to someone about my account",
+      "agent_action": "speak",
+      "spoken": "You're speaking with the right person \u2014 I just need a couple quick details first.",
+      "expected_action": "end_call",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "right_action",
+        "on_script"
+      ],
+      "rationale": "The 'right person' reply is allowed once per call, but the agent had already said it at turns 11, 13 and 16, and had already re-asked the pending debt question. The caller is again asking for a human, now framed as an existing account, and still hasn't engaged with the question. Under the repeated-ask rule the agent should close with 'Thank you for your time, goodbye' and end the call. Instead she",
+      "better_reply": "Thank you for your time, goodbye"
+    },
+    {
+      "example_id": "S18#t11",
+      "query": "S18",
+      "turn": "11/13",
+      "caller_said": "i owe ten thousand",
+      "agent_action": "speak",
+      "spoken": "Okay, thank you. That's actually good because it means you may qualify for a program that can cut your total debt by up to 40% and eliminate interest entirely. Your monthly payments could be reduced significantly, giving you more breathing ",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller stated ten thousand dollars, which falls within the qualifying range. The script says to go straight to STEP5 and ask the combined decision-maker and unsecured question. Instead, the agent went back and recited the STEP2 value proposition and asked no question, so the call stalls. Speaking was the right action and the wording is grounded in the script, but the turn does not advance qual",
+      "better_reply": "Got it, ten thousand dollars, so you could potentially pay back quite a bit less than that. I'm sure you're the one who handles the bills for these unsecured credit cards, the ones with no collateral attached, right?"
+    },
+    {
+      "example_id": "S18#t12",
+      "query": "S18",
+      "turn": "12/13",
+      "caller_said": "yeah can i talk to someone now about getting a loan",
+      "agent_action": "speak",
+      "spoken": "I'm sure you're the one who handles the bills for these unsecured credit cards. These are the ones with no collateral attached, right?",
+      "expected_action": "transfer_call",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "right_action",
+        "on_script"
+      ],
+      "rationale": "The caller stated a qualifying amount in their own words (\"i owe ten thousand\"). They then answered the combined decision-maker and unsecured question with \"yeah\", which the script lists as an acceptable positive answer to both parts. All three transfer-gate conditions are met, so the agent should have said \"Great, thank you for confirming that.\" and transferred. Instead it repeated a question the",
+      "better_reply": "Great, thank you for confirming that."
+    },
+    {
+      "example_id": "S19#t6",
+      "query": "S19",
+      "turn": "6/10",
+      "caller_said": "or personal loan",
+      "agent_action": "speak",
+      "spoken": "Uh-huh\u2026",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "Speaking was the right action, but a second backchannel was not. The caller's last words, 'or personal loan,' finish their thought about whether this is a consolidation or a personal loan; they don't trail off. The script calls for a short answer (it's not a loan) and then a return to the still-missing debt amount. Another 'Uh-huh\u2026' stalls the call with no forward motion.",
+      "better_reply": "Oh, it's not a loan or a consolidation loan \u2014 we just work with what you already owe to bring it down. So roughly how much is on your credit cards combined, closer to 10 thousand, 20 thousand, or more?"
+    },
+    {
+      "example_id": "S19#t8",
+      "query": "S19",
+      "turn": "8/10",
+      "caller_said": "yeah about about twenty cups at least no more than twenty cups",
+      "agent_action": "speak",
+      "spoken": "Got it. Just to confirm \u2014 is your total credit card debt more than 7 thousand dollars?",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller said \"about twenty cups\u2026 no more than twenty cups\". That is almost certainly \"twenty K\", and the script says a realistic two-digit figure in debt context means thousands, so the amount is 20 thousand and qualifies. The script says not to second-guess a clear qualifying number and to go straight to STEP5, the unsecured and decision-maker question. Asking again whether the debt is over 7 ",
+      "better_reply": "Okay, so with about 20 thousand dollars in credit card debt, you could potentially pay back only around 12 thousand dollars. I'm sure you're the one who handles the bills for these unsecured credit cards. These are the ones with no collater"
+    },
+    {
+      "example_id": "S19#t9",
+      "query": "S19",
+      "turn": "9/10",
+      "caller_said": "the the hello yeah well i'm driving now i have something to do now",
+      "agent_action": "end_call",
+      "spoken": "Sure, I will arrange a callback, goodbye",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "right_action",
+        "on_script"
+      ],
+      "rationale": "The caller never asked for a callback. 'I'm driving now, I have something to do now' is a 'Not right now' objection, which calls for Rebuttal A on its first use, not an immediate end. The caller is qualified on amount (about twenty thousand) and only needs the STEP5 confirmations, so hanging up loses a near-transfer. The agent should give a short version of Rebuttal A and re-ask the pending decisi",
+      "better_reply": "I completely understand! It only takes a minute, and it could save you thousands. Just quickly, you're the one who handles these credit card bills, and they've got no collateral attached, right?"
+    },
+    {
+      "example_id": "S19#t10",
+      "query": "S19",
+      "turn": "10/10",
+      "caller_said": "yeah right now it's about couple of minutes they don't make me seem right now",
+      "agent_action": "speak",
+      "spoken": "Uh-huh\u2026",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller gave about twenty thousand, which qualifies. Unsecured and decision maker are still not cleanly confirmed. The last utterance doesn't trail off on a conjunction or filler; it reads as a distracted 'I'm driving, not right now' timing concern. The script calls for briefly acknowledging that and moving the qualification forward, ideally confirming the missing unsecured and decision-maker s",
+      "better_reply": "I totally understand you're driving, so I'll keep this super quick. These are just regular credit cards with no collateral, and you're the one who handles those bills, right?"
+    },
+    {
+      "example_id": "S20#t2",
+      "query": "S20",
+      "turn": "2/11",
+      "caller_said": "do you know how many times you've called me you personally you",
+      "agent_action": "speak",
+      "spoken": "I don\u2019t have that detail here, but I can check if you qualify \u2014 could you tell me roughly how much you owe on your credit cards combined?",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller is complaining about repeated calls, and the script has a scripted rebuttal for exactly that objection. Nicole should have used it. Instead she used the 'I don't have that detail here' line, which is only for questions the script can't answer. She then jumped straight to the debt-amount question, skipping the STEP1 pitch and the STEP2 value proposition. Speaking was the right action, bu",
+      "better_reply": "I'm sorry if it's felt excessive, that's definitely not our intention. Sometimes the system tries a few times if we don't get through. Before I mark you as not interested, would you like to quickly hear if you qualify? It could save you tho"
+    },
+    {
+      "example_id": "S20#t3",
+      "query": "S20",
+      "turn": "3/11",
+      "caller_said": "a lot it is a lot",
+      "agent_action": "speak",
+      "spoken": "I\u2019m sorry if it\u2019s felt excessive \u2014 that\u2019s definitely not our intention. We\u2019re just reaching out to individuals who showed potential eligibility for debt relief, and sometimes the system tries multiple times if we don\u2019t get through. I can ma",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "concise_for_voice"
+      ],
+      "rationale": "The caller is objecting to repeated calls but has not asked to stop being called, so speaking with the 'calling me again and again' rebuttal is the right move. The earlier attempt at that rebuttal was cut off, so finishing it now is reasonable. However, the agent read the full rebuttal word for word, which runs past about three sentences and stacks several ideas. The script's voice rules require s",
+      "better_reply": "I'm sorry, I know it's been a lot. We only keep trying because you may be eligible for debt relief. I can mark you as not interested, but would you like to quickly hear if you qualify first?"
+    },
+    {
+      "example_id": "S20#t7",
+      "query": "S20",
+      "turn": "7/11",
+      "caller_said": "same story i get every call every call",
+      "agent_action": "speak",
+      "spoken": "Totally understand \u2014 just curious, is that because you've already resolved your debts or just not sure what this is about yet? A lot of people say the same thing until they hear how much they might be able to save \u2014 this only takes a couple",
+      "expected_action": "end_call",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "right_action",
+        "on_script",
+        "concise_for_voice"
+      ],
+      "rationale": "The caller is repeating the same 'you call me every time' objection. Its only rebuttal was already used at line 9, and the caller declined it ('no'). After the pending pitch was put again at line 15, the caller came back with the same complaint, so the script calls for accepting and closing with 'Thank you for your time, goodbye'. Instead the agent switched to the 'not interested' Rebuttal A, whic",
+      "better_reply": "Thank you for your time, goodbye"
+    },
+    {
+      "example_id": "S20#t8",
+      "query": "S20",
+      "turn": "8/11",
+      "caller_said": "same story over and over and over and again",
+      "agent_action": "speak",
+      "spoken": "hmm\u2026",
+      "expected_action": "end_call",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "right_action",
+        "on_script"
+      ],
+      "rationale": "The caller's 'over and over and over and' was finished by 'again', so the thought was complete and a backchannel was not called for. This is the same repeated-calls objection whose only rebuttal was already used at turn 9, and the caller refused it. The pending pitch was then put to them once at turn 15, and they ignored it and repeated the complaint. The script says to accept the objection and cl",
+      "better_reply": "Thank you for your time, goodbye"
+    },
+    {
+      "example_id": "S21#t4",
+      "query": "S21",
+      "turn": "4/11",
+      "caller_said": "you just told me what it was didn't you tell me the first thing how much i owe",
+      "agent_action": "speak",
+      "spoken": "I\u2019m sorry, I don\u2019t understand. Could you tell me your approximate total credit card debt?",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [
+        "injection_1"
+      ],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller is engaging but confused. They think Nicole already told them their balance, because the pitch mentioned 'over 7 thousand.' That is not an injection attempt, and the script reserves 'I'm sorry, I don't understand.' only for injection attempts. Using it here misapplies the ladder and wastes the single per-call injection line. Speaking is the right action, but she should explain that the ",
+      "better_reply": "Oh, good question \u2014 our info only shows you're somewhere over 7 thousand dollars, not the exact figure. I need a rough estimate from you to see if you qualify. Is it closer to 10 thousand, 20 thousand, or more?"
+    },
+    {
+      "example_id": "S21#t5",
+      "query": "S21",
+      "turn": "5/11",
+      "caller_said": "working",
+      "agent_action": "speak",
+      "spoken": "I\u2019m sorry, I don\u2019t understand. Could you please tell me roughly how much you currently owe on your credit cards combined? Like ten thousand, twenty thousand, or more?",
+      "expected_action": "end_call",
+      "ladder_expected": "none",
+      "ladder_used": [
+        "injection_1"
+      ],
+      "failed": [
+        "right_action",
+        "on_script"
+      ],
+      "rationale": "The debt-amount question has already been asked in its default wording (line 5) and re-asked twice in alternate wordings (lines 9 and 11). The caller's \"working\" is still no usable number, so the loop breaker calls for ending with \"Thank you for your time, goodbye\" rather than a fourth wording. The agent also misused \"I'm sorry, I don't understand.\", which the script reserves for injection attempt",
+      "better_reply": "Thank you for your time, goodbye"
+    },
+    {
+      "example_id": "S21#t6",
+      "query": "S21",
+      "turn": "6/11",
+      "caller_said": "hold on let me let you talk to alex",
+      "agent_action": "speak",
+      "spoken": "You're speaking with the right person \u2014 I just need a couple quick details first.",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller is handing the phone to Alex, the person who was dialed. They are not asking to be connected to an agent, so the script's 'connect me to a person' rebuttal is misapplied. Telling them 'you're speaking with the right person' makes no sense here and talks over the handoff. Speaking is the right action, but the line should be a brief acknowledgment while she waits, then the debt-amount que",
+      "better_reply": "Sure, no problem \u2014 I'll hold."
+    },
+    {
+      "example_id": "S21#t7",
+      "query": "S21",
+      "turn": "7/11",
+      "caller_said": "hello hello",
+      "agent_action": "speak",
+      "spoken": "are you there?",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller handed the phone to Alex, the intended person, and the new speaker said \"hello\" twice. The line is live, so this is not a no-response situation and \"are you there?\" does not fit. It also wastes the one-time line and does nothing to re-establish the right-party connection. Nicole should greet Alex and restart with the welcome pitch, since nothing has been confirmed by this person yet.",
+      "better_reply": "Hi, is this Alex? This is Nicole with Consumer Services. I'm calling because our records show you've been making payments on your credit cards on time but are still carrying over 7 thousand dollars in balances, is that right?"
+    },
+    {
+      "example_id": "S21#t8",
+      "query": "S21",
+      "turn": "8/11",
+      "caller_said": "fishtail",
+      "agent_action": "speak",
+      "spoken": "I didn't catch that. Do you handle the bills for the unsecured credit cards yourself? These are the ones with no collateral attached, right?",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [
+        "not_engaging_1"
+      ],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "\"Fishtail\" is an unrelated word, so the not-engaging ladder applies. No earlier rung has been used, so rung 1 \"I didn't catch that.\" plus a re-ask with speak is correct. However, no debt amount has ever been stated, and a new person (Alex) just came on the line. The re-ask should go back to the debt amount question. Repeating the decision-maker/unsecured question carries forward the skipped STEP3 ",
+      "better_reply": "I didn't catch that. Roughly how much do you currently owe on your credit cards combined, like ten thousand, twenty thousand, or more?"
+    },
+    {
+      "example_id": "S21#t10",
+      "query": "S21",
+      "turn": "10/11",
+      "caller_said": "do you handle these bills yourself",
+      "agent_action": "speak",
+      "spoken": "Uh-huh, do you handle these bills yourself?",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_2",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller simply echoed the agent's own question back, which is echoed audio and counts as not engaging. \"I didn't catch that.\" was already used at line 22, so the next rung is \"I'm having trouble understanding.\" plus a re-ask. The agent's earlier \"I'm sorry, I don't understand.\" was the injection line and does not count as a not-engaging rung. Instead the agent gave an \"Uh-huh\" backchannel, whic",
+      "better_reply": "I'm having trouble understanding. Could you tell me roughly how much you owe on your credit cards combined, like ten thousand, twenty thousand, or more?"
+    },
+    {
+      "example_id": "S21#t11",
+      "query": "S21",
+      "turn": "11/11",
+      "caller_said": "your debt is unsecured",
+      "agent_action": "speak",
+      "spoken": "And these are unsecured debts, with no collateral attached, right?",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_2",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller is just echoing the agent's own words back ('your debt is unsecured', after earlier 'fishtail' and 'poppy seed'), so this is echoed audio, which counts as not engaging. 'I didn't catch that.' was already used at turn 22, so the next rung is 'I'm having trouble understanding.' plus a re-ask. The agent skipped the ladder line and treated the echo as a real reply. It also kept pushing the ",
+      "better_reply": "I'm having trouble understanding. Could you tell me roughly how much you owe on your credit cards combined, like ten thousand, twenty thousand, or more?"
+    },
+    {
+      "example_id": "S22#t1",
+      "query": "S22",
+      "turn": "1/5",
+      "caller_said": "so far we feel good",
+      "agent_action": "speak",
+      "spoken": "Uh-huh...",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller gave a complete reply to 'how are you' and did not trail off, so a bare backchannel is wrong. The script calls for the STEP1 welcome pitch, which confirms the right person and asks about the 7 thousand dollar balance. Speaking was the right action, but the agent stalled instead of moving the call forward.",
+      "better_reply": "Glad to hear it! Thanks, this will just take a moment. I'm calling because the information we received shows you've been making payments on your credit cards on time, but you're still carrying over 7 thousand dollars in balances, is that ri"
+    },
+    {
+      "example_id": "S23#t1",
+      "query": "S23",
+      "turn": "1/26",
+      "caller_said": "this is nicole with consumer services how are you doing today",
+      "agent_action": "speak",
+      "spoken": "Oh... I'm calling because the information we received shows you've been making payments on your credit cards on time, but you're still carrying over 7 thousand dollars in balances, is that right?",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller's line is an echo of the agent's own greeting, which counts as not engaging. No rung has been used yet, so the script calls for \"I didn't catch that.\" followed by the pending question. The agent kept talking, which is the right action, but it went into the pitch as if the caller had engaged and skipped the required rung-1 line. That breaks the ladder tracking the script depends on.",
+      "better_reply": "I didn't catch that. I'm calling because the information we received shows you've been making payments on your credit cards on time, but you're still carrying over 7 thousand dollars in balances, is that right?"
+    },
+    {
+      "example_id": "S23#t2",
+      "query": "S23",
+      "turn": "2/26",
+      "caller_said": "oh hi i'm doing well thanks",
+      "agent_action": "speak",
+      "spoken": "Thanks\u2014this will just take a moment. I'm calling because the information we received shows you've been making payments on your credit cards on time, but you're still carrying over 7 thousand dollars in balances, is that right?",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "Both caller lines are word-for-word echoes of the agent's own previous lines, which is echoed audio and counts as not engaging. No not-engaging rung has been used yet, so the script calls for \"I didn't catch that.\" plus the pending question. The agent instead treated the echo as a real reply and went straight into the pitch without the required rung-1 line. Speaking was the right action and the pi",
+      "better_reply": "I didn't catch that. I'm calling because the information we received shows you've been making payments on your credit cards on time, but you're still carrying over 7 thousand dollars in balances, is that right?"
+    },
+    {
+      "example_id": "S23#t3",
+      "query": "S23",
+      "turn": "3/26",
+      "caller_said": "thanks this will just take a moment",
+      "agent_action": "speak",
+      "spoken": "Thanks\u2014this will just take a moment. I'm calling because the information we received shows you've been making payments on your credit cards on time, but you're still carrying over 7 thousand dollars in balances, is that right?",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller has repeated the agent's own words back on every turn, which is echoed audio and counts as not engaging. None of the not-engaging rungs has been used yet, so the script calls for rung 1: \"I didn't catch that.\" plus a re-ask of the current question. The agent kept speaking, which is the right action, but she skipped the required verbatim rung line and treated the echo as normal engagemen",
+      "better_reply": "I didn't catch that. I'm calling because the information we received shows you've been making payments on your credit cards on time, but you're still carrying over 7 thousand dollars in balances, is that right?"
+    },
+    {
+      "example_id": "S23#t4",
+      "query": "S23",
+      "turn": "4/26",
+      "caller_said": "i'm calling because the information we receive",
+      "agent_action": "speak",
+      "spoken": "I'm calling because the information we received shows you've been making payments on your credit cards on time, but you're still carrying over 7 thousand dollars in balances, is that right?",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "Every caller line is a word-for-word echo of the agent's previous line, which is echoed audio and counts as not engaging. No not-engaging rung has been used yet, so the script calls for \"I didn't catch that.\" followed by the pending STEP1 pitch question. Speaking was the right action and the pitch wording is fine, but the agent skipped the required ladder line and carried on as if the caller were ",
+      "better_reply": "I didn't catch that. I'm calling because the information we received shows you've been making payments on your credit cards on time, but you're still carrying over 7 thousand dollars in balances, is that right?"
+    },
+    {
+      "example_id": "S23#t5",
+      "query": "S23",
+      "turn": "5/26",
+      "caller_said": "shows you've been making payments on your credit",
+      "agent_action": "speak",
+      "spoken": "Uh-huh...",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "Every caller line is a word-for-word echo of the agent's own previous line. The script classes echoed audio as not engaging, and no rung has been used yet, so the first rung ('I didn't catch that.' plus re-asking the STEP1 pitch question) is called for. Answering with a backchannel treats the echo as a caller trailing off. That stalls the call and leaves the pending pitch question unasked.",
+      "better_reply": "I didn't catch that. I'm calling because the information we received shows you've been making payments on your credit cards on time, but you're still carrying over 7 thousand dollars in balances, is that right?"
+    },
+    {
+      "example_id": "S23#t6",
+      "query": "S23",
+      "turn": "6/26",
+      "caller_said": "cards on time but you're still carrying over",
+      "agent_action": "speak",
+      "spoken": "hmm\u2026",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "Every caller line so far is an echo of the agent's own audio, which the script classes as not engaging. No rung has been used yet, so the script calls for rung 1: \"I didn't catch that.\" plus a re-ask of the STEP1 pitch question. The agent instead answered with a backchannel \"hmm\u2026\", treating the echo as a caller trailing off. That does not move the ladder and leaves the pitch question unasked.",
+      "better_reply": "I didn't catch that. I'm calling because our information shows you've been making payments on your credit cards on time, but you're still carrying over 7 thousand dollars in balances, is that right?"
+    },
+    {
+      "example_id": "S23#t7",
+      "query": "S23",
+      "turn": "7/26",
+      "caller_said": "seven thousand dollars in balances is that right",
+      "agent_action": "speak",
+      "spoken": "Okay, thank you. That's actually good because it means you may qualify for a program that can cut your total debt by up to 40% and eliminate interest entirely. Your monthly payments could be reduced significantly, giving you more breathing ",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "Every caller line repeats the agent's previous words, so this is echoed audio. That counts as not engaging, not a confirmation. No ladder line has been used yet, so the script calls for rung 1: \"I didn't catch that.\" plus re-asking the STEP1 balance question. Instead the agent treated the echo as a yes and moved on to the value proposition, advancing the call without any real engagement.",
+      "better_reply": "I didn't catch that. Are you still carrying over 7 thousand dollars in credit card balances?"
+    },
+    {
+      "example_id": "S23#t8",
+      "query": "S23",
+      "turn": "8/26",
+      "caller_said": "yes thank you for confirming that that's actually",
+      "agent_action": "speak",
+      "spoken": "Okay, thank you. That means you may qualify for a program that can cut your total debt by up to 40% and eliminate interest entirely. Your monthly payments could be reduced significantly, giving you more breathing room in your budget.",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "Every caller line is an echo of the agent's own speech, including the apparent 'yes' to the pitch. That is echoed audio, a not-engaging behavior, and the caller never actually confirmed the debt. No ladder line has been used yet, so the script calls for rung 1: \"I didn't catch that.\" plus a re-ask of the STEP1 question. Instead the agent moved on to the value proposition as if the debt had been co",
+      "better_reply": "I didn't catch that. Are you currently carrying over 7 thousand dollars in credit card balances?"
+    },
+    {
+      "example_id": "S23#t9",
+      "query": "S23",
+      "turn": "9/26",
+      "caller_said": "good because it means you may qualify",
+      "agent_action": "speak",
+      "spoken": "Okay, thank you. That's actually good because it means you may qualify for a program that can cut your total debt by up to 40% and eliminate interest entirely. Your monthly payments could be reduced significantly, giving you more breathing ",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "Every caller line is an echo of the agent's own audio. That is echoed audio, which the script treats as not engaging, and nothing the caller said is a real answer. No not-engaging rung has been used yet, so the script calls for \"I didn't catch that.\" plus a re-ask of the still-unconfirmed pitch question. Instead the agent moved on with the value proposition as if the pitch had been confirmed, and ",
+      "better_reply": "I didn't catch that. Are you still carrying over 7 thousand dollars in credit card balances?"
+    },
+    {
+      "example_id": "S23#t10",
+      "query": "S23",
+      "turn": "10/26",
+      "caller_said": "for a program that can cut your total debt by",
+      "agent_action": "speak",
+      "spoken": "up to 40% and eliminate interest entirely. Your monthly payments could be reduced significantly, giving you more breathing room in your budget. To help me see what that might look like, could you tell me about how much you owe on your credi",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script",
+        "concise_for_voice"
+      ],
+      "rationale": "Every caller line repeats the agent's own words back, so this is echoed audio. That counts as not engaging, and since no rung has been used yet, the script calls for rung 1: \"I didn't catch that.\" plus a re-ask of the pending question. The pending question is the STEP1 pitch, because the caller never actually confirmed it. Instead, the agent treated the echo as engagement, finished the value propo",
+      "better_reply": "I didn't catch that. Are you still carrying over 7 thousand dollars in credit card balances?"
+    },
+    {
+      "example_id": "S23#t11",
+      "query": "S23",
+      "turn": "11/26",
+      "caller_said": "up to forty percent and eliminate interest",
+      "agent_action": "speak",
+      "spoken": "Your monthly payments could be reduced significantly, giving you more breathing room in your budget.",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "Every caller line is an echo of the agent's own speech, which counts as not engaging. The caller never actually confirmed the welcome pitch, and the agent wrongly treated an echo as a 'yes'. The agent kept reciting the value proposition instead of moving to the first unused not-engaging rung. Script requires \"I didn't catch that.\" plus a re-ask of the still-unanswered pitch question.",
+      "better_reply": "I didn't catch that. Are you still carrying over 7 thousand dollars in credit card balances?"
+    },
+    {
+      "example_id": "S23#t12",
+      "query": "S23",
+      "turn": "12/26",
+      "caller_said": "monthly payments could be reduced significantly",
+      "agent_action": "speak",
+      "spoken": "Um-hmm, and roughly how much do you currently owe on your credit cards combined?",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "Every caller line is an echo of the agent's own audio, which the script treats as not engaging. Neither ladder line has been used yet, so rung 1 applies: \"I didn't catch that.\" plus a re-ask. The caller never actually answered the pitch question, so the honest re-ask is that question. Instead the agent backchanneled and moved on to the debt-amount question as if the echo were a real answer. Speaki",
+      "better_reply": "I didn't catch that. Are you still carrying over 7 thousand dollars in credit card balances?"
+    },
+    {
+      "example_id": "S23#t13",
+      "query": "S23",
+      "turn": "13/26",
+      "caller_said": "giving you more breathing room in your budget",
+      "agent_action": "speak",
+      "spoken": "To help us determine how much you might save, could you tell me how much you currently owe on your credit cards combined, just a ballpark estimate \u2014 like ten thousand, twenty thousand, thirty thousand, or more?",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "Every caller line is an echo of the agent's own audio, which counts as not engaging. No real answer has come in, and the earlier 'yes' was the agent's own words echoed back. The first not-engaging rung, 'I didn't catch that.', has not been used, so it is due now, followed by a re-ask of the unconfirmed opening question. Instead the agent moved on to the debt-amount question as if the pitch had bee",
+      "better_reply": "I didn't catch that. Are you still carrying over 7 thousand dollars in credit card balances?"
+    },
+    {
+      "example_id": "S23#t14",
+      "query": "S23",
+      "turn": "14/26",
+      "caller_said": "to help us determine how much you might",
+      "agent_action": "speak",
+      "spoken": "To help us determine how much you might save, could you tell me how much you currently owe on your credit cards combined, just a ballpark estimate \u2014 like ten thousand, twenty thousand, thirty thousand, or more?",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "Every caller line is the agent's own speech echoed back, which the script counts as not engaging. The agent has not used any not-engaging line yet, so this turn calls for rung 1: \"I didn't catch that.\" followed by the pending debt-amount question. The agent re-asked the question but left out the required verbatim line, so the ladder does not advance. Repeating the question alone could keep the ech",
+      "better_reply": "I didn't catch that. Could you tell me roughly how much you owe on your credit cards combined, like ten thousand, twenty thousand, thirty thousand, or more?"
+    },
+    {
+      "example_id": "S23#t16",
+      "query": "S23",
+      "turn": "16/26",
+      "caller_said": "owe on your credit card combined just",
+      "agent_action": "speak",
+      "spoken": "hmm\u2026",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller has repeated every agent line back word for word for the whole call, so this is echoed audio, which counts as not engaging. 'Just' only echoes the agent's own unfinished word; it is not a caller trailing off. No ladder line has been used yet, so the script calls for rung 1: 'I didn't catch that.' plus the debt-amount question again. A 'hmm\u2026' backchannel is the wrong move and leaves the ",
+      "better_reply": "I didn't catch that. Could you tell me roughly how much you owe on your credit cards combined, like ten thousand, twenty thousand, thirty thousand, or more?"
+    },
+    {
+      "example_id": "S23#t17",
+      "query": "S23",
+      "turn": "17/26",
+      "caller_said": "a ballpark estimate like ten",
+      "agent_action": "speak",
+      "spoken": "hmm\u2026",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "Every caller line is an echo of the agent's own speech, including 'like ten'. The script counts echoed audio as not engaging. The caller has given no answer of their own, and 'I didn't catch that.' has not been used yet, so rung 1 plus a re-ask of the debt question is called for. Saying 'hmm\u2026' treats the echo as a real caller trailing off, which keeps the loop going instead of moving down the ladd",
+      "better_reply": "I didn't catch that. Could you tell me roughly how much you owe on your credit cards combined, like ten thousand, twenty thousand, thirty thousand, or more?"
+    },
+    {
+      "example_id": "S23#t18",
+      "query": "S23",
+      "turn": "18/26",
+      "caller_said": "thousand twenty thousand thirty thousand",
+      "agent_action": "speak",
+      "spoken": "Hmm\u2026",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "Every caller line in this call is an echo of the agent's own audio, so the caller is not engaging. Echoed audio is a not-engaging trigger, and no not-engaging rung has been used yet, so the script calls for rung 1: \"I didn't catch that.\" plus a re-ask of the debt amount question. The agent instead gave a backchannel (\"Hmm\u2026\"), which treats the echo as a caller trailing off. That does not advance th",
+      "better_reply": "I didn't catch that. Roughly how much do you owe on your credit cards combined, like ten thousand, twenty thousand, thirty thousand, or more?"
+    },
+    {
+      "example_id": "S23#t19",
+      "query": "S23",
+      "turn": "19/26",
+      "caller_said": "or more",
+      "agent_action": "speak",
+      "spoken": "Got it. Just to confirm \u2014 is your total credit card debt more than 7 thousand dollars?",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "Every caller line is a word-for-word echo of the agent's own speech. That is echoed audio, which counts as not engaging, so the first rung applies: \"I didn't catch that.\" plus a re-ask of the debt question. The agent instead treated the echoed brackets as an unclear answer and asked the over-7-thousand confirmation. That question can't give a real figure from the caller, and a likely echoed 'yes' ",
+      "better_reply": "I didn't catch that. Roughly how much do you owe on your credit cards combined, like ten thousand, twenty thousand, or more?"
+    },
+    {
+      "example_id": "S23#t20",
+      "query": "S23",
+      "turn": "20/26",
+      "caller_said": "got it thanks so a thirty thousand",
+      "agent_action": "speak",
+      "spoken": "Hmm\u2026",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "Every caller line is an echo of the agent's own speech, so the caller is not engaging. No real debt amount, confirmation or answer has come from the caller. The agent has not said any not-engaging line yet, so the script calls for rung 1: \"I didn't catch that.\" plus a re-ask of the debt-amount question. A \"Hmm\u2026\" backchannel wrongly treats the echoed fragment as a caller trailing off, which leaves ",
+      "better_reply": "I didn't catch that. Could you tell me roughly how much you owe on your credit cards combined, like ten, twenty, or thirty thousand?"
+    },
+    {
+      "example_id": "S23#t21",
+      "query": "S23",
+      "turn": "21/26",
+      "caller_said": "dollars balance you might only",
+      "agent_action": "speak",
+      "spoken": "pay back around eighteen thousand dollars. I'm sure you're the one who handles the bills for these unsecured credit cards. These are the ones with no collateral attached, right?",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script",
+        "no_hallucination"
+      ],
+      "rationale": "Every caller line is an echo of the agent's own speech, so this is echoed audio and counts as not engaging. No 'I didn't catch that.' has been said yet, so rung 1 applies: say it and re-ask the debt amount. The agent instead finished a savings line built on a thirty thousand dollar figure the caller never gave. The only 'thirty thousand' on the call is the caller echoing the agent's own example br",
+      "better_reply": "I didn't catch that. Could you tell me roughly how much you owe on your credit cards combined, like ten thousand, twenty thousand, thirty thousand, or more?"
+    },
+    {
+      "example_id": "S23#t22",
+      "query": "S23",
+      "turn": "22/26",
+      "caller_said": "need to pay back around eighteen thousand dollars",
+      "agent_action": "speak",
+      "spoken": "I'm sure you're the one who handles the bills for these unsecured credit cards. These are the ones with no collateral attached, right?",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller has only echoed the agent's own speech back word for word and has never given a debt amount. Echoed audio is not engaging, and no rung has been used yet, so the script calls for rung 1: \"I didn't catch that.\" plus a re-ask of the debt question. Instead the agent built on its earlier invented thirty-thousand figure and jumped to STEP5 with no customer-stated amount, which skips a require",
+      "better_reply": "I didn't catch that. Could you tell me roughly how much you owe on your credit cards combined, like ten thousand, twenty thousand, thirty thousand, or more?"
+    },
+    {
+      "example_id": "S23#t23",
+      "query": "S23",
+      "turn": "23/26",
+      "caller_said": "i'm sure you're the one who handles the bills",
+      "agent_action": "speak",
+      "spoken": "I'm sure you're the one who handles the bills for these unsecured credit cards. These are the ones with no collateral attached, right?",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "From the very first line, every caller utterance has been a word-for-word echo of the agent's own speech, which the script treats as not engaging. No rung has been used yet, so the first rung, 'I didn't catch that.' plus a re-ask, is called for. The caller never stated a debt amount (the 'thirty thousand' came from echoing the agent's examples), so the re-ask should be the debt amount question. In",
+      "better_reply": "I didn't catch that. Could you tell me roughly how much you owe on your credit cards combined, like ten, twenty, or thirty thousand?"
+    },
+    {
+      "example_id": "S23#t24",
+      "query": "S23",
+      "turn": "24/26",
+      "caller_said": "for these unsecured credit cards these are",
+      "agent_action": "speak",
+      "spoken": "And you handle these bills yourself?",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "Every caller line is an echo of the agent's own speech, which is echoed audio and counts as not engaging. The agent has not yet used \"I didn't catch that.\", so rung 1 applies, and the re-ask should be the debt amount because the caller never stated a figure. The 'thirty thousand' in the agent's earlier lines was never said by the caller. Asking the decision-maker question ignores the ladder and sk",
+      "better_reply": "I didn't catch that. Could you tell me roughly how much you owe on your credit cards combined, like ten thousand, twenty thousand, thirty thousand, or more?"
+    },
+    {
+      "example_id": "S23#t25",
+      "query": "S23",
+      "turn": "25/26",
+      "caller_said": "the ones with no collateral attached right",
+      "agent_action": "transfer_call",
+      "spoken": "Great, thank you for confirming that.",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "right_action",
+        "on_script",
+        "no_hallucination"
+      ],
+      "rationale": "Every caller line is an echo of the agent's own speech, so this is echoed audio and counts as not engaging. The caller never stated a debt amount: 'thirty thousand' was only the agent's own bracket list echoed back. The caller also never confirmed unsecured or decision maker, so the transfer gate is not met. The agent invented a $30,000 debt and fake confirmations in the tool call, which is the wo",
+      "better_reply": "I didn't catch that. Could you tell me roughly how much you owe on your credit cards combined, like ten, twenty, thirty thousand, or more?"
+    },
+    {
+      "example_id": "S23#t26",
+      "query": "S23",
+      "turn": "26/26",
+      "caller_said": "can you handle these bills yourself",
+      "agent_action": "speak",
+      "spoken": "Uh-huh...",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "Every caller line is an echo of the agent's own speech, so this is echoed audio and falls under the not-engaging ladder. No rung has been used yet, so the script calls for \"I didn't catch that.\" plus a re-ask. A backchannel is only for a caller who trails off, which this caller did not. The re-ask should be the debt amount question, because the caller never stated a figure; the earlier 'thirty tho",
+      "better_reply": "I didn't catch that. Could you tell me roughly how much you owe on your credit cards combined, like ten thousand, twenty thousand, thirty thousand, or more?"
+    },
+    {
+      "example_id": "S24#t1",
+      "query": "S24",
+      "turn": "1/5",
+      "caller_said": "are you ai",
+      "agent_action": "speak",
+      "spoken": "I am a virtual assistant working for Consumer Services",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "Speaking is the right action, and the agent used the required AI-disclosure line. The script says to answer an on-topic question and then return to the next unanswered step. Here that is the STEP1 welcome pitch, which has not been delivered yet. Stopping after the disclosure stalls the call and leaves no question for the caller to answer.",
+      "better_reply": "I am a virtual assistant working for Consumer Services. I'm calling because the information we received shows you've been making payments on your credit cards on time, but you're still carrying over 7 thousand dollars in balances, is that r"
+    },
+    {
+      "example_id": "S24#t2",
+      "query": "S24",
+      "turn": "2/5",
+      "caller_said": "what are you offering",
+      "agent_action": "speak",
+      "spoken": "Sure \u2014 we help people who may be dealing with high-interest unsecured debt like credit cards or personal loans, and see if they may qualify for a program that could lower what they owe.",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller asked an on-topic program question, so speaking is the right action, and the explanation matches the script's 'What's this about?' content without inventing anything. The script then requires returning to the next unanswered step. The agent's STEP1 pitch was cut off and never confirmed, yet she asked no question. That leaves the call without forward motion and skips the pending STEP1 co",
+      "better_reply": "Sure \u2014 we help people with high-interest credit card debt see if they qualify for a program that could cut what they owe by up to 40%. Our info shows you've been paying your cards on time but you're still carrying over 7 thousand dollars in"
+    },
+    {
+      "example_id": "S25#t1",
+      "query": "S25",
+      "turn": "1/4",
+      "caller_said": "oh",
+      "agent_action": "speak",
+      "spoken": "Oh...",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller's \"oh\" is a brief reaction to the greeting, not a sentence trailing off on a conjunction or filler. The script calls for moving straight into the STEP1 welcome pitch. Echoing \"Oh...\" back stalls the call and does nothing to confirm the right person. Speaking was the right action, but the content should have been the pitch, not a lone backchannel.",
+      "better_reply": "Thanks, this will just take a moment. I'm calling because the information we received shows you've been making payments on your credit cards on time, but you're still carrying over 7 thousand dollars in balances, is that right?"
+    },
+    {
+      "example_id": "S25#t3",
+      "query": "S25",
+      "turn": "3/4",
+      "caller_said": "seventy thousand",
+      "agent_action": "speak",
+      "spoken": "Okay, so with seventy thousand dollars in debt, you could potentially pay back only around forty two thousand dollars. Let me verify one more thing...",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller volunteered 'seventy thousand', which is a stated amount inside the $7K\u2013$150K range. Skipping the value proposition and debt question to give the personalized savings hook is correct, and 42K is consistent with the script's 40% reduction examples. However, the turn ends on 'Let me verify one more thing...' without asking the combined decision-maker and unsecured question. That leaves de",
+      "better_reply": "Okay, so with seventy thousand dollars in debt, you could potentially pay back only around forty-two thousand dollars. And I'm sure you're the one who handles the bills for these unsecured credit cards, the ones with no collateral attached,"
+    },
+    {
+      "example_id": "S25#t4",
+      "query": "S25",
+      "turn": "4/4",
+      "caller_said": "correct",
+      "agent_action": "speak",
+      "spoken": "Great, thank you for confirming that.",
+      "expected_action": "transfer_call",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "right_action",
+        "on_script"
+      ],
+      "rationale": "All three gate items came from the caller's own words: seventy thousand dollars, which is in range, and \"correct\" to the combined unsecured and decision-maker question. The script calls for the verbatim transfer line followed by transfer_call. The agent said the transfer line but chose speak with no tool call, so the qualified caller is left hanging and never handed off. This is the wrong action, ",
+      "better_reply": "Great, thank you for confirming that. [Execute transfer_call]"
+    },
+    {
+      "example_id": "S28#t1",
+      "query": "S28",
+      "turn": "1/3",
+      "caller_said": "okay",
+      "agent_action": "speak",
+      "spoken": "Okay, thank you. That's actually good because it means you may qualify for a program that can cut your total debt by up to 40% and eliminate interest entirely. Your monthly payments could be reduced significantly, giving you more breathing ",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller only answered the 'how are you' greeting, so the STEP1 welcome pitch should come next. The agent skipped it and jumped to the STEP2 value proposition. Its 'That's actually good because...' therefore responds to a statement the caller never made. It also asks no question, so the call doesn't move toward qualification.",
+      "better_reply": "Thanks, this will just take a moment. I'm calling because the information we received shows you've been making payments on your credit cards on time, but you're still carrying over 7 thousand dollars in balances, is that right?"
+    },
+    {
+      "example_id": "S28#t2",
+      "query": "S28",
+      "turn": "2/3",
+      "caller_said": "no that's my son's",
+      "agent_action": "speak",
+      "spoken": "Just to confirm, do you have any personal loans or other debt, or no debt at all?",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller said 'no' and then 'that's my son's,' which tells us the debt belongs to someone else. That is a not-the-right-party objection, not a bare 'no.' The script calls for the wrong-number rebuttal offering free advice if the caller has credit card debt of their own. Instead, the agent asked a reworded version of the bare-no clarifier and dropped its wrong-number part. Its 'any personal loans",
+      "better_reply": "Oh, I see. Well, we provide free advice on lowering credit card interest rates and balances, so if you owe money on credit cards yourself, I'm happy to help."
+    },
+    {
+      "example_id": "S31#t3",
+      "query": "S31",
+      "turn": "3/4",
+      "caller_said": "one number",
+      "agent_action": "speak",
+      "spoken": "Just to confirm, do you have any personal loans or other debt, or no debt at all?",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The agent had just asked whether Alex meant a wrong number, so \"one number\" is almost certainly speech-to-text for \"wrong number.\" The script calls for the wrong-number rebuttal here. Instead the agent asked again whether he had personal loans or no debt, which ignores his answer. If his reply was truly unclear, the script's alternate ask is \"No debt at all, or debt under 7K?\", and the agent used ",
+      "better_reply": "We provide free advice on lowering credit card interest rates and balances. If you owe money on credit cards, I'm happy to help."
+    },
+    {
+      "example_id": "S32#t1",
+      "query": "S32",
+      "turn": "1/3",
+      "caller_said": "okay",
+      "agent_action": "speak",
+      "spoken": "Okay, thank you. That's actually good because it means you may qualify for a program that can cut your total debt by up to 40% and eliminate interest entirely. Your monthly payments could be reduced significantly, giving you more breathing ",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller only answered \"how are you doing\" with \"okay\". The script calls for the STEP1 welcome pitch next, which confirms the right person and the over-7-thousand balance. Instead the agent skipped STEP1 and went straight to the STEP2 value proposition. Its \"That's actually good because...\" makes no sense as a reply to \"okay\", and the turn ends without asking anything, so the call loses momentum",
+      "better_reply": "Thanks, this will just take a moment. I'm calling because the information we received shows you've been making payments on your credit cards on time, but you're still carrying over 7 thousand dollars in balances, is that right?"
+    },
+    {
+      "example_id": "S34#t1",
+      "query": "S34",
+      "turn": "1/7",
+      "caller_said": "oh you know it's been a day",
+      "agent_action": "speak",
+      "spoken": "Uh-huh...",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "Speaking was the right action, but a bare backchannel was the wrong content. The caller's \"oh you know... it's been a day\" is a complete answer to \"How are you doing today?\", not a trailing-off utterance. The script calls for a brief empathetic acknowledgment followed by the STEP1 welcome pitch to confirm the right person. Replying only \"Uh-huh...\" stalls the call and skips the required step.",
+      "better_reply": "Oh, I hear you, I'll keep this quick. I'm calling because the information we received shows you've been making payments on your credit cards on time, but you're still carrying over 7 thousand dollars in balances, is that right?"
+    },
+    {
+      "example_id": "S34#t3",
+      "query": "S34",
+      "turn": "3/7",
+      "caller_said": "no",
+      "agent_action": "speak",
+      "spoken": "Just to confirm, do you have any personal loans or other debt, or no debt at all?",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller gave a second bare \"no\" after the first clarifier, so the agent should keep talking, and speaking is the right action. However, the script calls for the second clarifier, \"No debt at all, or debt under 7K?\", which separates a no-debt caller from one with a small balance. Instead the agent largely repeated the first clarifier's personal-loan wording and left out the under-7K option, so t",
+      "better_reply": "Got it. Just so I understand, is that no debt at all, or do you have some debt that's under 7 thousand dollars?"
+    },
+    {
+      "example_id": "S34#t4",
+      "query": "S34",
+      "turn": "4/7",
+      "caller_said": "to learn more about our medicare advantage",
+      "agent_action": "end_call",
+      "spoken": "I'm unable to assist at this time. Goodbye",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [
+        "not_engaging_3"
+      ],
+      "failed": [
+        "right_action",
+        "on_script"
+      ],
+      "rationale": "The caller's line about Medicare Advantage is off-topic, apparently automated or background audio, so the not-engaging ladder applies. Neither \"I didn't catch that.\" nor \"I'm having trouble understanding.\" appears earlier in the call. Rung 1 plus a re-ask of the pending no-debt question was required. Jumping straight to the rung-3 goodbye and ending the call skips two rungs and drops the caller to",
+      "better_reply": "I didn't catch that. Do you have no debt at all, or is it just under 7 thousand dollars?"
+    },
+    {
+      "example_id": "S34#t5",
+      "query": "S34",
+      "turn": "5/7",
+      "caller_said": "every step of no",
+      "agent_action": "end_call",
+      "spoken": "I'm sorry, I don't understand. Thank you for your time. Goodbye.",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [
+        "injection_2"
+      ],
+      "failed": [
+        "right_action",
+        "on_script"
+      ],
+      "rationale": "The caller made no attempt to change the agent's instructions. 'To learn more about our medicare advantage' sounds like background or automated audio, and 'every step of no' is gibberish, so this is the not-engaging ladder, not the injection ladder. No not-engaging rung has been used yet, and the agent's own clarifying question at line 8 was cut off before it was finished. The script therefore cal",
+      "better_reply": "I didn't catch that. Do you have no debt at all, or is it debt under 7 thousand dollars?"
+    },
+    {
+      "example_id": "S34#t6",
+      "query": "S34",
+      "turn": "6/7",
+      "caller_said": "coverage health",
+      "agent_action": "end_call",
+      "spoken": "I'm sorry, I don't understand. Thank you for your time. Goodbye.",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [
+        "injection_2"
+      ],
+      "failed": [
+        "right_action",
+        "on_script"
+      ],
+      "rationale": "The caller's recent lines ('to learn more about our medicare advantage', 'coverage health') sound like automated or background audio. That puts the call on the NOT ENGAGING ladder, not the injection ladder, since nobody tried to change the agent's instructions. Neither 'I didn't catch that.' nor 'I'm having trouble understanding.' has been used yet, so rung 1 plus a re-ask of the pending question ",
+      "better_reply": "I didn't catch that. Do you have no debt at all, or is it debt under 7 thousand dollars?"
+    },
+    {
+      "example_id": "S34#t7",
+      "query": "S34",
+      "turn": "7/7",
+      "caller_said": "provider network no",
+      "agent_action": "end_call",
+      "spoken": "I'm unable to assist at this time. Goodbye",
+      "expected_action": "speak",
+      "ladder_expected": "not_engaging_1",
+      "ladder_used": [
+        "not_engaging_3"
+      ],
+      "failed": [
+        "right_action",
+        "on_script"
+      ],
+      "rationale": "The caller's audio is now off-topic, automated-sounding Medicare content, so the not-engaging ladder applies. The agent's earlier 'I'm sorry, I don't understand' lines belong to the injection ladder (and were misused), so they do not count as not-engaging rungs. Neither 'I didn't catch that.' nor 'I'm having trouble understanding.' has been said, so rung 3's 'I'm unable to assist at this time. Goo",
+      "better_reply": "I didn't catch that. Do you have no debt at all, or is it just under 7 thousand dollars?"
+    },
+    {
+      "example_id": "S35#t1",
+      "query": "S35",
+      "turn": "1/4",
+      "caller_said": "alright",
+      "agent_action": "speak",
+      "spoken": "Okay, thank you. That's actually good because it means you may qualify for a program that can cut your total debt by up to 40% and eliminate interest entirely. Your monthly payments could be reduced significantly, giving you more breathing ",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller only answered the greeting with \"alright,\" so the script calls for the STEP1 welcome pitch. That pitch confirms the right person and the over-7-thousand balance. Instead the agent skipped STEP1 and jumped to the STEP2 value proposition. \"That's actually good because it means you may qualify\" makes no sense as a reply to \"alright,\" and the turn ends without a question to move the call fo",
+      "better_reply": "Glad to hear it. Thanks, this will just take a moment. I'm calling because the information we received shows you've been making payments on your credit cards on time, but you're still carrying over 7 thousand dollars in balances, is that ri"
+    },
+    {
+      "example_id": "S35#t2",
+      "query": "S35",
+      "turn": "2/4",
+      "caller_said": "**** off",
+      "agent_action": "speak",
+      "spoken": "I didn't catch that. Could you please tell me if you\u2019re the one who handles these bills?",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [
+        "not_engaging_1"
+      ],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller's \"**** off\" is a clear rejection, so it should be handled as a \"not interested\" objection with Rebuttal A. It is not a not-engaging strike, because the caller heard and answered. Using \"I didn't catch that.\" is also wrong because the agent clearly did catch it. The agent then jumped to the decision-maker question, skipping the pending STEP1 confirmation, the value proposition and the d",
+      "better_reply": "Totally understand \u2014 just curious, is that because you've already resolved your debts, or you're just not sure what this is about yet? It only takes a couple minutes, and if it's not helpful, no pressure."
+    },
+    {
+      "example_id": "S35#t3",
+      "query": "S35",
+      "turn": "3/4",
+      "caller_said": "**** off **** off",
+      "agent_action": "end_call",
+      "spoken": "I'm unable to assist at this time. Goodbye",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [
+        "not_engaging_3"
+      ],
+      "failed": [
+        "right_action",
+        "on_script"
+      ],
+      "rationale": "The caller's repeated profanity is a clear brush-off, so it should be handled like a 'not interested' objection. Rebuttal A has not been used yet, so the agent should deliver it. Even if this were treated as not engaging, neither 'I didn't catch that.' nor 'I'm having trouble understanding.' has been said, so jumping to the rung-3 line 'I'm unable to assist at this time. Goodbye' skips the ladder.",
+      "better_reply": "Totally understand. Just curious, is that because you've already resolved your debts, or you're just not sure what this is about yet? It only takes a couple minutes, and if it's not helpful, no pressure."
+    },
+    {
+      "example_id": "S36#t1",
+      "query": "S36",
+      "turn": "1/5",
+      "caller_said": "i'm good how consumer services what do you what do what is it exactly that you need",
+      "agent_action": "speak",
+      "spoken": "Sure \u2014 I\u2019m just checking whether you may qualify for help with unsecured debts like credit cards or personal loans. To start, about how much do you owe on your credit cards combined?",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller asked what the call is about, so the agent should speak and briefly explain. The script then calls for the STEP1 welcome pitch, which confirms the right person, and both STEP1 and STEP2 are marked must-complete. Instead, the agent used the generic purpose line and jumped straight to the STEP3 debt-amount question, skipping the pitch confirmation and the value proposition. The reply is c",
+      "better_reply": "Sure, I'm calling because the information we received shows you've been making payments on your credit cards on time, but you're still carrying over 7 thousand dollars in balances. Is that right?"
+    },
+    {
+      "example_id": "S36#t3",
+      "query": "S36",
+      "turn": "3/5",
+      "caller_said": "two two maybe three thousand",
+      "agent_action": "speak",
+      "spoken": "Got it. I need a rough estimate to see if you qualify \u2014 is it closer to 10 thousand, 20 thousand, or more?",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller gave a figure: 'two two maybe three thousand.' Taken literally that is under 7 thousand dollars, which routes to the GATE 2 personal loans question. Speech-to-text may also have garbled it from 'twenty-two, twenty-three thousand,' so the scale is unclear, and the script's line for that is the 'more than 7 thousand dollars?' confirmation. The agent instead used the vague-response bracket",
+      "better_reply": "Got it. Just to confirm \u2014 Is your total credit card debt more than 7 thousand dollars?"
+    },
+    {
+      "example_id": "S36#t4",
+      "query": "S36",
+      "turn": "4/5",
+      "caller_said": "maybe less",
+      "agent_action": "speak",
+      "spoken": "Got it. Just to confirm \u2014 is your total credit card debt more than 7 thousand dollars?",
+      "expected_action": "speak",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "on_script"
+      ],
+      "rationale": "The caller gave a clear figure with its scale stated: about two to three thousand, 'maybe less.' That is under 7 thousand dollars, so STEP4 GATE 2 applies and the agent should ask about personal loans. The 'is your total credit card debt more than 7 thousand dollars?' check is only for amounts that are unclear or of unknown scale. Here it ignores the number the caller already gave and invites a mi",
+      "better_reply": "Got it, thanks. Do you have any personal loans as well?"
+    },
+    {
+      "example_id": "S36#t5",
+      "query": "S36",
+      "turn": "5/5",
+      "caller_said": "i've already done this with my credit cards i'm not gonna do my banks i'm not working through anybody else so i appreciate your call have a good day bye bye",
+      "agent_action": "speak",
+      "spoken": "That's great \u2014 glad you're already taking action. Can I ask how long you've been working with them? Sometimes people compare what they're enrolled in with our program and find we can actually reduce the monthly payments or shorten the term.",
+      "expected_action": "end_call",
+      "ladder_expected": "none",
+      "ladder_used": [],
+      "failed": [
+        "right_action",
+        "on_script"
+      ],
+      "rationale": "The caller gave a credit card balance of about two to three thousand, maybe less, which is under the 7 thousand dollar minimum. They then said they've already dealt with their cards, won't do it through their banks or anyone else, and said 'bye bye.' That effectively closes the personal-loan branch, so the script's under-limit ending applies here. Instead, the agent read the 'already in a program'",
+      "better_reply": "Unfortunately, you would need at least 7 thousand dollars in combined debt to qualify for our program. Thank you for your time, goodbye"
+    }
+  ],
+  "trace_ids": [],
+  "mlflow": {
+    "run_id": "",
+    "experiment_id": "3520618322063878"
+  }
+}
