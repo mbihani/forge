@@ -91,7 +91,12 @@ PER_JUDGE_NAMES = {
 PROFILE_REASONING_PREFIXES = ("databricks-gemini-",)
 REASONING_MODES = ("none", "omit", "profile")
 TOKEN_PARAMS = ("max_completion_tokens", "max_tokens")
-DEFAULT_LEVERS = {"route": "gateway", "temperature": 0.3, "max_completion_tokens": 1024}
+DEFAULT_LEVERS = {
+    "route": "gateway",
+    "temperature": 0.3,
+    "max_completion_tokens": 1024,
+    "tool_choice": "auto",
+}
 APP_TIMEOUT_S = 120.0
 APP_ATTEMPTS = 3
 
@@ -151,6 +156,10 @@ def request_extra(
     }
     if cap_field == "max_tokens":
         extra.update(max_completion_tokens=None, max_tokens=cap)
+    tool_choice = levers.get("tool_choice", DEFAULT_LEVERS["tool_choice"])
+    if tool_choice != DEFAULT_LEVERS["tool_choice"]:
+        # "required" forces a tool call on EVERY turn (the only tools are transfer/end).
+        extra["tool_choice"] = tool_choice
     if reasoning == "none":
         extra["reasoning_effort"] = "none"
     elif reasoning == "omit":
@@ -314,7 +323,7 @@ def evaluate_interstell(
     if reasoning is None:
         rejection = f"{model} rejects reasoning_effort=none and cannot run without reasoning"
     else:
-        for key in ("route", "temperature", "max_completion_tokens"):
+        for key in ("route", "temperature", "max_completion_tokens", "tool_choice"):
             why = setting_rejection(probe, model, **{key: levers[key]})
             if why:
                 rejection = f"{model} rejects {key}={levers[key]!r}: {why}"

@@ -127,3 +127,8 @@ def test_scaffold_split_round_trips_through_composer(tmp_path) -> None:
     composed = compose_prompt(tmp_path, audience="runtime").text
     assert same_up_to_blank_lines(composed, prompt)
     assert "### sub rule" in composed
+
+
+def test_tool_choice_lever_only_sent_when_not_default() -> None:
+    assert "tool_choice" not in request_extra({"tool_choice": "auto"}, "none")
+    assert request_extra({"tool_choice": "required"}, "none")["tool_choice"] == "required"

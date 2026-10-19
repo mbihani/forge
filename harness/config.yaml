@@ -167,6 +167,12 @@ levers:
     allowed: [0.0, 0.3, 0.7]
     default: 0.3
     description: sampling temperature (production 0.3)
+  tool_choice:
+    allowed: [auto, required]
+    default: auto
+    description: >-
+      auto = production. required forces a tool call on every turn; the only tools are
+      transfer_call and end_call, so a speak turn becomes an end/transfer.
   max_completion_tokens:
     allowed: [256, 512, 1024]
     default: 1024
