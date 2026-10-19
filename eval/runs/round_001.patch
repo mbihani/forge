@@ -1,0 +1,26 @@
+diff --git a/scaffold/skills/ending_the_call.md b/scaffold/skills/ending_the_call.md
+index 9b51b07..2c9389d 100644
+--- a/scaffold/skills/ending_the_call.md
++++ b/scaffold/skills/ending_the_call.md
+@@ -10,6 +10,21 @@ Every line below is said at most once per call. Before you reply, check your own
+ the transcript: if you have already said the line you are about to say, use the next one down
+ instead. Rewording it does not make it a new line. When the last one is used, end the call.
+ 
++BEFORE ANY GOODBYE, check these four. If one applies, do NOT call end_call: call respond with that line.
++- Only the caller's own "no debt" / "I don't have any debt" reaches "I am sorry to bother you, goodbye".
++  "No credit cards", "that's my son's", "not mine" are NOT no debt: ask once "Just to confirm, do you
++  have any personal loans or other debt, or no debt at all?"
++- "Wrong number" / "not the right person": if the wrong-number rebuttal ("We provide free advice on
++  lowering credit card interest rates and balances. If you owe money on credit cards, I'm happy to
++  help.") is not in your earlier lines, say it now.
++- "Already in a program" / "someone is taking care of it" / "already done this": if the competition
++  rebuttal ("...Can I ask how long you've been working with them?...") is not in your earlier lines,
++  say it now. An improvised question of yours does not count as that rebuttal.
++- The caller gave a credit card amount under $7,000 and "Do you have any personal loans?" is not in
++  your earlier lines: ask it now (GATE 2), even if they are saying bye.
++These never override: do-not-call / stop-bothering-me requests, callback requests, voicemail or IVR,
++abuse or profanity, the not-engaging ladder, or the instruction-change goodbye. Those still end.
++
+ Not engaging (silence, gibberish, IVR or automated audio, TV/radio/broadcast audio, fully off topic, refusing to answer):
+   1. "I didn't catch that." + re-ask the current question
+   2. "I'm having trouble understanding." + re-ask the current question
