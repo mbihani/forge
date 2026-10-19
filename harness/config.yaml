@@ -240,7 +240,8 @@ eval:
     standard: {rows: 108}
     full:     {rows: 180}
   # Parallelism for predict_fn rows. Tune down if TPM saturates.
-  n_workers: 6
+  # interstell per-turn: max App calls in flight (latency rises with concurrency).
+  n_workers: 2
   # Cooldown seconds between row tasks inside the thread pool when
   # the endpoint is approaching its quota.
   inter_row_cooldown_s: 0.0

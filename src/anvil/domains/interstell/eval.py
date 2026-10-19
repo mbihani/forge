@@ -38,6 +38,7 @@ from __future__ import annotations
 import logging
 import math
 import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext, suppress
@@ -306,6 +307,9 @@ def _failure(rec: dict) -> dict | None:
 
 
 TURN_EVAL_SET = "turns"
+# Per-turn eval: App calls in flight are capped at eval.n_workers (more parallel turns raise
+# first-action latency: 2 -> p50 654ms, 4 -> 700ms, 6 -> 736ms on 10-19); judges run wider.
+TURN_JUDGE_WORKERS = 8
 
 
 def _turn_failure(rec: dict) -> dict | None:
@@ -357,6 +361,7 @@ def evaluate_turns(
 
     rows = turn_eval.build_rows(None, None)
     rows = rows[:max_rows] if max_rows else rows
+    app_slots = threading.BoundedSemaphore(max(1, n_workers))
 
     def _run(row: dict) -> dict[str, Any]:
         inp, exp = row["inputs"], row["expectations"]
@@ -372,8 +377,9 @@ def evaluate_turns(
             if rejection:
                 outputs: dict[str, Any] = {"error": f"setting rejected by lever probe: {rejection}"}
             else:
-                outputs, retries = call_app(messages, sid, model=model, route=route, extra=extra,
-                                            system_prompt=system_prompt, speech_in_tools=speech_in_tools)
+                with app_slots:
+                    outputs, retries = call_app(messages, sid, model=model, route=route, extra=extra,
+                                                system_prompt=system_prompt, speech_in_tools=speech_in_tools)
             verdict: dict[str, Any] = {}
             if not outputs.get("error"):
                 try:
@@ -391,7 +397,7 @@ def evaluate_turns(
             "infra_retries": retries, "infra_failed": is_transport_error(outputs.get("error")),
         }
 
-    with ThreadPoolExecutor(max_workers=max(1, n_workers)) as ex:
+    with ThreadPoolExecutor(max_workers=max(TURN_JUDGE_WORKERS, n_workers)) as ex:
         records = list(ex.map(_run, rows))
 
     def _metrics(rs: list[dict]) -> dict[str, float]:

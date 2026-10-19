@@ -1,0 +1,67 @@
+{
+  "scaffold_commit_sha": "27a50a9c927acbcea752592ce6fb444df06ef631",
+  "evaluated_at": "2026-10-19T18:09:24+00:00",
+  "mode": "standard",
+  "scorers": [
+    "concise_for_voice",
+    "no_hallucination",
+    "no_private_leak",
+    "on_script",
+    "right_action"
+  ],
+  "runtime_endpoint": "databricks-gpt-5-4-mini",
+  "judge_endpoint": "databricks-claude-opus-5-5",
+  "aggregate": 0.44029850746268656,
+  "per_judge": {
+    "right_action": 0.8507462686567164,
+    "on_script": 0.4552238805970149,
+    "concise_for_voice": 0.9850746268656716,
+    "no_hallucination": 0.9701492537313433,
+    "no_private_leak": 1.0
+  },
+  "per_bucket": {
+    "end": {
+      "turn_pass_rate": 0.5555555555555556,
+      "on_script_rate": 0.5555555555555556,
+      "ladder_line_accuracy": 0.2
+    },
+    "reply": {
+      "turn_pass_rate": 0.42105263157894735,
+      "on_script_rate": 0.45263157894736844,
+      "ladder_line_accuracy": 0.3695652173913043
+    },
+    "transfer": {
+      "turn_pass_rate": 0.4233576642335766,
+      "on_script_rate": 0.4306569343065693,
+      "ladder_line_accuracy": 0.12121212121212122
+    }
+  },
+  "n_examples": 268,
+  "mlflow_run_id": "",
+  "scorer_fingerprint": "",
+  "cost_metrics": {
+    "turn_pass_rate": 0.44029850746268656,
+    "right_action_rate": 0.8507462686567164,
+    "on_script_rate": 0.4552238805970149,
+    "concise_for_voice_rate": 0.9850746268656716,
+    "no_hallucination_rate": 0.9701492537313433,
+    "no_private_leak_rate": 1.0,
+    "mean_score": 3.1082089552238807,
+    "ladder_turns": 84.0,
+    "ladder_correct": 22.0,
+    "ladder_line_accuracy": 0.2619047619047619,
+    "false_ladder_lines": 14.0,
+    "false_end_calls": 15.0,
+    "latency_ms_median": 736.0,
+    "latency_ms_p90": 981.0,
+    "latency_ms_max": 5348.0,
+    "final_label_action_accuracy": 0.9696969696969697,
+    "n_judge_errors": 0.0,
+    "n_rows": 268.0,
+    "n_row_errors": 0.0,
+    "n_infra_retries": 0.0,
+    "n_infra_failed": 0.0,
+    "cost_usd_total": 2.60266105596,
+    "cost_usd_per_row": 0.009711421850597016
+  }
+}
