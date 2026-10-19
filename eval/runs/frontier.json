@@ -10,11 +10,15 @@
   "pareto": true,
   "directions": {
     "on_script": "maximize",
-    "false_ladder_lines": "minimize"
+    "false_ladder_lines": "minimize",
+    "latency": "minimize",
+    "latency_p90": "minimize"
   },
   "sources": {
     "on_script": "metric",
-    "false_ladder_lines": "metric"
+    "false_ladder_lines": "metric",
+    "latency": "latency",
+    "latency_p90": "metric"
   },
   "epsilon": 0.0,
   "epsilons": {
