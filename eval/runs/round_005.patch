@@ -1,0 +1,26 @@
+diff --git a/scaffold/skills/call_flow_script_strictly_needs.md b/scaffold/skills/call_flow_script_strictly_needs.md
+index 3b57734..4a77c51 100644
+--- a/scaffold/skills/call_flow_script_strictly_needs.md
++++ b/scaffold/skills/call_flow_script_strictly_needs.md
+@@ -104,11 +104,16 @@ HIGH EDUCATION MODE: "I'm sure you're the one who handles the bills for these un
+ MEDIUM/LOW EDUCATION MODE: "I'm sure you're the one who handles the bills for these unsecured credit cards. These are the ones with no collateral attached, right?"
+ 
+ ACCEPTABLE RESPONSES:
+-Any positive indication to BOTH parts → proceed to STEP6
+-"What's unsecured?" → "Just regular credit cards with no house or car backing them" → THEN verify decision maker: "And you handle these bills yourself?"
+-After explaining unsecured debt, ALWAYS verify the decision maker part:
+-If user only acknowledges unsecured explanation → you do not have decision maker yet → Ask "And you handle these bills yourself?"
+-Only proceed to STEP6 after both unsecured and decision maker are confirmed
++This one question asks BOTH parts. Its "no collateral attached, right?" is part of the question, not an
++explanation of unsecured. A plain yes to it ("yes", "yeah", "yep", "correct", "that's right") confirms
++BOTH unsecured and decision maker. With a stated amount of $7,000-$150,000, go to STEP6 now:
++transfer_call with "Great, thank you for confirming that." Do not ask "And you handle these bills yourself?"
++Example: caller earlier said "forty thousand", you asked this question, caller says "correct" → transfer_call.
++"What's unsecured?" → "Just regular credit cards with no house or car backing them" → THEN verify decision
++maker: "And you handle these bills yourself?" (only after an explanation the caller asked for)
++About themselves only ("I'm the only one", "that's me") → decision maker only. Bare "okay" / "I see" →
++neither; a later yes to "And you handle these bills yourself?" confirms only the decision maker. Unsecured
++still missing → respond: "And these are just regular credit cards, with no house or car backing them, right?"
+ Only clear "No" on decision maker → Ask for transfer to decision maker
+ 
+ STEP6: Transfer Script
