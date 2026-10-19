@@ -1,0 +1,31 @@
+{
+  "round_id": 20,
+  "branch": "anvil/exp-interstell-end-round-20",
+  "scaffold_commit_sha": "4d4e04452f17fce24758e7633e48acee0c30510d",
+  "parent_commit_sha": "4d4e04452f17fce24758e7633e48acee0c30510d",
+  "decision": "noop",
+  "action_kind": "noop",
+  "parse_status": "ok_last_of_many",
+  "levers": {
+    "route": "serving",
+    "temperature": 0.3,
+    "speech_in_tools": true,
+    "tool_choice": "auto",
+    "max_completion_tokens": 1024,
+    "model": "databricks-gpt-5-4-mini"
+  },
+  "baseline_score": 0.8134284016636958,
+  "score_delta_vs_parent": 0.0,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "Parent = round 1: recall 0.967 (29/30), false_end_calls 0, quality 0.885, p50 606 / p90 778. A keep needs recall 30/30 with 0 false ends (epsilon 0), or quality above 0.915. The only recall miss is S01, about 1 run in 3: TV/ad audio after 'I'm having trouble understanding.', and the agent restarts the ladder. The response_format ladder fix ended S01 3/3 in rounds 4, 5, 9, 10, 12 and 14, but every such round was reverted on 1-5 false ends. Those came from S36 (disputed; wrong in about a third of runs whatever the edit) and S28 (no-debt goodbye after 'that's my son's', with the round-1 guard text unchanged). So round 1's 0 false ends was very likely luck. Rewording the guards made false ends worse (rounds 2/9/11/16). Temperature 0.0 did not stop the flips (rounds 3/5/8). Rounds 16 and 18 went over p50 700ms after adding only 15-40 words. Quality: reply_quality is scored on 51 rows, so each sample fixed 3/3 adds about +0.015 to quality. Clearing the +0.03 bar would need 3+ of the stuck samples (S02/S04/S05/S09/S15/S19/S21/S23) fixed every run, with no false end and inside the latency limit; no round has managed it. Untried levers don't address this: gateway adds 40-130ms (breaks the p50 limit), temperature 0.7 adds noise, and a 256/512 output cap can't change which action is picked and could truncate call_summary. Another resubmission would be a coin flip, and a keep would come from noise, not a real improvement. Recommendation, unchanged from rounds 15/17/19: re-run the round-1 parent 2-3 times to measure its real false-end rate; resolve the S36 dispute or leave S36 out of false_end_calls; and/or allow false_end_calls epsilon 1 or raise the runs per sample.",
+  "optimizer_run": {
+    "run_id": "4b48cf73359f4e22ab1dccdb82dfee73",
+    "experiment_id": "3520618322063879"
+  },
+  "optimizer_session_url": null,
+  "optimizer_trace_id": "tr-aa2ebbceea8e3b79cfeaee25444ac06a",
+  "frontier_best": null
+}
