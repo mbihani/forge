@@ -1,22 +1,22 @@
 ---
 round: 5
-branch: anvil/exp-interstell-sa-round-5
+branch: anvil/exp-interstell-q-round-5
 decision: keep
 action_kind: edit_skill
 parse_status: ok_last_of_many
-baseline_score: 0.5236
-mutated_score: 0.7064
-score_delta: +0.1829
+baseline_score: 0.6646
+mutated_score: 0.8347
+score_delta: +0.1700
 ---
 
 # Round 5 critique
 
 ## Action applied
-edit_skill skills/ending_the_call.md: The current best scaffold scores speak_and_act 0.833 (30 of 36 scored turns). Of the six failures, S06 and S34 are dispu
+edit_skill skills/call_flow_script_strictly_needs.md: Target: S25 fails 3/3 in every round so far, including the current best (round 2, 0.7505). The caller stated seventy tho
 
 ## Rationale (from optimizer)
-The current best scaffold scores speak_and_act 0.833 (30 of 36 scored turns). Of the six failures, S06 and S34 are disputed and left alone; the other three are S01 on every repeat. S01 is a TV/radio broadcast call. The agent said 'I'm having trouble understanding.' at line 18 and 'I didn't catch that.' at line 53, then repeats rung 2 instead of 'I'm unable to assist at this time. Goodbye'. Round 3's scan-all-lines rule fixed no S01 repeat. Round 4 moved it into a FINAL CHECKS block in the last skill; that fixed 1 of 3 S01 repeats but made S29 (voicemail) fail twice because the block also applied to voicemail calls. This edit rewrites the rule in place: 'I'm having trouble understanding.' may be said once per call; before saying it, search all earlier lines; if found, the whole reply is rung 3 plus end_call; a later 'I didn't catch that.' or cut-off fragments ('I'm', 'I') do not reset the ladder. It adds one worked example in S01's order. Collateral: the rule fires only when that sentence is already in history (S01/S06/S11/S12/S35, all labelled end_call with this closing; S11/S12/S35 already pass). Voicemail and IVR wording is untouched, so S29 should not regress. Predicted: speak_and_act +0.056 to +0.083 over 0.833 if 2 or 3 S01 repeats flip; one flip alone (+0.028) would not clear the 0.03 bar. action_correct up slightly. About +60 prompt tokens, so first-action p50 should stay near 630-650ms, under 700ms.
+Target: S25 fails 3/3 in every round so far, including the current best (round 2, 0.7505). The caller stated seventy thousand, then answered the combined STEP5 question with 'correct'. The agent asks 'And you handle these bills yourself?' instead of calling transfer_call, which fails action_correct and speak_and_act on all 3 repeats. Likely cause: this file's STEP5 said 'After explaining unsecured debt, ALWAYS verify the decision maker' and 'if user only acknowledges unsecured explanation, ask And you handle these bills yourself?'. The combined question's own tag 'These are the ones with no collateral attached, right?' reads as that explanation, so 'correct' is treated as an acknowledgement and the agent says that exact line. Rounds 3 and 4 edited what_counts_as_an_answer.md and left this text alone; S25 stayed 0/3 in both. The edit: (1) the tag is part of the question; a plain yes/yeah/yep/correct/that's right confirms both halves, and with a stated amount in range the agent calls transfer_call now; (2) the decision-maker follow-up applies only after an explanation the caller asked for ('What's unsecured?'); (3) the partial-answer lines from round 4 are folded in ('I'm the only one', or a bare 'okay' then 'yeah', means unsecured is missing, so ask the unsecured line), which cleared S20 in round 4. Prediction: speak_and_act from 0.833 to about 0.89-0.92 if 2-3 S25 repeats flip, clearing the +0.03 bar; action_correct up about +0.02-0.03; quality up about +0.025-0.036, which may fall just short of +0.03 alone, so the keep most likely comes through the speak_and_act objective. Transfer gate safety is guarded by STEP6 and TRANSFER PRECONDITION, both unchanged. Risks: S17 could transfer too early (the bare 'okay' wording is there to prevent it); S24 already passes on 'yep' and should stay the same. About +90 words (~1% prompt), so first-action p50 should stay near 650ms, under 700ms.
 
 ## Outcome
 Decision: **KEEP**. Score delta vs cached baseline:
-+0.1829.
++0.1700.
