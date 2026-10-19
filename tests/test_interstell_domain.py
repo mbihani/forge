@@ -132,3 +132,38 @@ def test_scaffold_split_round_trips_through_composer(tmp_path) -> None:
 def test_tool_choice_lever_only_sent_when_not_default() -> None:
     assert "tool_choice" not in request_extra({"tool_choice": "auto"}, "none")
     assert request_extra({"tool_choice": "required"}, "none")["tool_choice"] == "required"
+
+
+def test_turn_eval_set_counts_errors_as_failures(monkeypatch) -> None:
+    """Per-turn path: every caller turn once; agent/judge errors fail every rate."""
+    import pytest
+
+    from anvil.domains.interstell import _interstell, eval as ev
+
+    try:
+        _interstell.ensure_importable()
+        from evals import turn_eval
+    except Exception:  # noqa: BLE001 - the Interstell checkout is optional in CI
+        pytest.skip("interstell-ai checkout not available")
+    ok = {"expected_action": "speak", "right_action": True, "on_script": True, "concise_for_voice": True,
+          "no_hallucination": True, "no_private_leak": True, "ladder_expected": "none", "score": 5, "pass": True}
+    calls = iter(range(10_000))
+
+    def fake_app(messages, sid, **_kw):
+        i = next(calls)
+        if i == 0:
+            return {"error": "App HTTP 400: bad"}, 0
+        text = "I'm sorry, I don't understand." if i == 1 else "Okay."
+        return {"action": "speak", "text": text, "first_action_ms": 500.0 + i}, 0
+
+    monkeypatch.setattr(ev, "call_app", fake_app)
+    monkeypatch.setattr(turn_eval, "judge_turn", lambda *_a, **_k: dict(ok))
+    records, m, _ = ev.evaluate_turns(
+        scaffold_path=None, selected_mode="standard", model="m", route="serving", judge="j", extra={},
+        rejection=None, system_prompt="p", speech_in_tools=True, n_workers=1, trace_rows=False, max_rows=4,
+    )
+    assert len(records) == 4
+    assert m["on_script_rate"] == 0.75 and m["turn_pass_rate"] == 0.75  # the errored turn fails
+    assert m["false_ladder_lines"] == 1.0  # a ladder line where the judge called for none
+    assert m["latency_ms_median"] > 500
+    assert ev._turn_failure(records[0])["error"].startswith("App HTTP 400")

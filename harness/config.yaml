@@ -163,6 +163,13 @@ levers:
       true = every turn is ONE tool call (respond / transfer_call / end_call) whose required
       first argument message_to_user is the spoken line; tool_choice required (App mode,
       interstell-ai 77cd3e6). first_action_ms = first character of message_to_user.
+  eval_set:
+    allowed: [turns]
+    default: turns
+    description: >-
+      PINNED (user, 2026-10-19; not an optimizer choice): turns = every caller turn of the 36
+      samples once (268), graded by Interstell's per-turn Opus judge (evals/turn_eval.py);
+      final = the 36 final turns x ceil(rows/36) with the labelled scorers.
   tool_choice:
     allowed: [auto]
     default: auto
@@ -204,14 +211,13 @@ eval:
     # review_agent_evals finds no REGISTERED judges, so the agreed metrics (= Interstell's
     # own scorers, re-run unchanged by the engine; user decision 2026-10-18) are recorded here.
     user_metrics:
-      - name: end_call_recall
+      - name: on_script_rate
         description: >-
-          OPTIMIZED (user, 2026-10-19): on turns whose LLM-judge label expects end_call, the
-          agent calls end_call
-      - name: false_end_calls
-        description: guard - end_call on turns labelled speak/transfer may never increase
-      - name: quality
-        description: floor - action x2 + speak_and_act + reply_quality, no drop > 0.03
+          OPTIMIZED (user, 2026-10-19): share of ALL 268 caller turns the Opus per-turn judge
+          (interstell-ai evals/turn_eval.py, re-run every round) grades on_script — target pattern:
+          the wrong escalation-ladder line (separate injection ladder, user decision)
+      - name: false_ladder_lines
+        description: guard - ladder lines spoken where the judge calls for none may never increase
       - name: first_action_p50_ms / latency_ms_p90
         description: hard ceilings 700ms / 1000ms
   held_out_test: false
@@ -228,12 +234,13 @@ eval:
   #   seed: 42
   # Row count per mode (deterministic sub-set of the golden set).
   # interstell: rows = TURNS = 36 client samples x ceil(rows / 36) repeats.
+  # (levers.eval_set: turns ignores rows: every caller turn once, 268.)
   modes:
     quick:    {rows: 36}
     standard: {rows: 108}
     full:     {rows: 180}
   # Parallelism for predict_fn rows. Tune down if TPM saturates.
-  n_workers: 4
+  n_workers: 6
   # Cooldown seconds between row tasks inside the thread pool when
   # the endpoint is approaching its quota.
   inter_row_cooldown_s: 0.0
@@ -323,20 +330,16 @@ gate:
   pareto:
     enabled: true
     objectives:
-      - name: end_call_recall
+      - name: on_script
         direction: maximize
         source: metric
-        metric: end_call_recall      # turns labelled end_call (LLM-judge labels) that end the call
-        epsilon: 0.03                # 1 of 30 labelled turns = 0.033
-      - name: false_end_calls
+        metric: on_script_rate       # all 268 caller turns, Opus per-turn judge
+        epsilon: 0.03                # ~8 turns; judge noise is about +/-3%
+      - name: false_ladder_lines
         direction: minimize
         source: metric
-        metric: false_end_calls      # ends on turns labelled speak/transfer - may never increase
+        metric: false_ladder_lines   # ladder line where the judge calls for none - may never increase
         epsilon: 0
-      - name: quality
-        direction: maximize
-        source: aggregate            # floor: may not drop > 0.03 below best
-        epsilon: 0.03
       - name: latency
         direction: minimize
         source: latency

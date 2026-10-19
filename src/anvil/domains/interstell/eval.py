@@ -23,6 +23,14 @@ provisional-row exclusions. The report's:
   the headline rates, for gate objectives.
 * ``cost_metrics.end_call_recall`` = share of turns labelled ``end_call`` where the agent
   ended the call; ``false_end_calls`` = ends on turns labelled speak/transfer.
+
+**Per-turn eval set** (lever ``eval_set: turns``, pinned in config): instead of the 36 final turns,
+every caller turn of every sample (268) is replayed once — the transcript cut where the caller
+finished speaking — and graded by Interstell's label-free Opus per-turn judge
+(``evals.turn_eval``, against the client's script). Report: ``aggregate`` = share of turns
+passing all five criteria; ``cost_metrics.on_script_rate`` (errors count as fails),
+``ladder_line_accuracy`` (exact escalation-rung line + action on the judge's ladder turns),
+``false_ladder_lines`` (a ladder line where the judge calls for none) and the same latency keys.
 """
 
 from __future__ import annotations
@@ -99,6 +107,7 @@ DEFAULT_LEVERS = {
     "max_completion_tokens": 1024,
     "tool_choice": "auto",
     "speech_in_tools": False,
+    "eval_set": "final",
 }
 APP_TIMEOUT_S = 120.0
 APP_ATTEMPTS = 3
@@ -296,6 +305,125 @@ def _failure(rec: dict) -> dict | None:
     }
 
 
+TURN_EVAL_SET = "turns"
+
+
+def _turn_failure(rec: dict) -> dict | None:
+    j, out = rec["judge"], rec["outputs"]
+    if j.get("pass"):
+        return None
+    from evals import turn_eval  # noqa: PLC0415
+
+    return {
+        "example_id": f"{rec['sample_id']}#t{rec['turn']}",
+        "query": rec["sample_id"],
+        "turn": f"{rec['turn']}/{rec['n_turns']}",
+        "caller_said": rec["caller"][:200],
+        "agent_action": out.get("action"),
+        "spoken": (out.get("text") or "")[:240],
+        "expected_action": j.get("expected_action"),
+        "ladder_expected": j.get("ladder_expected"),
+        "ladder_used": sorted(turn_eval.ladder_lines_used(out.get("text"))),
+        "failed": [k for k in turn_eval.CRITERIA if j.get(k) is False],
+        "rationale": str(j.get("rationale") or "")[:400],
+        **({"better_reply": str(j["better_reply"])[:240]} if j.get("better_reply") else {}),
+        **({"error": str(out.get("error") or j.get("eval_error"))[:400]}
+           if out.get("error") or j.get("eval_error") else {}),
+        **({"infra": True} if rec.get("infra_failed") else {}),
+    }
+
+
+def _rate(xs: list) -> float | None:
+    return sum(bool(x) for x in xs) / len(xs) if xs else None
+
+
+def evaluate_turns(
+    *,
+    scaffold_path: Path,
+    selected_mode: str,
+    model: str,
+    route: str,
+    judge: str,
+    extra: dict[str, Any],
+    rejection: str | None,
+    system_prompt: str,
+    speech_in_tools: bool,
+    n_workers: int,
+    trace_rows: bool,
+    max_rows: int | None,
+) -> tuple[list[dict], dict[str, float], dict[str, dict[str, float]]]:
+    """Every caller turn once, graded by Interstell's per-turn judge. -> (records, metrics, per category)."""
+    from evals import scorers, turn_eval  # noqa: PLC0415
+
+    rows = turn_eval.build_rows(None, None)
+    rows = rows[:max_rows] if max_rows else rows
+
+    def _run(row: dict) -> dict[str, Any]:
+        inp, exp = row["inputs"], row["expectations"]
+        sid, n, messages = inp["sample_id"], inp["round"], inp["messages"]
+        row_cm = (
+            eval_row_trace(example_id=f"{sid}#t{n}", query=sid, scaffold_root=scaffold_path,
+                           runtime_endpoint=model)
+            if trace_rows
+            else nullcontext()
+        )
+        with row_cm as span:
+            retries = 0
+            if rejection:
+                outputs: dict[str, Any] = {"error": f"setting rejected by lever probe: {rejection}"}
+            else:
+                outputs, retries = call_app(messages, sid, model=model, route=route, extra=extra,
+                                            system_prompt=system_prompt, speech_in_tools=speech_in_tools)
+            verdict: dict[str, Any] = {}
+            if not outputs.get("error"):
+                try:
+                    verdict = turn_eval.verdict(turn_eval.judge_turn(messages, outputs, judge))
+                except Exception as exc:  # noqa: BLE001 - counted as a failed turn
+                    verdict = {"pass": False, "eval_error": str(exc)[:300]}
+            if span is not None:
+                with suppress(Exception):
+                    span.set_outputs({"outputs": outputs, "judge": verdict})
+        return {
+            "sample_id": sid, "turn": n, "n_turns": exp["n_turns"], "is_final": exp["is_final"],
+            "category": exp["category"], "label_action": exp.get("label_action"),
+            "label_provisional": exp.get("label_provisional", False),
+            "caller": turn_eval.last_caller_run(messages), "outputs": outputs, "judge": verdict,
+            "infra_retries": retries, "infra_failed": is_transport_error(outputs.get("error")),
+        }
+
+    with ThreadPoolExecutor(max_workers=max(1, n_workers)) as ex:
+        records = list(ex.map(_run, rows))
+
+    def _metrics(rs: list[dict]) -> dict[str, float]:
+        # Errors (agent or judge) count as failures in every rate.
+        m: dict[str, Any] = {"turn_pass_rate": _rate([r["judge"].get("pass") for r in rs])}
+        for k in turn_eval.CRITERIA:
+            m[f"{k}_rate"] = _rate([r["judge"].get(k) is True for r in rs])
+        scored = [r["judge"]["score"] for r in rs if isinstance(r["judge"].get("score"), (int, float))]
+        m["mean_score"] = sum(scored) / len(scored) if scored else None
+        m.update(turn_eval.ladder_metrics(rs))
+        m["false_end_calls"] = sum(
+            1 for r in rs
+            if r["outputs"].get("action") == "end_call" and r["judge"].get("expected_action") not in (None, "end_call")
+        )
+        return {k: float(v) for k, v in m.items() if v is not None}
+
+    m = _metrics(records)
+    lat = [r["outputs"].get("first_action_ms") for r in records]
+    for key, q in (("latency_ms_median", 0.5), ("latency_ms_p90", 0.9), ("latency_ms_max", 1.0)):
+        v = scorers.percentile(lat, min(q, 0.9999))
+        if v is not None:
+            m[key] = float(v)
+    finals = [r for r in records if r["is_final"] and r["label_action"] and not r["label_provisional"]]
+    if finals:
+        m["final_label_action_accuracy"] = sum(r["outputs"].get("action") == r["label_action"] for r in finals) / len(finals)
+    m["n_judge_errors"] = float(sum(1 for r in records if r["judge"].get("eval_error")))
+    per_bucket = {cat: {k: v for k, v in _metrics([r for r in records if r["category"] == cat]).items()
+                        if k in ("turn_pass_rate", "on_script_rate", "ladder_line_accuracy")}
+                  for cat in sorted({r["category"] for r in records})}
+    return records, m, per_bucket
+
+
 def evaluate_interstell(
     *,
     scaffold_root: Path | str,
@@ -338,6 +466,14 @@ def evaluate_interstell(
     # The scaffold skills ARE the agent's script (forge's copy of system_prompt.txt),
     # sent to the App as a per-turn override; judges still grade against the client's file.
     system_prompt = compose_prompt(scaffold_path, audience="runtime").text
+
+    if levers.get("eval_set") == TURN_EVAL_SET:
+        return _turn_report(
+            snapshot=snapshot, scaffold_path=scaffold_path, repo_root=repo_root,
+            selected_mode=selected_mode, model=model, route=route, judge=judge, extra=extra,
+            rejection=rejection, system_prompt=system_prompt,
+            speech_in_tools=bool(levers["speech_in_tools"]), trace_rows=trace_rows, max_rows=max_rows,
+        )
 
     labels = load_labels()
     turns = _turns(assets.samples(), cfg.modes[selected_mode].rows, max_rows)
@@ -477,6 +613,61 @@ def evaluate_interstell(
         per_judge=per_judge,
         per_bucket=per_bucket,
         failures=[f for f in (_failure(r) for r in records) if f],
+        run_id="",
+        experiment_id=experiment_id,
+        n_rows=len(records),
+        mode=selected_mode,
+        scorers=sorted(per_judge),
+        evaluated_at=datetime.now(UTC).isoformat(timespec="seconds"),
+        trace_ids=[],
+        cost_metrics=cost_metrics,
+        scorer_fingerprint="",
+    )
+
+
+def _turn_report(*, snapshot, scaffold_path: Path, repo_root: Path, selected_mode: str, model: str,
+                 trace_rows: bool, **kw: Any) -> EvalReport:
+    records, m, per_bucket = evaluate_turns(
+        scaffold_path=scaffold_path, selected_mode=selected_mode, model=model,
+        n_workers=snapshot.config.eval.n_workers, trace_rows=trace_rows, **kw,
+    )
+    ok = [r for r in records if not r["outputs"].get("error")]
+    prices = model_prices(
+        [model],
+        load_catalog(repo_root / snapshot.config.model_catalog.path),
+        tier=snapshot.config.model_catalog.context_tier,
+    )
+    call_costs = price_calls(
+        [{"model": model, "input_tokens": r["outputs"].get("prompt_tokens") or 0,
+          "output_tokens": r["outputs"].get("completion_tokens") or 0} for r in ok],
+        prices,
+    )
+    cost_metrics = {
+        **m,
+        "n_rows": float(len(records)),
+        "n_row_errors": float(len(records) - len(ok)),
+        "n_infra_retries": float(sum(r["infra_retries"] for r in records)),
+        "n_infra_failed": float(sum(1 for r in records if r["infra_failed"])),
+    }
+    if call_costs and all(c is not None for c in call_costs):
+        cost_metrics["cost_usd_total"] = float(sum(call_costs))
+        cost_metrics["cost_usd_per_row"] = cost_metrics["cost_usd_total"] / len(call_costs)
+    experiment_id = ""
+    if trace_rows:
+        try:
+            import mlflow  # noqa: PLC0415
+
+            exp = mlflow.get_experiment_by_name(snapshot.config.experiments.eval)
+            experiment_id = exp.experiment_id if exp is not None else ""
+        except Exception as exc:  # noqa: BLE001 - best-effort observability
+            logger.warning("could not resolve eval experiment id: %s", exc)
+    per_judge = {k.removesuffix("_rate"): v for k, v in m.items()
+                 if k.endswith("_rate") and k != "turn_pass_rate"}
+    return EvalReport(
+        aggregate=m.get("turn_pass_rate", 0.0),
+        per_judge=per_judge,
+        per_bucket=per_bucket,
+        failures=[f for f in (_turn_failure(r) for r in records) if f],
         run_id="",
         experiment_id=experiment_id,
         n_rows=len(records),
