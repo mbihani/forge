@@ -1,7 +1,7 @@
 {
   "best": {
-    "quality": 0.7194370172311348,
-    "speak_and_act": 0.75
+    "quality": 0.7505199049316696,
+    "speak_and_act": 0.8333333333333334
   },
   "objectives": [
     "quality",
@@ -10,11 +10,15 @@
   "pareto": true,
   "directions": {
     "quality": "maximize",
-    "speak_and_act": "maximize"
+    "speak_and_act": "maximize",
+    "latency": "minimize",
+    "latency_p90": "minimize"
   },
   "sources": {
     "quality": "aggregate",
-    "speak_and_act": "metric"
+    "speak_and_act": "metric",
+    "latency": "latency",
+    "latency_p90": "metric"
   },
   "epsilon": 0.0,
   "epsilons": {
