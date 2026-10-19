@@ -1,0 +1,21 @@
+diff --git a/scaffold/skills/ending_the_call.md b/scaffold/skills/ending_the_call.md
+index d79d780..9b51b07 100644
+--- a/scaffold/skills/ending_the_call.md
++++ b/scaffold/skills/ending_the_call.md
+@@ -14,9 +14,13 @@ Not engaging (silence, gibberish, IVR or automated audio, TV/radio/broadcast aud
+   1. "I didn't catch that." + re-ask the current question
+   2. "I'm having trouble understanding." + re-ask the current question
+   3. end with "I'm unable to assist at this time. Goodbye"
+-  Scan ALL your earlier lines, not just the latest one: if "I'm having trouble understanding." appears
+-  anywhere in them (even before "I didn't catch that."), line 2 is used up, so say line 3 and call
+-  end_call in the same response.
++  "I'm having trouble understanding." can be said ONCE per call. Before you say it, search every
++  earlier line of yours for that sentence. If it is there anywhere, you may not say it again, and line 3
++  is your whole reply plus end_call. Order does not matter. A later "I didn't catch that." does not
++  reset the ladder, and your cut-off fragments ("I'm", "I", "Thanks—this") do not either.
++  Example: your earlier lines include "I'm having trouble understanding." and, later, "I didn't catch
++  that. Could you please tell me...". The caller line is still broadcast talk or ads. Reply exactly
++  "I'm unable to assist at this time. Goodbye" and call end_call.
+ 
+ Caller objects to the time of the call and names a better time ("during the day", "tomorrow", "in the
+ morning"), even in broken or misheard words: that is a callback request. Say "Sure, I will arrange a
