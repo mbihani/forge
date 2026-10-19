@@ -1,0 +1,29 @@
+{
+  "round_id": 6,
+  "branch": "anvil/exp-interstell-sa-round-6",
+  "scaffold_commit_sha": "2f665c440c67cfc454f34733a306875fc6ae1603",
+  "parent_commit_sha": "2f665c440c67cfc454f34733a306875fc6ae1603",
+  "decision": "noop",
+  "action_kind": "noop",
+  "parse_status": "ok_last_of_many",
+  "levers": {
+    "model": "databricks-deepseek-v4-1-flash",
+    "route": "serving",
+    "temperature": 0.3,
+    "max_completion_tokens": 1024
+  },
+  "baseline_score": 0.5235814022578729,
+  "score_delta_vs_parent": 0.0,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "The best scaffold (round 5) passes speak_and_act on 99/108 rows (0.9167), and the gate compares against best-so-far (round 4 tied 0.833 and was reverted). A keep needs more than +0.03, so at least 103/108 (+4 rows). Only 9 rows still fail. S06 and S34 (all 3 repeats, 6 rows) are already-disputed labels: the agent gives the instruction-change goodbye, so I do not tune to them. S29 (voicemail) fails 3 rows. In r1 and r3 the agent speaks the correct 'I'll reach out later, goodbye' and calls end_call, but DeepSeek's tool-call markup (<\uff5cDSML\uff5c calls>) and unrelated rambling leak into the spoken text. That is a model/parsing artifact a prompt rule is unlikely to fix. In r2 it repeats rung 2 instead of closing. Fixing all of S29 gives at most +3 rows (0.944, +0.028), below the 0.03 bar. Latency is also tight: the median rose from 629ms to 675ms over the kept rounds, leaving ~25ms under the 700ms limit, so adding prompt text risks a revert. A temperature or model change could fix S29 but would only add noise to the 99 passing rows with no route to +4. Noop is the safer call. Worth checking outside the prompt loop: DSML leakage in the engine's DeepSeek tool-call parsing.",
+  "optimizer_run": {
+    "run_id": "6ab3cbda694e4588a1d78aa281fc5df3",
+    "experiment_id": "3520618322063879"
+  },
+  "optimizer_session_url": null,
+  "optimizer_trace_id": "tr-ec48f09fae35507af059a41312e34be3",
+  "frontier_best": null
+}
