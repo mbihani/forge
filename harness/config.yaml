@@ -204,14 +204,16 @@ eval:
     # review_agent_evals finds no REGISTERED judges, so the agreed metrics (= Interstell's
     # own scorers, re-run unchanged by the engine; user decision 2026-10-18) are recorded here.
     user_metrics:
-      - name: quality
+      - name: end_call_recall
         description: >-
-          OPTIMIZED (user, 2026-10-19): weighted aggregate of Interstell's scorers -
-          action_correct x2 + speak_and_act + reply_quality (Opus judge)
-      - name: speak_and_act
-        description: floor - may not regress more than 0.03 below its best
+          OPTIMIZED (user, 2026-10-19): on turns whose LLM-judge label expects end_call, the
+          agent calls end_call
+      - name: false_end_calls
+        description: guard - end_call on turns labelled speak/transfer may never increase
+      - name: quality
+        description: floor - action x2 + speak_and_act + reply_quality, no drop > 0.03
       - name: first_action_p50_ms / latency_ms_p90
-        description: hard ceilings 700ms / 1000ms (first spoken character in speech mode)
+        description: hard ceilings 700ms / 1000ms
   held_out_test: false
   # Default mode for `evaluate_branch`. One of: quick, standard, full.
   default_mode: standard
@@ -321,18 +323,23 @@ gate:
   pareto:
     enabled: true
     objectives:
-      - name: quality
-        direction: maximize
-        source: aggregate            # action_correct x2 + speak_and_act + reply_quality
-        epsilon: 0.03
-      - name: speak_and_act
+      - name: end_call_recall
         direction: maximize
         source: metric
-        metric: speak_and_act_rate   # floor: may not drop > 0.03 below best
+        metric: end_call_recall      # turns labelled end_call (LLM-judge labels) that end the call
+        epsilon: 0.03                # 1 of 30 labelled turns = 0.033
+      - name: false_end_calls
+        direction: minimize
+        source: metric
+        metric: false_end_calls      # ends on turns labelled speak/transfer - may never increase
+        epsilon: 0
+      - name: quality
+        direction: maximize
+        source: aggregate            # floor: may not drop > 0.03 below best
         epsilon: 0.03
       - name: latency
         direction: minimize
-        source: latency              # first-action p50 ms (speech mode: first spoken char)
+        source: latency
         limit: 700
       - name: latency_p90
         direction: minimize

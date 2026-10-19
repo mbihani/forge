@@ -21,6 +21,8 @@ provisional-row exclusions. The report's:
   safety veto objective).
 * ``cost_metrics.speak_and_act_rate`` / ``action_accuracy`` / ``reply_quality_pass_rate`` =
   the headline rates, for gate objectives.
+* ``cost_metrics.end_call_recall`` = share of turns labelled ``end_call`` where the agent
+  ended the call; ``false_end_calls`` = ends on turns labelled speak/transfer.
 """
 
 from __future__ import annotations
@@ -440,6 +442,21 @@ def evaluate_interstell(
     ):
         if m.get(key) is not None:
             cost_metrics[name] = float(m[key])
+    # End-call behaviour vs the LLM-judge labels (provisional labels excluded, like the
+    # headline): recall on turns labelled end_call; ends on turns labelled otherwise.
+    scored = [r for r in records if not r["provisional"]]
+    want_end = [r for r in scored if r["expected_action"] == "end_call"]
+    if want_end:
+        cost_metrics["end_call_recall"] = sum(
+            r["outputs"].get("action") == "end_call" for r in want_end
+        ) / len(want_end)
+    cost_metrics["false_end_calls"] = float(
+        sum(
+            1
+            for r in scored
+            if r["expected_action"] != "end_call" and r["outputs"].get("action") == "end_call"
+        )
+    )
     if call_costs and all(c is not None for c in call_costs):
         cost_metrics["cost_usd_total"] = float(sum(call_costs))
         cost_metrics["cost_usd_per_row"] = cost_metrics["cost_usd_total"] / len(call_costs)
