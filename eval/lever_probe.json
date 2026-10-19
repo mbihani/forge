@@ -3,14 +3,6 @@
   "probed_at": "2026-10-18T09:55:41+00:00",
   "results": [
     {
-      "model": "databricks-gemini-3-1-flash-lite",
-      "settings": {
-        "reasoning": "profile"
-      },
-      "ok": true,
-      "error": null
-    },
-    {
       "model": "databricks-gpt-5-4-mini",
       "settings": {
         "reasoning": "none"
@@ -98,46 +90,6 @@
       "settings": {
         "reasoning": "none",
         "token_param": "max_tokens"
-      },
-      "ok": true,
-      "error": null
-    },
-    {
-      "model": "databricks-gemini-3-1-flash-lite",
-      "settings": {
-        "temperature": 0.0
-      },
-      "ok": true,
-      "error": null
-    },
-    {
-      "model": "databricks-gemini-3-1-flash-lite",
-      "settings": {
-        "temperature": 0.3
-      },
-      "ok": true,
-      "error": null
-    },
-    {
-      "model": "databricks-gemini-3-1-flash-lite",
-      "settings": {
-        "temperature": 0.7
-      },
-      "ok": true,
-      "error": null
-    },
-    {
-      "model": "databricks-gemini-3-1-flash-lite",
-      "settings": {
-        "route": "gateway"
-      },
-      "ok": true,
-      "error": null
-    },
-    {
-      "model": "databricks-gemini-3-1-flash-lite",
-      "settings": {
-        "route": "serving"
       },
       "ok": true,
       "error": null

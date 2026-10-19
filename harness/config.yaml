@@ -29,7 +29,7 @@ mode: prompt
 # Set DATABRICKS_HOST and DATABRICKS_TOKEN in the environment (or a
 # ~/.databrickscfg profile); the gateway client refreshes the SP token
 # on each request.
-runtime_endpoint: databricks-gemini-3-1-flash-lite
+runtime_endpoint: databricks-deepseek-v4-1-flash
 
 # FMAPI model the ANVIL optimizer loop uses for trace analysis +
 # mutation planning. Reached via the gateway's Anthropic route (the
@@ -124,7 +124,7 @@ loop:
   revert_lookback: 20
   # Hard cap on optimizer turns per round. Round aborts as `noop` if
   # exceeded.
-  max_optimizer_turns: 40
+  max_optimizer_turns: 60
   # Max mutations one round may apply together via a `compound` action
   # (gated as one unit). 1 = classic single-mutation rounds. Max 5.
   max_mutations_per_round: 2
@@ -143,21 +143,20 @@ loop:
 levers:
   model:
     allowed:
-      - databricks-gemini-3-1-flash-lite
+      - databricks-deepseek-v4-1-flash
       - databricks-gpt-5-4-mini
       - databricks-gpt-5-4-nano
-      - databricks-deepseek-v4-1-flash
       - databricks-qwen3-next-80b-a3b-instruct
       - databricks-llama-4-maverick
       - databricks-qwen35-122b-a10b
       - databricks-meta-llama-3-1-8b-instruct
     description: >-
-      runtime model for the voice-agent turn. reasoning_effort is fixed at none (user rule);
-      Gemini 3.1 Flash-Lite (the baseline incumbent) rejects none and runs its App default
-      minimal (0 reasoning tokens). Models listed here passed the lever probe;
-      dropped 2026-10-18: gpt-5-mini (rejects reasoning none + temperature != 1),
-      openjev-qwen35-4b (no chat/completions).
-      gpt-oss-20b (reasoning_effort none not supported with tools). Open models take max_tokens, not max_completion_tokens.
+      runtime model for the voice-agent turn. No Gemini models (user rule, 2026-10-19).
+      reasoning_effort is fixed at none; models that reject it were dropped (gpt-5-mini,
+      gpt-oss-20b; openjev-qwen35-4b has no chat/completions). Open models (llama/qwen)
+      take max_tokens instead of max_completion_tokens (the engine handles it). Levers-only
+      run (2026-10-18, on Gemini): GPT-5.4 mini / Qwen3-next / Llama-4 call the tool
+      WITHOUT speaking on transfer/end turns (speak_and_act 0) under the unedited prompt.
   route:
     allowed: [gateway, serving]
     default: gateway
@@ -203,17 +202,15 @@ eval:
     # review_agent_evals finds no REGISTERED judges, so the agreed metrics (= Interstell's
     # own scorers, re-run unchanged by the engine; user decision 2026-10-18) are recorded here.
     user_metrics:
-      - name: action_correct
-        description: agent action == Opus-labelled expected action (evals/scorers.py); weight 2
       - name: speak_and_act
-        description: transfer/end turns call the tool AND say an acceptable verbatim scripted line; weight 1
-      - name: reply_quality
-        description: Opus judge on expected-speak turns (on-script, concise, no hallucination/leak); weight 1
-      - name: premature_transfers
-        description: transfer_call the TRANSFER GATE does not allow (transfer_gate_safety); hard veto, epsilon 0
+        description: >-
+          Interstell's speak_and_act scorer - transfer/end turns call the tool AND say an
+          acceptable verbatim scripted line in the same response; the OPTIMIZED objective
+          (user decision 2026-10-19), no other guards
       - name: first_action_p50_ms
-        description: first word or tool call p50, measured in-app (target <450ms); primary objective
-  # Permit the one-time held-out evaluation performed by scripts/finalize.py.
+        description: first word or tool call p50 measured in-app; hard ceiling 700ms
+      - name: action_correct / reply_quality / transfer_gate_safety
+        description: reported only (aggregate = action x2 + speak_and_act + reply_quality)
   held_out_test: false
   # Default mode for `evaluate_branch`. One of: quick, standard, full.
   default_mode: standard
@@ -323,19 +320,15 @@ gate:
   pareto:
     enabled: true
     objectives:
+      - name: speak_and_act
+        direction: maximize
+        source: metric
+        metric: speak_and_act_rate   # tool call + acceptable scripted line in one response
+        epsilon: 0.03                # > 1 of 36 scored turns
       - name: latency
         direction: minimize
-        source: latency          # first-action p50 ms (interstell engine)
-        epsilon: 50
-      - name: quality
-        direction: maximize
-        source: aggregate        # action_correct x2 + speak_and_act + reply_quality
-        epsilon: 0.03
-      - name: premature_transfers
-        direction: minimize
-        source: metric
-        metric: premature_transfers
-        epsilon: 0               # hard veto: never add a premature transfer
+        source: latency              # first-action p50 ms
+        limit: 700                   # hard ceiling (user: <700ms is okay); not compared below it
     # Example:
     # objectives:
     #   - name: quality

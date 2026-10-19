@@ -106,3 +106,24 @@ def test_token_param_from_probe_and_max_tokens_extra() -> None:
     assert token_param("other", None) == "max_completion_tokens"
     extra = request_extra({"max_completion_tokens": 512}, "omit", "max_tokens")
     assert extra["max_completion_tokens"] is None and extra["max_tokens"] == 512
+
+
+def test_scaffold_split_round_trips_through_composer(tmp_path) -> None:
+    from anvil.domains.interstell.scaffold import (
+        same_up_to_blank_lines,
+        split_prompt,
+        write_scaffold,
+    )
+    from anvil.runtime.composer import compose_prompt
+
+    prompt = (
+        "Role\nYou are Nicole.\n\nTRANSFER GATE\nOnly when...\n\n"
+        "##ENDING THE CALL##\nSay goodbye.\n\n### sub rule\nkept inside\n\n"
+        "##ENDING THE CALL##\nduplicate header\n"
+    )
+    ids = [sid for sid, _ in split_prompt(prompt)]
+    assert ids == ["identity", "ending_the_call", "ending_the_call_2"]
+    write_scaffold(tmp_path, prompt, levers={"route": "serving"})
+    composed = compose_prompt(tmp_path, audience="runtime").text
+    assert same_up_to_blank_lines(composed, prompt)
+    assert "### sub rule" in composed

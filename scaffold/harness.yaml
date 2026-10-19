@@ -1,12 +1,22 @@
-# Interstell levers-only session: the system prompt is the client's fixed file,
-# so skills/rules/sampling here are inert. Levers unset = config defaults
-# (model gemini-3-1-flash-lite, route gateway, temperature 0.3,
-# max_completion_tokens 1024) — the production request shape the baseline measures.
+# Interstell prompt + levers session: skills = forge's copy of the client's
+# system_prompt.txt split at its ## sections (composed in this order and sent to
+# the App as a per-turn system_prompt override). The client's file is untouched.
 sampling:
   temperature: 0.3
   max_tokens: 1024
   tool_choice: auto
 skills:
 - file: identity.md
+- file: voicebot_this_is_a_spoken.md
+- file: ending_the_call.md
+- file: the_2_key_questions_you.md
+- file: what_counts_as_an_answer.md
+- file: call_flow_script_strictly_needs.md
+- file: comprehensive_objection_handling_to_be.md
+- file: very_critical_instruction_to_follow.md
+- file: transfer_precondition_check_this_last.md
 rules: []
 tools: []
+levers:
+  model: databricks-deepseek-v4-1-flash
+  route: serving

@@ -4,8 +4,10 @@ One eval = the 36 client samples x ``ceil(rows / 36)`` repeats (``eval.modes.<mo
 counts TURNS, so ``rows: 108`` is 36 x 3). Each turn is one ``POST /api/turn`` on the
 deployed Databricks App with the round's levers (``model``, ``route``, ``temperature``,
 ``max_completion_tokens``; ``reasoning_effort`` fixed at ``none``), so latency is measured
-inside the workspace exactly as ``evals.run_eval --target app`` measures it. The prompt
-(the client's ``system_prompt.txt``) and tools are fixed: this domain optimizes levers only.
+inside the workspace exactly as ``evals.run_eval --target app`` measures it. The system
+prompt is composed from the scaffold skills (forge's copy of the client's
+``system_prompt.txt``, see :mod:`.scaffold`) and sent as the App's per-turn
+``system_prompt`` override; tools are fixed.
 
 Scoring re-uses Interstell's own scorers and labels unchanged (see ``_interstell``):
 ``action_correct``, ``transfer_gate_safety`` (+ Opus args judge), ``speak_and_act`` and
@@ -17,6 +19,8 @@ provisional-row exclusions. The report's:
 * ``cost_metrics.latency_ms_median`` = first-action p50 (Interstell's target metric);
 * ``cost_metrics.premature_transfers`` = transfers the TRANSFER GATE does not allow (the
   safety veto objective).
+* ``cost_metrics.speak_and_act_rate`` / ``action_accuracy`` / ``reply_quality_pass_rate`` =
+  the headline rates, for gate objectives.
 """
 
 from __future__ import annotations
@@ -37,6 +41,7 @@ from anvil.eval.lever_probe import load_lever_probe, setting_rejection
 from anvil.eval.runner import EvalReport
 from anvil.observability import eval_row_trace
 from anvil.runtime.call_ledger import is_infra_error, price_calls
+from anvil.runtime.composer import compose_prompt
 from anvil.runtime.loader import load_harness
 
 logger = logging.getLogger(__name__)
@@ -154,7 +159,13 @@ def request_extra(
 
 
 def call_app(
-    messages: list[dict], sample_id: str, *, model: str, route: str, extra: dict[str, Any]
+    messages: list[dict],
+    sample_id: str,
+    *,
+    model: str,
+    route: str,
+    extra: dict[str, Any],
+    system_prompt: str | None = None,
 ) -> tuple[dict[str, Any], int]:
     """One agent turn on the deployed App. Returns (outputs, transport retries used).
 
@@ -169,6 +180,7 @@ def call_app(
         "model": model,
         "route": route,
         "extra": extra,
+        **({"system_prompt": system_prompt} if system_prompt else {}),
     }
     url = _interstell.app_url() + "/api/turn"
     error = "no attempt"
@@ -308,6 +320,9 @@ def evaluate_interstell(
                 rejection = f"{model} rejects {key}={levers[key]!r}: {why}"
                 break
     extra = request_extra(levers, reasoning or "none", token_param(model, probe))
+    # The scaffold skills ARE the agent's script (forge's copy of system_prompt.txt),
+    # sent to the App as a per-turn override; judges still grade against the client's file.
+    system_prompt = compose_prompt(scaffold_path, audience="runtime").text
 
     labels = load_labels()
     turns = _turns(assets.samples(), cfg.modes[selected_mode].rows, max_rows)
@@ -333,7 +348,12 @@ def evaluate_interstell(
                 outputs: dict[str, Any] = {"error": f"setting rejected by lever probe: {rejection}"}
             else:
                 outputs, retries = call_app(
-                    sample["messages"], sid, model=model, route=route, extra=extra
+                    sample["messages"],
+                    sid,
+                    model=model,
+                    route=route,
+                    extra=extra,
+                    system_prompt=system_prompt,
                 )
             scores, why = _score(sample["messages"], outputs, expectations, judge)
             if span is not None:
@@ -398,6 +418,9 @@ def evaluate_interstell(
         ("total_p50_ms", "total_ms_p50"),
         ("total_p90_ms", "total_ms_p90"),
         ("action_vs_prod", "action_vs_prod"),
+        ("speak_and_act_rate", "speak_and_act_rate"),
+        ("action_accuracy", "action_accuracy"),
+        ("reply_quality_pass_rate", "reply_quality_pass_rate"),
         ("prompt_tokens_mean", "prompt_tokens_mean"),
         ("completion_tokens_mean", "completion_tokens_mean"),
     ):
