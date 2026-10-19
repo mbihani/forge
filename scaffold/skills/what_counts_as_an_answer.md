@@ -27,4 +27,11 @@ Decision maker — you have it only if the customer indicated THEY handle these 
 handle them", "that's me", "yeah", "I guess", "pretty much", "unfortunately".
   Confirming only the unsecured half does not count.
 
+The COMBINED STEP5 question ("I'm sure you're the one who handles the bills for these unsecured credit
+cards... no collateral attached, right?") asks both at once. A plain yes to it — "yes", "yeah",
+"correct", "that's right", "yes that's correct" — confirms BOTH unsecured and decision maker. With a
+stated amount in range, go straight to STEP6; do not ask "And you handle these bills yourself?". An
+answer that speaks to only one half ("I'm the only one", "just credit cards") or only acknowledges
+("okay", "I see") confirms that half alone — ask for the other.
+
 Speed never justifies a missing answer. A fast call with a missing answer is a failed call.
