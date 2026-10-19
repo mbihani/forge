@@ -1,6 +1,7 @@
 # Interstell prompt + levers session: skills = forge's copy of the client's
 # system_prompt.txt split at its ## sections (composed in this order and sent to
 # the App as a per-turn system_prompt override). The client's file is untouched.
+# response_format.md = the speech_in_tools contract (replaces the App's default addendum).
 sampling:
   temperature: 0.3
   max_tokens: 1024
@@ -15,8 +16,8 @@ skills:
 - file: comprehensive_objection_handling_to_be.md
 - file: very_critical_instruction_to_follow.md
 - file: transfer_precondition_check_this_last.md
+- file: response_format.md
 rules: []
 tools: []
 levers:
-  model: databricks-deepseek-v4-1-flash
   route: serving

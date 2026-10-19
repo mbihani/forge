@@ -29,7 +29,7 @@ mode: prompt
 # Set DATABRICKS_HOST and DATABRICKS_TOKEN in the environment (or a
 # ~/.databrickscfg profile); the gateway client refreshes the SP token
 # on each request.
-runtime_endpoint: databricks-deepseek-v4-1-flash
+runtime_endpoint: databricks-gpt-5-4-mini
 
 # FMAPI model the ANVIL optimizer loop uses for trace analysis +
 # mutation planning. Reached via the gateway's Anthropic route (the
@@ -142,24 +142,13 @@ loop:
 # See docs/onboarding.md §13.
 levers:
   model:
-    allowed:
-      - databricks-deepseek-v4-1-flash
-      - databricks-gpt-5-4-mini
-      - databricks-gpt-5-4-nano
-      - databricks-qwen3-next-80b-a3b-instruct
-      - databricks-llama-4-maverick
-      - databricks-qwen35-122b-a10b
-      - databricks-meta-llama-3-1-8b-instruct
+    allowed: [databricks-gpt-5-4-mini]
     description: >-
-      runtime model for the voice-agent turn. No Gemini models (user rule, 2026-10-19).
-      reasoning_effort is fixed at none; models that reject it were dropped (gpt-5-mini,
-      gpt-oss-20b; openjev-qwen35-4b has no chat/completions). Open models (llama/qwen)
-      take max_tokens instead of max_completion_tokens (the engine handles it). Levers-only
-      run (2026-10-18, on Gemini): GPT-5.4 mini / Qwen3-next / Llama-4 call the tool
-      WITHOUT speaking on transfer/end turns (speak_and_act 0) under the unedited prompt.
+      PINNED to GPT-5.4 mini (user, 2026-10-19). The only model in the 10-19 sweep meeting
+      p50<700 and p90<=1000ms with high speak-and-act, in speech_in_tools mode.
   route:
-    allowed: [gateway, serving]
-    default: gateway
+    allowed: [serving, gateway]
+    default: serving
     description: >-
       gateway = AI Gateway unified URL (<workspace-id>.ai-gateway.../mlflow/v1);
       serving = <host>/serving-endpoints. Interstell measured the gateway adding 40-130ms.
@@ -168,14 +157,14 @@ levers:
     default: 0.3
     description: sampling temperature (production 0.3)
   speech_in_tools:
-    allowed: [false, true]
-    default: false
+    allowed: [true]
+    default: true
     description: >-
       true = every turn is ONE tool call (respond / transfer_call / end_call) whose required
       first argument message_to_user is the spoken line; tool_choice required (App mode,
       interstell-ai 77cd3e6). first_action_ms = first character of message_to_user.
   tool_choice:
-    allowed: [auto, required]
+    allowed: [auto]
     default: auto
     description: >-
       auto = production. required forces a tool call on every turn; the only tools are
@@ -215,15 +204,14 @@ eval:
     # review_agent_evals finds no REGISTERED judges, so the agreed metrics (= Interstell's
     # own scorers, re-run unchanged by the engine; user decision 2026-10-18) are recorded here.
     user_metrics:
-      - name: speak_and_act
+      - name: quality
         description: >-
-          Interstell's speak_and_act scorer - transfer/end turns call the tool AND say an
-          acceptable verbatim scripted line in the same response; the OPTIMIZED objective
-          (user decision 2026-10-19), no other guards
-      - name: first_action_p50_ms
-        description: first word or tool call p50 measured in-app; hard ceiling 700ms
-      - name: action_correct / reply_quality / transfer_gate_safety
-        description: reported only (aggregate = action x2 + speak_and_act + reply_quality)
+          OPTIMIZED (user, 2026-10-19): weighted aggregate of Interstell's scorers -
+          action_correct x2 + speak_and_act + reply_quality (Opus judge)
+      - name: speak_and_act
+        description: floor - may not regress more than 0.03 below its best
+      - name: first_action_p50_ms / latency_ms_p90
+        description: hard ceilings 700ms / 1000ms (first spoken character in speech mode)
   held_out_test: false
   # Default mode for `evaluate_branch`. One of: quick, standard, full.
   default_mode: standard
@@ -333,15 +321,24 @@ gate:
   pareto:
     enabled: true
     objectives:
+      - name: quality
+        direction: maximize
+        source: aggregate            # action_correct x2 + speak_and_act + reply_quality
+        epsilon: 0.03
       - name: speak_and_act
         direction: maximize
         source: metric
-        metric: speak_and_act_rate   # tool call + acceptable scripted line in one response
-        epsilon: 0.03                # > 1 of 36 scored turns
+        metric: speak_and_act_rate   # floor: may not drop > 0.03 below best
+        epsilon: 0.03
       - name: latency
         direction: minimize
-        source: latency              # first-action p50 ms
-        limit: 700                   # hard ceiling (user: <700ms is okay); not compared below it
+        source: latency              # first-action p50 ms (speech mode: first spoken char)
+        limit: 700
+      - name: latency_p90
+        direction: minimize
+        source: metric
+        metric: latency_ms_p90
+        limit: 1000
     # Example:
     # objectives:
     #   - name: quality
