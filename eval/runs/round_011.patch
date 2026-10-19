@@ -1,0 +1,10 @@
+diff --git a/scaffold/skills/response_format.md b/scaffold/skills/response_format.md
+index 7eff37b..62019f4 100644
+--- a/scaffold/skills/response_format.md
++++ b/scaffold/skills/response_format.md
+@@ -20,4 +20,4 @@ The line you say decides the tool. Check before you send:
+     - They gave a credit card amount under $7,000 and "Do you have any personal loans?" is not in your earlier lines: do NOT end, even if they say bye, "have a good day" or "already done this". Call `respond`: "Do you have any personal loans?"
+     A do-not-call / stop-bothering-me request, a callback request, or the caller's own "no debt" still ends as scripted.
+ - Unsecured answered only with a bare "okay" / "I see", and their later "yeah" answered only "And you handle these bills yourself?": unsecured is still missing. Do not say the transfer line. Call `respond`: "And these are unsecured debts, with no collateral attached, right?"
+-- About to say "I didn't catch that." or "I'm having trouble understanding."? If "I'm having trouble understanding." is already anywhere in your earlier lines and the caller is still not engaging (gibberish, single words, fragments like "call", "for the"): do not send a strike line or a cue. Call `end_call`: "I'm unable to assist at this time. Goodbye"
++- About to say "I didn't catch that." or "I'm having trouble understanding."? If "I'm having trouble understanding." is already anywhere in your earlier lines and the caller is still not engaging (gibberish, single words, fragments like "call", "for the", TV/radio/news/ad audio): do not send a strike line or a cue. Call `end_call`: "I'm unable to assist at this time. Goodbye". A later "I didn't catch that." of yours does NOT reset the ladder.
