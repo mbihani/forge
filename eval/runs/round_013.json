@@ -1,0 +1,31 @@
+{
+  "round_id": 13,
+  "branch": "anvil/exp-interstell-end-round-13",
+  "scaffold_commit_sha": "b80f40b13ab2adca3f429fbe61eaff3db1fad25a",
+  "parent_commit_sha": "b80f40b13ab2adca3f429fbe61eaff3db1fad25a",
+  "decision": "noop",
+  "action_kind": "noop",
+  "parse_status": "ok_last_of_many",
+  "levers": {
+    "route": "serving",
+    "temperature": 0.3,
+    "speech_in_tools": true,
+    "tool_choice": "auto",
+    "max_completion_tokens": 1024,
+    "model": "databricks-gpt-5-4-mini"
+  },
+  "baseline_score": 0.8134284016636958,
+  "score_delta_vs_parent": 0.0,
+  "notes": "",
+  "optimizer_error": null,
+  "optimizer_backend": "local",
+  "optimizer_server_url": null,
+  "rationale": "Parent = round 1 (recall 0.967 = 29/30, false_end_calls 0, quality 0.885, p50 606 / p90 778). A keep needs either recall 30/30 with 0 false ends, or quality above 0.915. Quality would need about +0.12 reply_quality (6 or more of 51 passes) and no round has come close. The only recall miss is S01: TV/ad audio after 'I'm having trouble understanding.' gets rung 1 again instead of ending. The fix ('TV/radio/news/ad audio' counts as not engaging, and a later 'I didn't catch that.' does not reset the ladder) reached recall 1.0 in rounds 4, 5, 9, 10 and 12. Eight of the eleven reverted rounds (2, 4, 5, 8, 9, 10, 11, 12) had at least one S36 false end ('Thank you for your time, goodbye'), whatever the edit was. S36 is an already-reported label dispute. The script's GATE 2 personal-loans check is already in three places (response_format.md, ending_the_call.md and, in round 9, the competition rebuttal). The model still uses the competition rebuttal about 2/3 of the time and ends about 1/3. Temperature 0.0 also flipped (rounds 5 and 8). Adding more S36-specific text is tuning to a disputed label, and round 9's attempt caused S28 false ends. Resubmitting round 12's patch would keep about 1/3 of the time on S36 noise alone, so a keep would be noise-fitting rather than an improvement. Recommendation to the user: resolve the S36 dispute (or exclude S36 from false_end_calls), or allow a false_end_calls tolerance of 1 at n=30. Then rerun the round-12 response_format.md patch, which is expected to hold recall at 1.0, quality at about 0.88-0.90 and p50 at about 655ms. Predicted delta for this noop: 0.",
+  "optimizer_run": {
+    "run_id": "4b48cf73359f4e22ab1dccdb82dfee73",
+    "experiment_id": "3520618322063879"
+  },
+  "optimizer_session_url": null,
+  "optimizer_trace_id": "tr-5e32e536f2196d0b68fa7c24a77ea6c9",
+  "frontier_best": null
+}
