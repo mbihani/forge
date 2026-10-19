@@ -1,0 +1,29 @@
+{
+  "best": {
+    "end_call_recall": 0.9666666666666667,
+    "false_end_calls": 0.0,
+    "quality": 0.8850638740344623
+  },
+  "objectives": [
+    "end_call_recall",
+    "false_end_calls",
+    "quality"
+  ],
+  "pareto": true,
+  "directions": {
+    "end_call_recall": "maximize",
+    "false_end_calls": "minimize",
+    "quality": "maximize"
+  },
+  "sources": {
+    "end_call_recall": "metric",
+    "false_end_calls": "metric",
+    "quality": "aggregate"
+  },
+  "epsilon": 0.0,
+  "epsilons": {
+    "end_call_recall": 0.03,
+    "false_end_calls": 0.0,
+    "quality": 0.03
+  }
+}
