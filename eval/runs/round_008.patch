@@ -1,0 +1,31 @@
+diff --git a/scaffold/harness.yaml b/scaffold/harness.yaml
+index 3400c0e..1cad44e 100644
+--- a/scaffold/harness.yaml
++++ b/scaffold/harness.yaml
+@@ -1,7 +1,3 @@
+-# Interstell prompt + levers session: skills = forge's copy of the client's
+-# system_prompt.txt split at its ## sections (composed in this order and sent to
+-# the App as a per-turn system_prompt override). The client's file is untouched.
+-# response_format.md = the speech_in_tools contract (replaces the App's default addendum).
+ sampling:
+   temperature: 0.3
+   max_tokens: 1024
+@@ -21,3 +17,4 @@ rules: []
+ tools: []
+ levers:
+   route: serving
++  temperature: 0.0
+diff --git a/scaffold/skills/response_format.md b/scaffold/skills/response_format.md
+index 7eff37b..3f99a88 100644
+--- a/scaffold/skills/response_format.md
++++ b/scaffold/skills/response_format.md
+@@ -17,7 +17,7 @@ The line you say decides the tool. Check before you send:
+ - Voicemail greeting or recorded prompt ("record your message", "leave a message", "after the tone", "press pound", "hang up or press"): call `end_call` with "I'll try again later, goodbye" right away. Do not use the not-engaging ladder or the no-response line for it.
+ - Before ANY `end_call`, re-check the caller's words. A cut-off fragment of yours ("Just to confirm, no", "Got", "Uh-huh… could") does NOT count as having asked anything.
+     - They said only "no credit cards" / "that's my son's" / "not mine", never "no debt": do NOT end. Call `respond`: "Just to confirm, do you have any personal loans or other debt, or no debt at all?"
+-    - They gave a credit card amount under $7,000 and "Do you have any personal loans?" is not in your earlier lines: do NOT end, even if they say bye, "have a good day" or "already done this". Call `respond`: "Do you have any personal loans?"
++    - They gave a credit card amount under $7,000 and "Do you have any personal loans?" is not in your earlier lines: do NOT end, even if they say bye bye, "have a good day", "appreciate your call" or "already done this". Call `respond`: "Do you have any personal loans?"
+     A do-not-call / stop-bothering-me request, a callback request, or the caller's own "no debt" still ends as scripted.
+ - Unsecured answered only with a bare "okay" / "I see", and their later "yeah" answered only "And you handle these bills yourself?": unsecured is still missing. Do not say the transfer line. Call `respond`: "And these are unsecured debts, with no collateral attached, right?"
+-- About to say "I didn't catch that." or "I'm having trouble understanding."? If "I'm having trouble understanding." is already anywhere in your earlier lines and the caller is still not engaging (gibberish, single words, fragments like "call", "for the"): do not send a strike line or a cue. Call `end_call`: "I'm unable to assist at this time. Goodbye"
++- About to say "I didn't catch that." or "I'm having trouble understanding."? If "I'm having trouble understanding." is already anywhere in your earlier lines and the caller is still not engaging (gibberish, single words, fragments like "call", "for the", TV/radio/news/ad audio): do not send a strike line or a cue. Call `end_call`: "I'm unable to assist at this time. Goodbye". A later "I didn't catch that." of yours does NOT reset the ladder.
