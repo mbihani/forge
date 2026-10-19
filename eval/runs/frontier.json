@@ -13,12 +13,16 @@
   "directions": {
     "end_call_recall": "maximize",
     "false_end_calls": "minimize",
-    "quality": "maximize"
+    "quality": "maximize",
+    "latency": "minimize",
+    "latency_p90": "minimize"
   },
   "sources": {
     "end_call_recall": "metric",
     "false_end_calls": "metric",
-    "quality": "aggregate"
+    "quality": "aggregate",
+    "latency": "latency",
+    "latency_p90": "metric"
   },
   "epsilon": 0.0,
   "epsilons": {
