@@ -167,6 +167,13 @@ levers:
     allowed: [0.0, 0.3, 0.7]
     default: 0.3
     description: sampling temperature (production 0.3)
+  speech_in_tools:
+    allowed: [false, true]
+    default: false
+    description: >-
+      true = every turn is ONE tool call (respond / transfer_call / end_call) whose required
+      first argument message_to_user is the spoken line; tool_choice required (App mode,
+      interstell-ai 77cd3e6). first_action_ms = first character of message_to_user.
   tool_choice:
     allowed: [auto, required]
     default: auto

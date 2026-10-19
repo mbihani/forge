@@ -96,6 +96,7 @@ DEFAULT_LEVERS = {
     "temperature": 0.3,
     "max_completion_tokens": 1024,
     "tool_choice": "auto",
+    "speech_in_tools": False,
 }
 APP_TIMEOUT_S = 120.0
 APP_ATTEMPTS = 3
@@ -175,6 +176,7 @@ def call_app(
     route: str,
     extra: dict[str, Any],
     system_prompt: str | None = None,
+    speech_in_tools: bool = False,
 ) -> tuple[dict[str, Any], int]:
     """One agent turn on the deployed App. Returns (outputs, transport retries used).
 
@@ -190,6 +192,8 @@ def call_app(
         "route": route,
         "extra": extra,
         **({"system_prompt": system_prompt} if system_prompt else {}),
+        # App mode: speech in a required message_to_user tool argument, tool_choice required.
+        **({"speech_in_tools": True} if speech_in_tools else {}),
     }
     url = _interstell.app_url() + "/api/turn"
     error = "no attempt"
@@ -363,6 +367,7 @@ def evaluate_interstell(
                     route=route,
                     extra=extra,
                     system_prompt=system_prompt,
+                    speech_in_tools=bool(levers["speech_in_tools"]),
                 )
             scores, why = _score(sample["messages"], outputs, expectations, judge)
             if span is not None:
